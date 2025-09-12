@@ -1,4 +1,5 @@
 use std::{
+    env,
     net::{IpAddr, Ipv4Addr},
     num::NonZero,
     task::{Context, Poll},
@@ -13,6 +14,7 @@ use prost::{Message, bytes::Bytes};
 use tendermint::{
     AppHash,
     abci::Code,
+    block::Height,
     v0_34::abci::{self, ConsensusResponse, MempoolResponse},
 };
 use tower::{BoxError, Service};
@@ -42,6 +44,8 @@ impl Service<abci::MempoolRequest> for Mempool {
     }
 
     fn call(&mut self, req: abci::MempoolRequest) -> Self::Future {
+        info!(?req);
+
         Box::pin(async move {
             let reject = || {
                 // Rejecting a transaction means returning a non-zero code
@@ -88,6 +92,8 @@ impl Service<abci::ConsensusRequest> for Consensus {
     }
 
     fn call(&mut self, req: abci::ConsensusRequest) -> Self::Future {
+        info!(?req);
+
         Box::pin(async move {
             Ok(match req {
                 abci::ConsensusRequest::InitChain(abci::request::InitChain {
@@ -181,8 +187,45 @@ impl Service<abci::InfoRequest> for Info {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, _req: abci::InfoRequest) -> Self::Future {
-        Box::pin(async move { Err("info is not implemented".into()) })
+    fn call(&mut self, req: abci::InfoRequest) -> Self::Future {
+        info!(?req);
+
+        Box::pin(async move {
+            Ok(match req {
+                abci::InfoRequest::Info(abci::request::Info {
+                    version,
+                    block_version,
+                    p2p_version,
+                    abci_version,
+                }) => abci::InfoResponse::Info(abci::response::Info {
+                    data: env!("CARGO_PKG_NAME").to_string(),
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                    app_version: env!("CARGO_PKG_VERSION").to_string().parse().unwrap_or(0),
+                    last_block_height: Height::from(0u32), // FIXME: return the correct height
+                    last_block_app_hash: AppHash::try_from(Bytes::new()).expect("invalid app hash"), // FIXME: return the correct app hash
+                }),
+                abci::InfoRequest::Query(abci::request::Query {
+                    data,
+                    path,
+                    height,
+                    prove,
+                }) => abci::InfoResponse::Query(abci::response::Query {
+                    code: Code::Err(NonZero::new(1).expect("1 != 0")),
+                    log: "query is not implemented".to_string(),
+                    ..Default::default()
+                }),
+                abci::InfoRequest::Echo(abci::request::Echo { message }) => {
+                    abci::InfoResponse::Echo(abci::response::Echo { message })
+                }
+                abci::InfoRequest::SetOption(abci::request::SetOption { key, value }) => {
+                    abci::InfoResponse::SetOption(abci::response::SetOption {
+                        code: Code::Err(NonZero::new(1).expect("1 != 0")),
+                        log: "set option is not implemented".to_string(),
+                        info: "".to_string(),
+                    })
+                }
+            })
+        })
     }
 }
 
@@ -198,7 +241,9 @@ impl Service<abci::SnapshotRequest> for Snapshot {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, _req: abci::SnapshotRequest) -> Self::Future {
+    fn call(&mut self, req: abci::SnapshotRequest) -> Self::Future {
+        info!(?req);
+
         Box::pin(async move { Err("snapshots are not implemented".into()) })
     }
 }
@@ -218,7 +263,7 @@ impl Run for Start {
             .finish()
             .ok_or_eyre("could not construct ABCI server")?;
         server
-            .listen_tcp((IpAddr::V4(Ipv4Addr::UNSPECIFIED), abci))
+            .listen_tcp((IpAddr::V4(Ipv4Addr::LOCALHOST), abci))
             .await
             .or_else(|e| {
                 bail!("could not start ABCI server on port {abci}: {e}");
