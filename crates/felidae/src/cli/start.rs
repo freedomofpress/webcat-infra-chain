@@ -71,8 +71,8 @@ impl Service<abci::MempoolRequest> for Mempool {
                 return reject();
             };
 
-            // Speculatively execute the transaction against the chain state without committing the
-            // results of the execution
+            // TODO: Speculatively execute the transaction against the chain state without
+            // committing the results of the execution
 
             Ok(MempoolResponse::CheckTx(abci::response::CheckTx::default()))
         })
