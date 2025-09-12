@@ -1,0 +1,18 @@
+[package]
+name = "felidae"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+felidae-proto = { path = "../felidae-proto" }
+felidae-types = { path = "../felidae-types" }
+prost = { workspace = true }
+futures = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+tower-abci = { workspace = true }
+tower = { workspace = true }
+tendermint = { workspace = true }
+color-eyre = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package felidae.transaction;
+
+message Transaction {
+    string chain_id = 1;
+}
