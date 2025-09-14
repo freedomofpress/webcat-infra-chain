@@ -2,6 +2,33 @@
 
 This repository showcases how a quick, permissioned blockchain for the WEBCAT infrastructure could look. The goal is to replace both the Enrollment Server and the Build Server with a distributed system, reducing censorship risks and avoiding single points of trust or failure. It may also be cheaper to run, as distributing trust makes high availability, backups, and redundancy of individual nodes less critical.
 
+### Getting Started
+
+First, you'll need to install [`just`](https://just.systems/man/en/):
+
+On macOS:
+
+Install just:
+```bash
+brew install just
+```
+
+On Linux (Debian/Ubuntu):
+
+```bash
+apt install just
+```
+
+Next, build and run the chain by running in two Terminals both CometBFT and Felidae (the ABCI application). Start CometBFT via:
+```bash
+just cometbft
+```
+
+And the ABCI application via:
+```
+just felidae
+```
+
 ## Example Scenario
 
 ### Nodes
@@ -54,7 +81,7 @@ This repository showcases how a quick, permissioned blockchain for the WEBCAT in
 
 ### Feature Parity with WEBCAT Infra
 
-The transparency logging requirement of WEBCAT Infra is dropped—here, the blockchain itself serves as a transparency log.  
+The transparency logging requirement of WEBCAT Infra is dropped—here, the blockchain itself serves as a transparency log.
 *Note: transparency logging is still required for manifest signatures and for Sigstore's OIDC certificates.*
 
 Monitoring can be performed by any blockchain node that is not a validator. Non-validators can perform the same checks on the list state and verify domain consensus, enabling both:
@@ -83,19 +110,19 @@ To fake or force an enrollment operation, an attacker would need control of at l
 
 ### Pros
 
-- No single point of failure; harder to censor  
-- Lower operational cost (no HA or per-org redundancy needed)  
-- Shared trust/liability across jurisdictions  
+- No single point of failure; harder to censor
+- Lower operational cost (no HA or per-org redundancy needed)
+- Shared trust/liability across jurisdictions
 
 ### Cons
 
-- Slightly more complex setup  
-- Frontends must implement rate-limiting, or use alternatives like proof-of-work  
-- Involves more parties to coordinate  
+- Slightly more complex setup
+- Frontends must implement rate-limiting, or use alternatives like proof-of-work
+- Involves more parties to coordinate
 
 ### Development Roadmap (Beta Release)
 
-- ~1 month of full-time development for basic chain + frontend  
+- ~1 month of full-time development for basic chain + frontend
 - WEBCAT extension changes are minimal (still fetching updates from a CDN, but verifying consensus signatures instead of Sigsum proofs)
 
 ### Future Work
