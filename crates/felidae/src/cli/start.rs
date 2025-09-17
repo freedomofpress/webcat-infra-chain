@@ -104,6 +104,10 @@ impl Service<abci::ConsensusRequest> for Consensus {
                     app_state_bytes,
                     initial_height,
                 }) => {
+                    // TODO: construct initial state from app_state_bytes
+                    let app_state = String::from_utf8(app_state_bytes.to_vec())?;
+                    info!(app_state);
+
                     let app_hash = AppHash::try_from(Bytes::new()).expect("invalid app hash"); // TODO: initial app hash
 
                     ConsensusResponse::InitChain(abci::response::InitChain {

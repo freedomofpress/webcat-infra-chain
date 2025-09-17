@@ -2,6 +2,71 @@ syntax = "proto3";
 
 package felidae.transaction;
 
+message Config {
+    message VotingConfig {
+        int64 quorum = 2;
+        int64 timeout = 3;
+        int64 delay = 4;
+    }
+
+    message AdminConfig {
+        repeated Admin admins = 1;
+        VotingConfig voting_config = 2;
+    }
+
+    message OracleConfig {
+        repeated Oracle oracles = 1;
+        VotingConfig voting_config = 2;
+        bool enabled = 3;
+    }
+
+    message OnionConfig {
+        bool enabled = 1;
+    }
+
+    AdminConfig admin_config = 1;
+    OracleConfig oracle_config = 2;
+    OnionConfig onion_config = 3;
+}
+
+message Admin {
+    bytes identity = 1;
+}
+
+message Oracle {
+    bytes identity = 1;
+}
+
 message Transaction {
     string chain_id = 1;
+    repeated Action actions = 2;
+}
+
+message Action {
+    oneof action {
+        Reconfigure reconfigure = 1;
+        Observe observe = 2;
+    }
+
+    message Reconfigure {
+        bytes admin_identity = 1;
+        bytes admin_signature = 2;
+        Config config = 3;
+    }
+
+    message Observe {
+        message Observation {
+            message Blockstamp {
+                bytes block_hash = 1;
+                int64 block_number = 2;
+            }
+            string domain = 1;
+            optional bytes hash_observed = 2;
+            Blockstamp blockstamp = 3;
+        }
+
+        bytes oracle_identity = 1;
+        bytes oracle_signature = 2;
+        Observation observation = 3;
+    }
 }
