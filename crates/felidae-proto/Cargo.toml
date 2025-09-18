@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 prost = { workspace = true }
+aws-lc-rs = { workspace = true }
+thiserror = { workspace = true }
 
 [build-dependencies]
 prost-build = { workspace = true }

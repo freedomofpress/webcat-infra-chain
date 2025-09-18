@@ -10,3 +10,4 @@ prost = { workspace = true }
 thiserror = { workspace = true }
 parking_lot = { workspace = true }
 fqdn = { workspace = true }
+tendermint = { workspace = true }

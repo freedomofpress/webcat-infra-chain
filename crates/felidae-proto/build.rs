@@ -1,9 +1,9 @@
-use std::io::Result;
 use std::fs;
+use std::io::Result;
 
 fn main() -> Result<()> {
     let mut proto_files = Vec::new();
-    
+
     for entry in fs::read_dir("src/")? {
         let entry = entry?;
         let path = entry.path();
@@ -13,11 +13,13 @@ fn main() -> Result<()> {
             }
         }
     }
-    
+
     if !proto_files.is_empty() {
         let proto_refs: Vec<&str> = proto_files.iter().map(|s| s.as_str()).collect();
-        prost_build::compile_protos(&proto_refs, &["src/"])?;
+        prost_build::Config::new()
+            .bytes(["."])
+            .compile_protos(&proto_refs, &["src/"])?;
     }
-    
+
     Ok(())
 }

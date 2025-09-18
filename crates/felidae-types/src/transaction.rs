@@ -1,62 +1,59 @@
 use std::{any::TypeId, marker::PhantomData, rc::Rc};
 
-use aws_lc_rs::signature::{EdDSAParameters, ParsedPublicKey};
+use aws_lc_rs::{
+    digest::{Context, Digest},
+    signature::{Ed25519KeyPair, EdDSAParameters, KeyPair, ParsedPublicKey, UnparsedPublicKey},
+};
 use prost::Message as _;
 
 use felidae_proto::transaction::{self as proto};
 
 #[derive(Clone)]
 pub struct Transaction {
-    pub signature: Signature<Transaction>,
-    pub body: TransactionBody,
-}
-
-#[derive(Clone)]
-pub struct TransactionBody {
     pub chain_id: String,
     pub actions: Vec<Action>,
 }
 
 #[derive(Clone)]
 pub struct Signature<P> {
-    public_key: Rc<ParsedPublicKey>,
-    public_key_bytes: Rc<Vec<u8>>,
+    public_key: UnparsedPublicKey<Vec<u8>>,
     signature: Vec<u8>,
     party: PhantomData<fn(&P)>,
 }
 
-#[derive(thiserror::Error, Debug)]
-#[error("Invalid signature on: {0:?}")]
-pub struct InvalidSignature(TypeId);
+impl<P> Signature<P> {
+    pub fn sign(keypair: &Ed25519KeyPair, mut context: Context, message: &[u8]) -> Self {
+        context.update(message);
+        let hash = context.finish();
+        let signature = keypair.sign(hash.as_ref());
+        let public_key = keypair.public_key().as_ref().to_vec();
+        Self {
+            public_key: UnparsedPublicKey::new(&EdDSAParameters, public_key),
+            signature: signature.as_ref().to_vec(),
+            party: PhantomData,
+        }
+    }
 
-pub trait Signed: Sized + 'static {
-    fn signature(&self) -> &Signature<Self>;
-
-    fn payload(&self) -> Vec<u8>;
-
-    fn verify(&self) -> Result<(), InvalidSignature> {
-        let Signature {
-            public_key,
-            public_key_bytes: _,
+    pub(crate) fn from_parts(public_key: Vec<u8>, signature: Vec<u8>) -> Self {
+        Self {
+            public_key: UnparsedPublicKey::new(&EdDSAParameters, public_key),
             signature,
-            party: _,
-        } = self.signature();
-        public_key
-            .verify_sig(&self.payload(), signature)
-            .map_err(|_| InvalidSignature(TypeId::of::<Self>()))
-    }
-}
-
-impl Signed for Transaction {
-    fn signature(&self) -> &Signature<Self> {
-        &self.signature
+            party: PhantomData,
+        }
     }
 
-    fn payload(&self) -> Vec<u8> {
-        let proto = proto::transaction::Body::from(self.body.clone());
-        let mut buf = Vec::with_capacity(proto.encoded_len());
-        proto.encode(&mut buf).expect("buffer is large enough");
-        buf
+    pub fn public_key(&self) -> &[u8] {
+        self.public_key.as_ref()
+    }
+
+    pub fn verify_digest(
+        &self,
+        mut context: Context,
+        message: &[u8],
+    ) -> Result<(), aws_lc_rs::error::Unspecified> {
+        context.update(message);
+        let hash = context.finish();
+        self.public_key.verify_digest(&hash, &self.signature)
     }
 }
 
@@ -95,6 +92,7 @@ pub struct OracleConfig {
     pub enabled: bool,
     pub oracles: Vec<Oracle>,
     pub voting_config: VotingConfig,
+    pub max_enrolled_subdomains: u64,
 }
 
 #[derive(Clone)]
@@ -109,6 +107,7 @@ pub struct OnionConfig {
 
 #[derive(Clone)]
 pub struct VotingConfig {
+    pub total: u64,
     pub quorum: u64,
     pub timeout: u64,
     pub delay: u64,
@@ -137,84 +136,23 @@ impl TryFrom<proto::Transaction> for Transaction {
     type Error = crate::ParseError;
 
     fn try_from(tx: proto::Transaction) -> Result<Self, Self::Error> {
-        let proto::Transaction { signature, body } = tx;
+        let proto::Transaction { chain_id, actions } = tx;
 
-        let signature = signature
+        let actions = actions
+            .into_iter()
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<Signature<Transaction>>()))??;
+            .collect::<Result<_, _>>()?;
 
-        let body = body
-            .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<TransactionBody>()))??;
-
-        Ok(Transaction { signature, body })
+        Ok(Transaction { chain_id, actions })
     }
 }
 
 impl From<Transaction> for proto::Transaction {
     fn from(tx: Transaction) -> Self {
-        let Transaction { signature, body } = tx;
+        let Transaction { chain_id, actions } = tx;
         proto::Transaction {
-            signature: Some(signature.into()),
-            body: Some(body.into()),
-        }
-    }
-}
-
-impl TryFrom<proto::transaction::Body> for TransactionBody {
-    type Error = crate::ParseError;
-
-    fn try_from(value: proto::transaction::Body) -> Result<Self, Self::Error> {
-        let proto::transaction::Body { chain_id, actions } = value;
-        let actions = actions
-            .into_iter()
-            .map(TryInto::try_into)
-            .collect::<Result<_, _>>()?;
-        Ok(TransactionBody { chain_id, actions })
-    }
-}
-
-impl From<TransactionBody> for proto::transaction::Body {
-    fn from(body: TransactionBody) -> Self {
-        let TransactionBody { chain_id, actions } = body;
-        proto::transaction::Body {
             chain_id,
             actions: actions.into_iter().map(Into::into).collect(),
-        }
-    }
-}
-
-impl TryFrom<proto::transaction::Signature> for Signature<Transaction> {
-    type Error = crate::ParseError;
-
-    fn try_from(value: proto::transaction::Signature) -> Result<Self, Self::Error> {
-        let proto::transaction::Signature {
-            ephemeral_public_key,
-            signature,
-        } = value;
-        Ok(Signature {
-            public_key_bytes: Rc::new(ephemeral_public_key.clone()),
-            public_key: Rc::new(
-                ParsedPublicKey::new(&EdDSAParameters, ephemeral_public_key)
-                    .map_err(|_| crate::ParseError(TypeId::of::<Signature<Transaction>>()))?,
-            ),
-            signature,
-            party: PhantomData,
-        })
-    }
-}
-
-impl From<Signature<Transaction>> for proto::transaction::Signature {
-    fn from(sig: Signature<Transaction>) -> Self {
-        let Signature {
-            public_key: _,
-            public_key_bytes,
-            signature,
-            party: _,
-        } = sig;
-        proto::transaction::Signature {
-            ephemeral_public_key: public_key_bytes.as_ref().to_vec(),
-            signature,
         }
     }
 }
@@ -242,17 +180,19 @@ impl TryFrom<proto::Action> for Action {
 impl From<Action> for proto::Action {
     fn from(action: Action) -> Self {
         match action {
-            Action::Reconfigure(_) => proto::Action {
+            Action::Reconfigure(reconfigure) => proto::Action {
                 action: Some(proto::action::Action::Reconfigure(
                     proto::action::Reconfigure {
-                        signature: todo!(),
+                        admin_identity: todo!(),
+                        admin_signature: todo!(),
                         config: todo!(),
                     },
                 )),
             },
-            Action::Observe(_) => proto::Action {
+            Action::Observe(observe) => proto::Action {
                 action: Some(proto::action::Action::Observe(proto::action::Observe {
-                    signature: todo!(),
+                    oracle_identity: todo!(),
+                    oracle_signature: todo!(),
                     observation: todo!(),
                 })),
             },
@@ -264,17 +204,23 @@ impl TryFrom<proto::action::Reconfigure> for Reconfigure {
     type Error = crate::ParseError;
 
     fn try_from(value: proto::action::Reconfigure) -> Result<Self, Self::Error> {
-        let proto::action::Reconfigure { signature, config } = value;
+        let proto::action::Reconfigure {
+            admin_identity,
+            admin_signature,
+            config,
+        } = value;
 
-        let signature = signature
-            .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<Signature<Reconfigure>>()))??;
+        // TODO: parse identity and signature
 
         let config = config
             .map(TryInto::try_into)
             .ok_or_else(|| crate::ParseError(TypeId::of::<Config>()))??;
 
-        Ok(Reconfigure { signature, config })
+        Ok(Reconfigure {
+            admin_identity,
+            admin_signature,
+            config,
+        })
     }
 }
 
@@ -283,20 +229,20 @@ impl TryFrom<proto::action::Observe> for Observe {
 
     fn try_from(value: proto::action::Observe) -> Result<Self, Self::Error> {
         let proto::action::Observe {
-            signature,
+            oracle_identity,
+            oracle_signature,
             observation,
         } = value;
 
-        let signature = signature
-            .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<Signature<Observe>>()))??;
+        // TODO: parse identity and signature
 
         let observation = observation
             .map(TryInto::try_into)
             .ok_or_else(|| crate::ParseError(TypeId::of::<Observation>()))??;
 
         Ok(Observe {
-            signature,
+            oracle_identity,
+            oracle_signature,
             observation,
         })
     }
@@ -357,19 +303,6 @@ impl TryFrom<proto::config::AdminConfig> for AdminConfig {
     }
 }
 
-impl TryFrom<proto::Admin> for Admin {
-    type Error = crate::ParseError;
-
-    fn try_from(value: proto::Admin) -> Result<Self, Self::Error> {
-        let proto::Admin { identity } = value;
-        let identity = Rc::new(
-            ParsedPublicKey::new(&EdDSAParameters, identity)
-                .map_err(|_| crate::ParseError(TypeId::of::<Admin>()))?,
-        );
-        Ok(Admin { identity })
-    }
-}
-
 impl TryFrom<proto::config::OracleConfig> for OracleConfig {
     type Error = crate::ParseError;
 
@@ -378,6 +311,7 @@ impl TryFrom<proto::config::OracleConfig> for OracleConfig {
             enabled,
             oracles,
             voting_config,
+            max_enrolled_subdomains,
         } = value;
 
         let oracles = oracles
@@ -393,19 +327,39 @@ impl TryFrom<proto::config::OracleConfig> for OracleConfig {
             enabled,
             oracles,
             voting_config,
+            max_enrolled_subdomains,
         })
     }
 }
 
-impl TryFrom<proto::Oracle> for Oracle {
+impl TryFrom<proto::action::observe::Observation> for Observation {
     type Error = crate::ParseError;
 
-    fn try_from(value: proto::Oracle) -> Result<Self, Self::Error> {
-        let proto::Oracle { identity } = value;
-        let identity = Rc::new(
-            ParsedPublicKey::new(&EdDSAParameters, identity)
-                .map_err(|_| crate::ParseError(TypeId::of::<Oracle>()))?,
-        );
-        Ok(Oracle { identity })
+    fn try_from(value: proto::action::observe::Observation) -> Result<Self, Self::Error> {
+        let proto::action::observe::Observation {
+            domain,
+            hash_observed,
+            blockstamp,
+        } = value;
+
+        let domain = domain
+            .parse()
+            .map_err(|_| crate::ParseError(TypeId::of::<fqdn::FQDN>()))?;
+
+        let hash_observed = hash_observed
+            .ok_or_else(|| crate::ParseError(TypeId::of::<[u8; 32]>()))?
+            .try_into()
+            .map_err(|_| crate::ParseError(TypeId::of::<[u8; 32]>()))?;
+
+        let blockstamp = blockstamp
+            .ok_or_else(|| crate::ParseError(TypeId::of::<[u8; 32]>()))?
+            .try_into()
+            .map_err(|_| crate::ParseError(TypeId::of::<Blockstamp>()))?;
+
+        Ok(Observation {
+            domain,
+            hash_observed,
+            blockstamp,
+        })
     }
 }
