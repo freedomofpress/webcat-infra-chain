@@ -1,0 +1,8 @@
+[package]
+name = "felidae-traverse"
+version = "0.1.0"
+edition = "2021"
+description = "Traverse trait for visiting nested data structures"
+
+[dependencies]
+prost = "0.13"
