@@ -5,10 +5,11 @@ use std::{
     task::{Context, Poll},
 };
 
+use aws_lc_rs::digest;
 use clap::Parser;
 use color_eyre::eyre::{OptionExt, bail};
 use felidae_proto as proto;
-use felidae_types::transaction::Transaction;
+use felidae_types::transaction::{AuthenticatedTx, Transaction};
 use futures::future::BoxFuture;
 use prost::{Message, bytes::Bytes};
 use tendermint::{
@@ -61,13 +62,8 @@ impl Service<abci::MempoolRequest> for Mempool {
                 kind: _,
             }) = req;
 
-            // Parse a proto from bytes:
-            let Ok(tx_proto) = proto::transaction::Transaction::decode(tx_bytes) else {
-                return reject();
-            };
-
             // Parse the proto into the domain type, performing further validation:
-            let Ok(tx) = Transaction::try_from(tx_proto) else {
+            let Ok(tx) = AuthenticatedTx::from_proto(tx_bytes) else {
                 return reject();
             };
 

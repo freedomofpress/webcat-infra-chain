@@ -9,6 +9,9 @@ use prost::{Message as _, bytes::Bytes};
 
 use felidae_traverse::Traverse;
 
+mod signer;
+pub use signer::{AsyncSigner, Ed25519KeyPairs, Signer};
+
 #[derive(thiserror::Error, Debug)]
 pub enum SignError {
     #[error("No keypair available for public key in transaction")]
@@ -17,34 +20,9 @@ pub enum SignError {
     AlreadySigned,
 }
 
-/// A signer is something that can sign a digest using one or more Ed25519 keypairs.
-pub trait Signer {
-    /// This should return the signature if and only if the public key matches a keypair that can
-    /// produce a signature through the signer.
-    fn sign_with(&self, public_key: &[u8], digest: Digest) -> Option<Vec<u8>>;
-}
-
-impl Signer for Ed25519KeyPair {
-    fn sign_with(&self, public_key: &[u8], digest: Digest) -> Option<Vec<u8>> {
-        if self.public_key().as_ref() == public_key {
-            let signature = self.sign(digest.as_ref());
-            Some(signature.as_ref().to_vec())
-        } else {
-            None
-        }
-    }
-}
-
-impl Signer for HashMap<&[u8], Ed25519KeyPair> {
-    fn sign_with(&self, public_key: &[u8], digest: Digest) -> Option<Vec<u8>> {
-        self.get(public_key)
-            .and_then(|kp| kp.sign_with(public_key, digest))
-    }
-}
-
 impl super::Signature {
     /// Create a new blank signature for the given public key.
-    pub fn new(public_key: Bytes) -> Self {
+    pub fn unsigned(public_key: Bytes) -> Self {
         Self {
             public_key,
             signature: Bytes::new(),
@@ -60,7 +38,7 @@ impl From<super::Signature> for UnparsedPublicKey<Bytes> {
 
 impl super::Transaction {
     /// Decode a transaction and verify all its signatures, stripping them in the process.
-    pub fn verify_from_proto<B: AsRef<[u8]>>(
+    pub fn authenticate_from_proto<B: AsRef<[u8]>>(
         context: Context,
         buf: B,
     ) -> Result<Self, VerifyError> {
@@ -71,7 +49,7 @@ impl super::Transaction {
     }
 
     /// Deserialize a transaction from JSON and verify all its signatures, stripping them in the process.
-    pub fn verify_from_json(context: Context, s: &str) -> Result<Self, VerifyError> {
+    pub fn authenticate_from_json(context: Context, s: &str) -> Result<Self, VerifyError> {
         let tx: Self = serde_json::from_str(s).map_err(|_| VerifyError)?;
         let mut tx = tx.verify_all(context).map_err(|_| VerifyError)?;
         tx.unsign_all();

@@ -458,7 +458,7 @@ impl From<Admin> for proto::Admin {
 
 impl From<Admin> for proto::Signature {
     fn from(admin: Admin) -> Self {
-        proto::Signature::new(admin.identity)
+        proto::Signature::unsigned(admin.identity)
     }
 }
 
@@ -496,6 +496,6 @@ impl From<Oracle> for proto::Oracle {
 
 impl From<Oracle> for proto::Signature {
     fn from(oracle: Oracle) -> Self {
-        proto::Signature::new(oracle.identity)
+        proto::Signature::unsigned(oracle.identity)
     }
 }

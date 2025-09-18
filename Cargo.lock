@@ -479,9 +479,29 @@ name = "felidae-proto"
 version = "0.1.0"
 dependencies = [
  "aws-lc-rs",
+ "felidae-traverse",
+ "felidae-traverse-derive",
  "prost 0.14.1",
  "prost-build",
+ "serde",
+ "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "felidae-traverse"
+version = "0.1.0"
+dependencies = [
+ "prost 0.13.5",
+]
+
+[[package]]
+name = "felidae-traverse-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -493,6 +513,7 @@ dependencies = [
  "fqdn",
  "parking_lot",
  "prost 0.14.1",
+ "serde",
  "tendermint",
  "thiserror",
 ]

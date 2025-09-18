@@ -1,93 +1,94 @@
-use std::{any::TypeId, marker::PhantomData, rc::Rc};
-
-use aws_lc_rs::{
-    digest::{Context, Digest},
-    signature::{Ed25519KeyPair, EdDSAParameters, KeyPair, ParsedPublicKey, UnparsedPublicKey},
-};
-use prost::Message as _;
-
+use aws_lc_rs::digest::{Context, SHA256};
 use felidae_proto::transaction::{self as proto};
+use prost::bytes::Bytes;
+use std::{hash::Hash, ops::Deref};
+use tendermint::AppHash;
 
-#[derive(Clone)]
+/// Type conversions between the protobuf-generated types and the domain types.
+mod convert;
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Transaction {
     pub chain_id: String,
     pub actions: Vec<Action>,
 }
 
-#[derive(Clone)]
-pub struct Signature<P> {
-    public_key: UnparsedPublicKey<Vec<u8>>,
-    signature: Vec<u8>,
-    party: PhantomData<fn(&P)>,
-}
+/// A transaction that has been signed and whose signatures have been verified.
+///
+/// This transaction is not necessarily valid, either internally or against the current state.
+/// However, it is guaranteed that it was signed by the claimed public keys.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AuthenticatedTx(Transaction);
 
-impl<P> Signature<P> {
-    pub fn sign(keypair: &Ed25519KeyPair, mut context: Context, message: &[u8]) -> Self {
-        context.update(message);
-        let hash = context.finish();
-        let signature = keypair.sign(hash.as_ref());
-        let public_key = keypair.public_key().as_ref().to_vec();
-        Self {
-            public_key: UnparsedPublicKey::new(&EdDSAParameters, public_key),
-            signature: signature.as_ref().to_vec(),
-            party: PhantomData,
-        }
-    }
+impl Deref for AuthenticatedTx {
+    type Target = Transaction;
 
-    pub(crate) fn from_parts(public_key: Vec<u8>, signature: Vec<u8>) -> Self {
-        Self {
-            public_key: UnparsedPublicKey::new(&EdDSAParameters, public_key),
-            signature,
-            party: PhantomData,
-        }
-    }
-
-    pub fn public_key(&self) -> &[u8] {
-        self.public_key.as_ref()
-    }
-
-    pub fn verify_digest(
-        &self,
-        mut context: Context,
-        message: &[u8],
-    ) -> Result<(), aws_lc_rs::error::Unspecified> {
-        context.update(message);
-        let hash = context.finish();
-        self.public_key.verify_digest(&hash, &self.signature)
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
-#[derive(Clone)]
+impl AuthenticatedTx {
+    /// Deserialize a transaction from JSON, verify all its signatures, and convert it into the
+    /// domain type.
+    pub fn from_json(json: &str) -> Result<AuthenticatedTx, crate::ParseError> {
+        Ok(AuthenticatedTx(
+            proto::Transaction::authenticate_from_json(Context::new(&SHA256), json)?.try_into()?,
+        ))
+    }
+
+    /// Decode a transaction from bytes, verify all its signatures, and convert it into the domain
+    /// type.
+    pub fn from_proto<B: AsRef<[u8]>>(buf: B) -> Result<AuthenticatedTx, crate::ParseError> {
+        Ok(AuthenticatedTx(
+            proto::Transaction::authenticate_from_proto(Context::new(&SHA256), buf)?.try_into()?,
+        ))
+    }
+}
+
+impl Transaction {
+    /// Serialize the transaction to JSON, signing all its actions with the given signer.
+    pub fn sign_to_json(self, signer: impl proto::Signer) -> Result<String, proto::SignError> {
+        proto::Transaction::from(self).sign_to_json(Context::new(&SHA256), signer)
+    }
+
+    /// Encode the transaction to bytes, signing all its actions with the given signer.
+    pub fn sign_to_proto(self, signer: impl proto::Signer) -> Result<Vec<u8>, proto::SignError> {
+        proto::Transaction::from(self).sign_to_proto(Context::new(&SHA256), signer)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Action {
     Reconfigure(Reconfigure),
     Observe(Observe),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Reconfigure {
-    pub signature: Signature<Reconfigure>,
+    pub admin: Admin,
     pub config: Config,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Config {
     pub admin_config: AdminConfig,
     pub oracle_config: OracleConfig,
     pub onion_config: OnionConfig,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AdminConfig {
     pub admins: Vec<Admin>,
     pub voting_config: VotingConfig,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Admin {
-    pub identity: Rc<ParsedPublicKey>,
+    identity: Bytes,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OracleConfig {
     pub enabled: bool,
     pub oracles: Vec<Oracle>,
@@ -95,271 +96,75 @@ pub struct OracleConfig {
     pub max_enrolled_subdomains: u64,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Oracle {
-    pub identity: Rc<ParsedPublicKey>,
+    identity: Bytes,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OnionConfig {
     pub enabled: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VotingConfig {
-    pub total: u64,
-    pub quorum: u64,
-    pub timeout: u64,
-    pub delay: u64,
+    pub total: Total,
+    pub quorum: Quorum,
+    pub timeout: Timeout,
+    pub delay: Delay,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Total(pub u64);
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Quorum(pub u64);
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Timeout(pub u64);
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Delay(pub u64);
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Observe {
-    pub signature: Signature<Observe>,
+    pub oracle: Oracle,
     pub observation: Observation,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Observation {
     pub domain: fqdn::FQDN,
-    pub hash_observed: [u8; 32],
+    pub hash_observed: HashObserved,
     pub blockstamp: Blockstamp,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct HashObserved(pub [u8; 32]);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Blockstamp {
-    pub app_hash: [u8; 32],
+    pub app_hash: AppHash,
     pub block_number: u64,
 }
 
-impl TryFrom<proto::Transaction> for Transaction {
-    type Error = crate::ParseError;
-
-    fn try_from(tx: proto::Transaction) -> Result<Self, Self::Error> {
-        let proto::Transaction { chain_id, actions } = tx;
-
-        let actions = actions
-            .into_iter()
-            .map(TryInto::try_into)
-            .collect::<Result<_, _>>()?;
-
-        Ok(Transaction { chain_id, actions })
+impl PartialOrd for Blockstamp {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
-impl From<Transaction> for proto::Transaction {
-    fn from(tx: Transaction) -> Self {
-        let Transaction { chain_id, actions } = tx;
-        proto::Transaction {
-            chain_id,
-            actions: actions.into_iter().map(Into::into).collect(),
-        }
+impl Ord for Blockstamp {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.block_number
+            .cmp(&other.block_number)
+            .then_with(|| self.app_hash.as_bytes().cmp(other.app_hash.as_bytes()))
     }
 }
 
-impl TryFrom<proto::Action> for Action {
-    type Error = crate::ParseError;
-
-    fn try_from(value: proto::Action) -> Result<Self, Self::Error> {
-        match value.action {
-            Some(proto::action::Action::Reconfigure(reconfigure)) => {
-                Ok(Action::Reconfigure(reconfigure.try_into().map_err(
-                    |_| crate::ParseError(TypeId::of::<Reconfigure>()),
-                )?))
-            }
-            Some(proto::action::Action::Observe(observe)) => Ok(Action::Observe(
-                observe
-                    .try_into()
-                    .map_err(|_| crate::ParseError(TypeId::of::<Observe>()))?,
-            )),
-            None => Err(crate::ParseError(TypeId::of::<Action>())),
-        }
-    }
-}
-
-impl From<Action> for proto::Action {
-    fn from(action: Action) -> Self {
-        match action {
-            Action::Reconfigure(reconfigure) => proto::Action {
-                action: Some(proto::action::Action::Reconfigure(
-                    proto::action::Reconfigure {
-                        admin_identity: todo!(),
-                        admin_signature: todo!(),
-                        config: todo!(),
-                    },
-                )),
-            },
-            Action::Observe(observe) => proto::Action {
-                action: Some(proto::action::Action::Observe(proto::action::Observe {
-                    oracle_identity: todo!(),
-                    oracle_signature: todo!(),
-                    observation: todo!(),
-                })),
-            },
-        }
-    }
-}
-
-impl TryFrom<proto::action::Reconfigure> for Reconfigure {
-    type Error = crate::ParseError;
-
-    fn try_from(value: proto::action::Reconfigure) -> Result<Self, Self::Error> {
-        let proto::action::Reconfigure {
-            admin_identity,
-            admin_signature,
-            config,
-        } = value;
-
-        // TODO: parse identity and signature
-
-        let config = config
-            .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<Config>()))??;
-
-        Ok(Reconfigure {
-            admin_identity,
-            admin_signature,
-            config,
-        })
-    }
-}
-
-impl TryFrom<proto::action::Observe> for Observe {
-    type Error = crate::ParseError;
-
-    fn try_from(value: proto::action::Observe) -> Result<Self, Self::Error> {
-        let proto::action::Observe {
-            oracle_identity,
-            oracle_signature,
-            observation,
-        } = value;
-
-        // TODO: parse identity and signature
-
-        let observation = observation
-            .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<Observation>()))??;
-
-        Ok(Observe {
-            oracle_identity,
-            oracle_signature,
-            observation,
-        })
-    }
-}
-
-impl TryFrom<proto::Config> for Config {
-    type Error = crate::ParseError;
-
-    fn try_from(value: proto::Config) -> Result<Self, Self::Error> {
-        let proto::Config {
-            admin_config,
-            oracle_config,
-            onion_config,
-        } = value;
-
-        let admin_config = admin_config
-            .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<AdminConfig>()))??;
-
-        let oracle_config = oracle_config
-            .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<OracleConfig>()))??;
-
-        let onion_config = onion_config
-            .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<OnionConfig>()))??;
-
-        Ok(Config {
-            admin_config,
-            oracle_config,
-            onion_config,
-        })
-    }
-}
-
-impl TryFrom<proto::config::AdminConfig> for AdminConfig {
-    type Error = crate::ParseError;
-
-    fn try_from(value: proto::config::AdminConfig) -> Result<Self, Self::Error> {
-        let proto::config::AdminConfig {
-            admins,
-            voting_config,
-        } = value;
-
-        let admins = admins
-            .into_iter()
-            .map(TryInto::try_into)
-            .collect::<Result<_, _>>()?;
-
-        let voting_config = voting_config
-            .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<VotingConfig>()))??;
-
-        Ok(AdminConfig {
-            admins,
-            voting_config,
-        })
-    }
-}
-
-impl TryFrom<proto::config::OracleConfig> for OracleConfig {
-    type Error = crate::ParseError;
-
-    fn try_from(value: proto::config::OracleConfig) -> Result<Self, Self::Error> {
-        let proto::config::OracleConfig {
-            enabled,
-            oracles,
-            voting_config,
-            max_enrolled_subdomains,
-        } = value;
-
-        let oracles = oracles
-            .into_iter()
-            .map(TryInto::try_into)
-            .collect::<Result<_, _>>()?;
-
-        let voting_config = voting_config
-            .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<VotingConfig>()))??;
-
-        Ok(OracleConfig {
-            enabled,
-            oracles,
-            voting_config,
-            max_enrolled_subdomains,
-        })
-    }
-}
-
-impl TryFrom<proto::action::observe::Observation> for Observation {
-    type Error = crate::ParseError;
-
-    fn try_from(value: proto::action::observe::Observation) -> Result<Self, Self::Error> {
-        let proto::action::observe::Observation {
-            domain,
-            hash_observed,
-            blockstamp,
-        } = value;
-
-        let domain = domain
-            .parse()
-            .map_err(|_| crate::ParseError(TypeId::of::<fqdn::FQDN>()))?;
-
-        let hash_observed = hash_observed
-            .ok_or_else(|| crate::ParseError(TypeId::of::<[u8; 32]>()))?
-            .try_into()
-            .map_err(|_| crate::ParseError(TypeId::of::<[u8; 32]>()))?;
-
-        let blockstamp = blockstamp
-            .ok_or_else(|| crate::ParseError(TypeId::of::<[u8; 32]>()))?
-            .try_into()
-            .map_err(|_| crate::ParseError(TypeId::of::<Blockstamp>()))?;
-
-        Ok(Observation {
-            domain,
-            hash_observed,
-            blockstamp,
-        })
+impl Hash for Blockstamp {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.app_hash.as_bytes().hash(state);
+        self.block_number.hash(state);
     }
 }

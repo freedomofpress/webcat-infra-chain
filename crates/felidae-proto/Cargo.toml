@@ -7,6 +7,10 @@ edition = "2024"
 prost = { workspace = true }
 aws-lc-rs = { workspace = true }
 thiserror = { workspace = true }
+felidae-traverse = { path = "../felidae-traverse" }
+felidae-traverse-derive = { path = "../felidae-traverse-derive" }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [build-dependencies]
 prost-build = { workspace = true }

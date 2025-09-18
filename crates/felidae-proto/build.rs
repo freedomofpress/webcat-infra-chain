@@ -18,6 +18,7 @@ fn main() -> Result<()> {
         let proto_refs: Vec<&str> = proto_files.iter().map(|s| s.as_str()).collect();
         prost_build::Config::new()
             .bytes(["."])
+            .type_attribute(".", "#[derive(::felidae_traverse_derive::Traverse, ::serde::Serialize, ::serde::Deserialize)]")
             .compile_protos(&proto_refs, &["src/"])?;
     }
 
