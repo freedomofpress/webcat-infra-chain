@@ -479,6 +479,7 @@ name = "felidae-proto"
 version = "0.1.0"
 dependencies = [
  "aws-lc-rs",
+ "bytes",
  "felidae-traverse",
  "felidae-traverse-derive",
  "prost 0.14.1",

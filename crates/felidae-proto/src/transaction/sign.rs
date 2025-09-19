@@ -3,14 +3,17 @@ use std::{any::Any, collections::HashMap};
 pub use aws_lc_rs::error::Unspecified as VerifyError;
 use aws_lc_rs::{
     digest::{Context, Digest},
-    signature::{Ed25519KeyPair, EdDSAParameters, KeyPair as _, UnparsedPublicKey},
+    signature::{
+        ECDSA_P256_SHA256_FIXED, ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, KeyPair as _,
+        UnparsedPublicKey,
+    },
 };
 use prost::{Message as _, bytes::Bytes};
 
 use felidae_traverse::Traverse;
 
 mod signer;
-pub use signer::{AsyncSigner, Ed25519KeyPairs, Signer};
+pub use signer::{AsyncSigner, KeyPair, KeyPairs, Signer};
 
 #[derive(thiserror::Error, Debug)]
 pub enum SignError {
@@ -32,7 +35,7 @@ impl super::Signature {
 
 impl From<super::Signature> for UnparsedPublicKey<Bytes> {
     fn from(sig: super::Signature) -> Self {
-        UnparsedPublicKey::new(&EdDSAParameters, sig.public_key)
+        UnparsedPublicKey::new(&ECDSA_P256_SHA256_FIXED, sig.public_key)
     }
 }
 
@@ -143,17 +146,19 @@ impl super::Transaction {
             }) = (v as &dyn Any).downcast_ref::<super::Signature>()
             {
                 if !signature.is_empty() {
-                    if let Err(e) = UnparsedPublicKey::new(&EdDSAParameters, public_key)
-                        .verify_digest(&digest, signature)
+                    if let Err(e) = UnparsedPublicKey::new(&ECDSA_P256_SHA256_FIXED, public_key)
+                        .verify(digest.as_ref(), signature)
                     {
                         result = Err(e);
                     }
+                } else {
+                    // Missing signature is an error:
+                    result = Err(VerifyError);
                 }
-            } else {
-                // Missing signature is an error:
-                result = Err(VerifyError);
             }
         });
         result.map(|()| self)
     }
 }
+
+mod test;

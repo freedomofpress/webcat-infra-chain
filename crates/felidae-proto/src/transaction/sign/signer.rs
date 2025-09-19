@@ -1,3 +1,5 @@
+use aws_lc_rs::rand::SystemRandom;
+
 use super::*;
 
 /// A signer is something that can sign a digest using one or more Ed25519 keypairs.
@@ -19,10 +21,42 @@ pub trait AsyncSigner {
     ) -> impl Future<Output = Option<Vec<u8>>> + Send + '_;
 }
 
-impl Signer for Ed25519KeyPair {
+#[derive(Debug)]
+pub struct KeyPair {
+    keypair: EcdsaKeyPair,
+}
+
+impl KeyPair {
+    /// Create a fresh new keypair.
+    pub fn generate() -> Result<Self, aws_lc_rs::error::Unspecified> {
+        let keypair = EcdsaKeyPair::generate(&ECDSA_P256_SHA256_FIXED_SIGNING)?;
+        Ok(Self { keypair })
+    }
+
+    /// Get the public key corresponding to this keypair.
+    pub fn public_key(&self) -> &[u8] {
+        self.keypair.public_key().as_ref()
+    }
+
+    /// Create a new keypair from the given PKCS#8-encoded private key.
+    pub fn decode(pkcs8: &[u8]) -> Result<Self, aws_lc_rs::error::Unspecified> {
+        let keypair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8)?;
+        Ok(Self { keypair })
+    }
+
+    /// Serialize the keypair to PKCS#8 format.
+    pub fn encode(&self) -> Result<Vec<u8>, aws_lc_rs::error::Unspecified> {
+        Ok(self.keypair.to_pkcs8v1()?.as_ref().to_vec())
+    }
+}
+
+impl Signer for KeyPair {
     fn sign_with(&self, public_key: &[u8], digest: Digest) -> Option<Vec<u8>> {
-        if self.public_key().as_ref() == public_key {
-            let signature = self.sign(digest.as_ref());
+        if self.public_key() == public_key {
+            let signature = self
+                .keypair
+                .sign(&SystemRandom::new(), digest.as_ref())
+                .ok()?;
             Some(signature.as_ref().to_vec())
         } else {
             None
@@ -30,12 +64,12 @@ impl Signer for Ed25519KeyPair {
     }
 }
 
-/// A collection of Ed25519 keypairs, indexed by public key.
-pub struct Ed25519KeyPairs {
-    keypairs: HashMap<Bytes, Ed25519KeyPair>,
+/// A collection of keypairs, indexed by public key.
+pub struct KeyPairs {
+    keypairs: HashMap<Bytes, KeyPair>,
 }
 
-impl Ed25519KeyPairs {
+impl KeyPairs {
     /// Create an empty collection of keypairs.
     pub fn new() -> Self {
         Self {
@@ -44,25 +78,25 @@ impl Ed25519KeyPairs {
     }
 
     /// Insert a keypair into the collection.
-    pub fn insert(&mut self, keypair: Ed25519KeyPair) {
+    pub fn insert(&mut self, keypair: KeyPair) {
         self.keypairs
             .insert(Bytes::from(keypair.public_key().as_ref().to_vec()), keypair);
     }
 
     /// Remove a keypair from the collection by its public key.
-    pub fn remove(&mut self, public_key: &[u8]) -> Option<Ed25519KeyPair> {
-        self.keypairs.remove(public_key)
+    pub fn remove(&mut self, public_key: &[u8]) -> bool {
+        self.keypairs.remove(public_key).is_some()
     }
 }
 
-impl Default for Ed25519KeyPairs {
+impl Default for KeyPairs {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl FromIterator<Ed25519KeyPair> for Ed25519KeyPairs {
-    fn from_iter<T: IntoIterator<Item = Ed25519KeyPair>>(iter: T) -> Self {
+impl FromIterator<KeyPair> for KeyPairs {
+    fn from_iter<T: IntoIterator<Item = KeyPair>>(iter: T) -> Self {
         let mut keypairs = Self::new();
         for kp in iter {
             keypairs.insert(kp);
@@ -71,7 +105,7 @@ impl FromIterator<Ed25519KeyPair> for Ed25519KeyPairs {
     }
 }
 
-impl Signer for Ed25519KeyPairs {
+impl Signer for KeyPairs {
     fn sign_with(&self, public_key: &[u8], digest: Digest) -> Option<Vec<u8>> {
         self.keypairs
             .get(public_key)

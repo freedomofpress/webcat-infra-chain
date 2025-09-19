@@ -62,13 +62,17 @@ impl Service<abci::MempoolRequest> for Mempool {
                 kind: _,
             }) = req;
 
-            // Parse the proto into the domain type, performing further validation:
+            // Parse the proto into the domain type, validating structure and verifying signatures:
             let Ok(tx) = AuthenticatedTx::from_proto(tx_bytes) else {
                 return reject();
             };
 
             // TODO: Speculatively execute the transaction against the chain state without
-            // committing the results of the execution
+            // committing the results of the execution:
+            //
+            // Check the chain ID, then run through each action in order, check it for
+            // well-formedness and validity against the current state, and apply its effects to a
+            // copy of the current state. If any action is invalid, reject the transaction.
 
             Ok(MempoolResponse::CheckTx(abci::response::CheckTx::default()))
         })
