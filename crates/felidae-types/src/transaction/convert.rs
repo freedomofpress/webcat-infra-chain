@@ -1,5 +1,5 @@
 use aws_lc_rs::signature::{EdDSAParameters, ParsedPublicKey};
-use felidae_proto::transaction::{self as proto};
+use felidae_proto::transaction::{self as proto, KeyPair};
 use std::any::TypeId;
 
 use super::*;
@@ -25,6 +25,32 @@ impl From<Transaction> for proto::Transaction {
         proto::Transaction {
             chain_id,
             actions: actions.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl TryFrom<proto::Signature> for Unsigned {
+    type Error = crate::ParseError;
+
+    fn try_from(value: proto::Signature) -> Result<Self, Self::Error> {
+        let _pk = ParsedPublicKey::new(&EdDSAParameters, &value.public_key)
+            .map_err(|_| crate::ParseError(TypeId::of::<ParsedPublicKey>()))?;
+        Ok(Unsigned {
+            public_key: value.public_key,
+        })
+    }
+}
+
+impl From<Unsigned> for proto::Signature {
+    fn from(unsigned: Unsigned) -> Self {
+        proto::Signature::unsigned(unsigned.public_key)
+    }
+}
+
+impl From<KeyPair> for Unsigned {
+    fn from(value: KeyPair) -> Self {
+        Unsigned {
+            public_key: value.public_key().as_ref().to_vec().into(),
         }
     }
 }
@@ -66,26 +92,44 @@ impl TryFrom<proto::action::Reconfigure> for Reconfigure {
     type Error = crate::ParseError;
 
     fn try_from(value: proto::action::Reconfigure) -> Result<Self, Self::Error> {
-        let proto::action::Reconfigure { signature, config } = value;
+        let proto::action::Reconfigure {
+            signature,
+            config,
+            version,
+        } = value;
 
-        let admin = signature
-            .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<Admin>()))??;
+        let admin: Admin = signature
+            .map(Unsigned::try_from)
+            .ok_or_else(|| crate::ParseError(TypeId::of::<Admin>()))??
+            .try_into()?;
 
         let config = config
             .map(TryInto::try_into)
             .ok_or_else(|| crate::ParseError(TypeId::of::<Config>()))??;
 
-        Ok(Reconfigure { admin, config })
+        let version: u64 = version
+            .try_into()
+            .map_err(|_| crate::ParseError(TypeId::of::<u64>()))?;
+
+        Ok(Reconfigure {
+            admin,
+            config,
+            version,
+        })
     }
 }
 
 impl From<Reconfigure> for proto::action::Reconfigure {
     fn from(reconfigure: Reconfigure) -> Self {
-        let Reconfigure { admin, config } = reconfigure;
+        let Reconfigure {
+            admin,
+            config,
+            version,
+        } = reconfigure;
         proto::action::Reconfigure {
             signature: Some(admin.into()),
             config: Some(config.into()),
+            version: version as i64,
         }
     }
 }
@@ -100,8 +144,9 @@ impl TryFrom<proto::action::Observe> for Observe {
         } = value;
 
         let oracle = signature
-            .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<Oracle>()))??;
+            .map(Unsigned::try_from)
+            .ok_or_else(|| crate::ParseError(TypeId::of::<Oracle>()))??
+            .try_into()?;
 
         let observation = observation
             .map(TryInto::try_into)
@@ -436,10 +481,10 @@ impl TryFrom<proto::Admin> for Admin {
     }
 }
 
-impl TryFrom<proto::Signature> for Admin {
+impl TryFrom<Unsigned> for Admin {
     type Error = crate::ParseError;
 
-    fn try_from(value: proto::Signature) -> Result<Self, Self::Error> {
+    fn try_from(value: Unsigned) -> Result<Self, Self::Error> {
         let _pk = ParsedPublicKey::new(&EdDSAParameters, &value.public_key)
             .map_err(|_| crate::ParseError(TypeId::of::<ParsedPublicKey>()))?;
         Ok(Admin {
@@ -474,10 +519,10 @@ impl TryFrom<proto::Oracle> for Oracle {
     }
 }
 
-impl TryFrom<proto::Signature> for Oracle {
+impl TryFrom<Unsigned> for Oracle {
     type Error = crate::ParseError;
 
-    fn try_from(value: proto::Signature) -> Result<Self, Self::Error> {
+    fn try_from(value: Unsigned) -> Result<Self, Self::Error> {
         let _pk = ParsedPublicKey::new(&EdDSAParameters, &value.public_key)
             .map_err(|_| crate::ParseError(TypeId::of::<ParsedPublicKey>()))?;
         Ok(Oracle {

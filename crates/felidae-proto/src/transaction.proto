@@ -58,6 +58,7 @@ message Action {
     message Reconfigure {
         Signature signature = 1;
         Config config = 2;
+        int64 version = 3;
     }
 
     message Observe {

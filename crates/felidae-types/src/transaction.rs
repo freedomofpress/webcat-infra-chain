@@ -4,8 +4,13 @@ use prost::bytes::Bytes;
 use std::{hash::Hash, ops::Deref};
 use tendermint::AppHash;
 
+use crate::{SignError, Signer};
+
 /// Type conversions between the protobuf-generated types and the domain types.
 mod convert;
+
+mod authenticated;
+pub use authenticated::AuthenticatedTx;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Transaction {
@@ -13,49 +18,9 @@ pub struct Transaction {
     pub actions: Vec<Action>,
 }
 
-/// A transaction that has been signed and whose signatures have been verified.
-///
-/// This transaction is not necessarily valid, either internally or against the current state.
-/// However, it is guaranteed that it was signed by the claimed public keys.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AuthenticatedTx(Transaction);
-
-impl Deref for AuthenticatedTx {
-    type Target = Transaction;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl AuthenticatedTx {
-    /// Deserialize a transaction from JSON, verify all its signatures, and convert it into the
-    /// domain type.
-    pub fn from_json(json: &str) -> Result<AuthenticatedTx, crate::ParseError> {
-        Ok(AuthenticatedTx(
-            proto::Transaction::authenticate_from_json(Context::new(&SHA256), json)?.try_into()?,
-        ))
-    }
-
-    /// Decode a transaction from bytes, verify all its signatures, and convert it into the domain
-    /// type.
-    pub fn from_proto<B: AsRef<[u8]>>(buf: B) -> Result<AuthenticatedTx, crate::ParseError> {
-        Ok(AuthenticatedTx(
-            proto::Transaction::authenticate_from_proto(Context::new(&SHA256), buf)?.try_into()?,
-        ))
-    }
-}
-
-impl Transaction {
-    /// Serialize the transaction to JSON, signing all its actions with the given signer.
-    pub fn sign_to_json(self, signer: impl proto::Signer) -> Result<String, proto::SignError> {
-        proto::Transaction::from(self).sign_to_json(Context::new(&SHA256), signer)
-    }
-
-    /// Encode the transaction to bytes, signing all its actions with the given signer.
-    pub fn sign_to_proto(self, signer: impl proto::Signer) -> Result<Vec<u8>, proto::SignError> {
-        proto::Transaction::from(self).sign_to_proto(Context::new(&SHA256), signer)
-    }
+pub struct Unsigned {
+    pub public_key: Bytes,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -68,6 +33,7 @@ pub enum Action {
 pub struct Reconfigure {
     pub admin: Admin,
     pub config: Config,
+    pub version: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
