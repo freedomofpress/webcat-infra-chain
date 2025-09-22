@@ -3,6 +3,7 @@ use felidae_proto::domain_types;
 use felidae_proto::transaction::{self as proto};
 use prost::bytes::Bytes;
 use std::{hash::Hash, ops::Deref, time::Duration};
+use tendermint::block::Height;
 use tendermint::{AppHash, Time};
 
 use crate::{SignError, Signer};
@@ -85,6 +86,7 @@ pub struct OracleConfig {
     pub oracles: Vec<Oracle>,
     pub voting_config: VotingConfig,
     pub max_enrolled_subdomains: u64,
+    pub observation_timeout: Duration,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -131,12 +133,15 @@ pub struct Observation {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct HashObserved(pub [u8; 32]);
+pub enum HashObserved {
+    Hash([u8; 32]),
+    NotFound,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Blockstamp {
     pub app_hash: AppHash,
-    pub block_number: u64,
+    pub block_height: Height,
 }
 
 impl PartialOrd for Blockstamp {
@@ -147,8 +152,8 @@ impl PartialOrd for Blockstamp {
 
 impl Ord for Blockstamp {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.block_number
-            .cmp(&other.block_number)
+        self.block_height
+            .cmp(&other.block_height)
             .then_with(|| self.app_hash.as_bytes().cmp(other.app_hash.as_bytes()))
     }
 }
@@ -156,6 +161,6 @@ impl Ord for Blockstamp {
 impl Hash for Blockstamp {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.app_hash.as_bytes().hash(state);
-        self.block_number.hash(state);
+        self.block_height.hash(state);
     }
 }

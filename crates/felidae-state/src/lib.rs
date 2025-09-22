@@ -4,18 +4,20 @@ extern crate tracing;
 #[macro_use]
 extern crate color_eyre;
 
-use std::time::Duration;
+use std::{collections::BTreeSet, time::Duration};
 
 use aws_lc_rs::digest;
 use cnidarium::{RootHash, Storage};
 use color_eyre::{
     Report,
-    eyre::{OptionExt, bail},
+    eyre::{OptionExt, bail, eyre},
 };
 use felidae_types::transaction::{
-    Action, Admin, AdminConfig, AuthenticatedTx, ChainId, Config, Delay, Observe, OnionConfig,
-    Oracle, OracleConfig, Quorum, Reconfigure, Timeout, Total, Transaction, VotingConfig,
+    Action, Admin, AdminConfig, AuthenticatedTx, Blockstamp, ChainId, Config, Delay, HashObserved,
+    Observation, Observe, OnionConfig, Oracle, OracleConfig, Quorum, Reconfigure, Timeout, Total,
+    Transaction, VotingConfig,
 };
+use futures::StreamExt;
 use tendermint::{
     AppHash, Time,
     abci::{
@@ -23,6 +25,7 @@ use tendermint::{
         types::{BlockSignatureInfo, CommitInfo, Misbehavior, Validator, VoteInfo},
     },
     block::{BlockIdFlag, Header, Height},
+    validator::Update,
     vote::Power,
 };
 
@@ -47,6 +50,13 @@ impl State {
             internal: Store::new(internal),
             canonical: Store::new(canonical),
         }
+    }
+
+    /// Helper function to pad block heights for lexicographic ordering.
+    ///
+    /// Uses 20 digits to accommodate the full u64 range.
+    fn pad_height(height: Height) -> String {
+        format!("{:020}", height.value())
     }
 
     /// Get the 3 root hashes: internal, canonical, and app hash (hash of internal and canonical).
@@ -133,6 +143,7 @@ impl State {
                     delay: Delay(Duration::from_secs(u64::MAX)), // No voting initially
                 },
                 max_enrolled_subdomains: 0, // No subdomains initially
+                observation_timeout: Duration::from_secs(u64::MAX), // No observations initially
             },
             onion_config: OnionConfig { enabled: false },
         })
@@ -157,6 +168,7 @@ impl State {
                     chain_id,
                     height,
                     time,
+                    app_hash,
                     version: _,
                     last_block_id: _,
                     last_commit_hash: _,
@@ -164,7 +176,6 @@ impl State {
                     validators_hash: _,
                     next_validators_hash: _,
                     consensus_hash: _,
-                    app_hash: _,
                     last_results_hash: _,
                     evidence_hash: _,
                     proposer_address: _,
@@ -183,6 +194,7 @@ impl State {
         }
 
         // Record validator uptime
+        let mut voting_validators = BTreeSet::new();
         for VoteInfo {
             validator,
             sig_info,
@@ -194,30 +206,37 @@ impl State {
                 | BlockSignatureInfo::LegacySigned => true,
             };
             if voted {
-                // TODO: record that this validator voted in the last block
+                voting_validators.insert(validator.address);
             }
         }
+        self.mark_validators_voted(voting_validators).await?;
 
         // TODO: Tombstone inactive validators?
 
         // Tombstone byzantine validators
         for Misbehavior {
-            validator,
+            validator: bad_validator,
             kind: _,
             height: _,
             time: _,
             total_voting_power: _,
         } in byzantine_validators
         {
-            self.tombstone_validator(validator).await?;
+            self.tombstone_validator(bad_validator).await?;
         }
 
         // Record the current block height and time:
         self.set_block_height(height).await?;
         self.set_block_time(time).await?;
 
-        // TODO: Process pending config changes
-        // TODO: Process pending oracle observations
+        // Record the previous block's app hash:
+        self.record_app_hash(app_hash).await?;
+
+        // TODO: Process config votes into pending config changes
+        // TODO: Process oracle votes into pending observations
+
+        // TODO: Process ripe pending config changes into current config
+        // TODO: Process ripe pending oracle observations into canonical state
 
         Ok(response::BeginBlock { events: vec![] })
     }
@@ -268,24 +287,34 @@ impl State {
             );
         }
 
-        // TODO: Pull the validator set from state, always
-        let validator_updates = vec![];
-
         Ok(response::EndBlock {
-            validator_updates,
+            validator_updates: self.active_validators().await?,
             events: vec![],
             consensus_param_updates: None,
         })
     }
 
     /// Handle a reconfiguration action.
-    pub async fn reconfigure(&self, reconfig: &Reconfigure) -> Result<(), Report> {
+    async fn reconfigure(&self, reconfig: &Reconfigure) -> Result<(), Report> {
         let Reconfigure {
-            admin: Admin { identity },
+            admin: admin @ Admin { identity },
             config,
             not_before,
             not_after,
         } = reconfig;
+
+        // Check that the admin is a current admin (or that there are no admins yet -- i.e. this is
+        // the initial configuration being set, which can be done without permission):
+        let current_config = self.config().await?;
+        if !current_config.admin_config.admins.is_empty()
+            && !current_config
+                .admin_config
+                .admins
+                .iter()
+                .any(|a| a == admin)
+        {
+            bail!("not a current admin: {}", hex::encode(identity));
+        }
 
         // Ensure the current time is within the not_before and not_after bounds:
         let current_time = self.block_time().await?;
@@ -305,11 +334,65 @@ impl State {
     }
 
     /// Handle an observation action.
-    pub async fn observe(&self, observe: &Observe) -> Result<(), Report> {
+    async fn observe(&self, observe: &Observe) -> Result<(), Report> {
         let Observe {
-            oracle: Oracle { identity },
-            observation,
+            oracle: oracle @ Oracle { identity },
+            observation:
+                Observation {
+                    domain,
+                    hash_observed,
+                    blockstamp:
+                        Blockstamp {
+                            block_height,
+                            app_hash,
+                        },
+                },
         } = observe;
+
+        // Check that the oracle is a current oracle:
+        let current_config = self.config().await?;
+        if !current_config
+            .oracle_config
+            .oracles
+            .iter()
+            .any(|o| o == oracle)
+        {
+            bail!("not a current oracle: {}", hex::encode(identity));
+        }
+
+        // Ensure the blockstamp is not in the future
+        let current_block_height = self.block_height().await?;
+        if *block_height >= current_block_height {
+            bail!("blockstamp {block_height} is in the future");
+        }
+
+        // Ensure the blockstamp is recent enough based on the configured observation timeout
+        let current_time = self.block_time().await?;
+        let block_time = self.time_of_block(*block_height).await?;
+        let observation_age = current_time.duration_since(block_time).map_err(|_| {
+            eyre!(
+                "current time {} is before block time {}",
+                current_time,
+                block_time
+            )
+        })?;
+        if observation_age >= current_config.oracle_config.observation_timeout {
+            bail!("blockstamp is too old based on observation timeout");
+        }
+
+        // Ensure the blockstamp's app hash matches the app hash at the given block number
+        let recorded_app_hash = self.previous_app_hash(*block_height).await?;
+        if recorded_app_hash != *app_hash {
+            bail!("blockstamp app hash does not match recorded app hash at block {block_height}");
+        }
+
+        if let HashObserved::NotFound = hash_observed {
+            // TODO: check that the domain exists in the union of canonical state or pending queue
+        } else {
+            // TODO: check that either the domain exists in (the union of canonical state or pending
+            // queue), or adding one more subdomain for this domain would not exceed the
+            // max_enrolled_subdomains
+        }
 
         // TODO: enqueue the observation in the vote queue for observations
 
@@ -317,7 +400,7 @@ impl State {
     }
 
     /// Get the current chain ID from the state.
-    pub async fn chain_id(&self) -> Result<ChainId, Report> {
+    async fn chain_id(&self) -> Result<ChainId, Report> {
         self.internal
             .get::<ChainId>("parameters/chain_id")
             .await?
@@ -327,7 +410,7 @@ impl State {
     /// Set the current chain ID in the state.
     ///
     /// This should only be called once, during initial setup.
-    pub async fn set_chain_id(&mut self, chain_id: ChainId) -> Result<(), Report> {
+    async fn set_chain_id(&mut self, chain_id: ChainId) -> Result<(), Report> {
         let existing = self.chain_id().await.ok();
         if existing.is_some() {
             bail!("chain ID is already set; cannot set it again");
@@ -338,7 +421,7 @@ impl State {
     }
 
     /// Get the current config from the state.
-    pub async fn config(&self) -> Result<Config, Report> {
+    async fn config(&self) -> Result<Config, Report> {
         self.internal
             .get::<Config>("parameters/config")
             .await?
@@ -346,13 +429,13 @@ impl State {
     }
 
     /// Set the current config in the state.
-    pub async fn set_config(&mut self, config: Config) -> Result<(), Report> {
+    async fn set_config(&mut self, config: Config) -> Result<(), Report> {
         self.internal.put("parameters/config", config).await;
         Ok(())
     }
 
     /// Get the current block height from the state.
-    pub async fn block_height(&self) -> Result<Height, Report> {
+    async fn block_height(&self) -> Result<Height, Report> {
         self.internal
             .get::<Height>("current/block_height")
             .await?
@@ -366,7 +449,7 @@ impl State {
     }
 
     /// Get the current block time from the state.
-    pub async fn block_time(&self) -> Result<Time, Report> {
+    async fn block_time(&self) -> Result<Time, Report> {
         self.internal
             .get::<Time>("current/block_time")
             .await?
@@ -376,31 +459,72 @@ impl State {
     /// Set the current block time in the state.
     async fn set_block_time(&mut self, time: Time) -> Result<(), Report> {
         self.internal.put("current/block_time", time).await;
+        self.record_block_time(time).await?;
         Ok(())
     }
 
+    /// Get the time of a specific block from the state.
+    async fn time_of_block(&self, height: Height) -> Result<Time, Report> {
+        self.internal
+            .get::<Time>(&format!("blocktime/{}", Self::pad_height(height)))
+            .await?
+            .ok_or_eyre("block time not found in state")
+    }
+
+    /// Record the time of the current block in the state.
+    async fn record_block_time(&mut self, time: Time) -> Result<(), Report> {
+        let height = self.block_height().await?;
+        self.internal
+            .put(&format!("blocktime/{}", Self::pad_height(height)), time)
+            .await;
+        Ok(())
+    }
+
+    /// Record the app hash of the previous block in the state.
+    async fn record_app_hash(&mut self, app_hash: AppHash) -> Result<(), Report> {
+        let height = self.block_height().await?.value() - 1;
+        self.internal
+            .put(
+                &format!("apphash/{}", Self::pad_height(height.try_into()?)),
+                app_hash.clone(),
+            )
+            .await;
+        Ok(())
+    }
+
+    /// Get the app hash of a specific previous block from the state.
+    async fn previous_app_hash(&self, block_height: Height) -> Result<AppHash, Report> {
+        self.internal
+            .get::<AppHash>(&format!("apphash/{}", Self::pad_height(block_height)))
+            .await?
+            .ok_or_eyre("app hash not found in state")
+    }
+
     /// Declare a new validator by its address.
-    pub async fn declare_validator(&mut self, validator: Validator) -> Result<(), Report> {
+    async fn declare_validator(&mut self, validator: Update) -> Result<(), Report> {
         // Check to ensure the validator does not exist already (prevents redeclaring tombstoned
         // validators to set their power back to non-zero):
         let existing: Option<Power> = self
             .internal
             .get(&format!(
                 "current/validators/{}",
-                hex::encode(validator.address)
+                hex::encode(validator.pub_key.to_bytes())
             ))
             .await?;
         if let Some(existing) = existing {
             bail!(
                 "Validator {} already exists with power {}",
-                hex::encode(validator.address),
+                hex::encode(validator.pub_key.to_bytes()),
                 existing,
             );
         }
 
         self.internal
             .put(
-                &format!("current/validators/{}", hex::encode(validator.address)),
+                &format!(
+                    "current/validators/{}",
+                    hex::encode(validator.pub_key.to_bytes())
+                ),
                 validator.power,
             )
             .await;
@@ -409,32 +533,94 @@ impl State {
     }
 
     /// Tombstone a validator by its address.
-    pub async fn tombstone_validator(
+    async fn tombstone_validator(
         &mut self,
-        Validator { address, .. }: Validator,
+        Validator {
+            address: bad_address,
+            ..
+        }: Validator,
     ) -> Result<(), Report> {
-        // Check to make sure the validator exists:
-        let existing: Option<Power> = self
-            .internal
-            .get(&format!("current/validators/{}", hex::encode(address)))
-            .await?;
-        if existing.is_none() {
-            bail!("Validator {} does not exist", hex::encode(address));
+        // Go through the list of active validators, taking the address (SHA-256 hash of the public
+        // key's first 20 bytes) as and checking if it matches the given address:
+        let active_validators = self.active_validators().await?;
+        let mut bad_pub_key = None;
+        for Update { pub_key, .. } in active_validators {
+            // Compute the address of this validator:
+            let mut context = digest::Context::new(&digest::SHA256);
+            context.update(&pub_key.to_bytes()[..20]);
+            let validator_address = context.finish().as_ref().to_vec();
+
+            // If the address matches, we've found the bad validator:
+            if validator_address == bad_address {
+                bad_pub_key = Some(pub_key);
+                break;
+            }
         }
 
-        self.internal
-            .put(
-                &format!("current/validators/{}", hex::encode(address)),
-                Power::from(0u32),
-            )
-            .await;
+        if let Some(bad_pub_key) = bad_pub_key {
+            info!(
+                "Tombstoning validator {}",
+                hex::encode(bad_pub_key.to_bytes())
+            );
+        } else {
+            warn!(
+                "Could not find validator with address {}; it may have already been tombstoned",
+                hex::encode(bad_address)
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Get all active validators.
+    async fn active_validators(&self) -> Result<Vec<Update>, Report> {
+        let mut updates = vec![];
+        let mut stream = self.internal.prefix::<Power>("current/validators/").await;
+        while let Some(Ok((key, power))) = stream.next().await {
+            let pub_key = hex::decode(key.trim_start_matches("current/validators/"))?;
+            if power.value() > 0 {
+                updates.push(Update {
+                    pub_key: tendermint::PublicKey::from_raw_ed25519(&pub_key)
+                        .ok_or_eyre("invalid ed25519 public key")?,
+                    power,
+                });
+            }
+        }
+        Ok(updates)
+    }
+
+    /// Record validator uptime for the current block.
+    async fn mark_validators_voted(&mut self, addresses: BTreeSet<[u8; 20]>) -> Result<(), Report> {
+        let active_validators = self.active_validators().await?;
+        let mut voting_validators = Vec::new();
+        for Update { pub_key, .. } in active_validators {
+            // Compute the address of this validator:
+            let mut context = digest::Context::new(&digest::SHA256);
+            context.update(&pub_key.to_bytes()[..20]);
+            let validator_address = context.finish().as_ref().to_vec();
+
+            // If the address is in the list of voting addresses, mark it as having voted:
+            if addresses.contains(validator_address.as_slice()) {
+                voting_validators.push(pub_key);
+            }
+        }
+
+        // TODO: Actually record the validator uptimes in the state
+        info!(
+            "Voting validators: {}",
+            voting_validators
+                .iter()
+                .map(|pk| hex::encode(pk.to_bytes()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
 
         Ok(())
     }
 
     /// Check a config for internal consistency and validity, as well as validity against the
     /// current config.
-    pub async fn check_config(
+    async fn check_config(
         &self,
         Config {
             version,
@@ -449,6 +635,7 @@ impl State {
                     oracles,
                     voting_config: oracle_voting_config,
                     max_enrolled_subdomains,
+                    observation_timeout: _, // Any timeout is acceptable
                 },
             onion_config:
                 OnionConfig {
@@ -479,7 +666,7 @@ impl State {
         Ok(())
     }
 
-    pub fn check_voting_config(
+    fn check_voting_config(
         &self,
         expected_total: Total,
         voting_config: &VotingConfig,

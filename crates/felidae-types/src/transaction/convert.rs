@@ -302,6 +302,7 @@ impl TryFrom<proto::config::OracleConfig> for OracleConfig {
             oracles,
             voting_config,
             max_enrolled_subdomains,
+            observation_timeout,
         } = value;
 
         let max_enrolled_subdomains: u64 = max_enrolled_subdomains
@@ -317,10 +318,17 @@ impl TryFrom<proto::config::OracleConfig> for OracleConfig {
             .map(TryInto::try_into)
             .ok_or_else(|| crate::ParseError(TypeId::of::<VotingConfig>()))??;
 
+        let observation_timeout = Duration::from_secs(
+            observation_timeout
+                .try_into()
+                .map_err(|_| crate::ParseError(TypeId::of::<Duration>()))?,
+        );
+
         Ok(OracleConfig {
             enabled,
             oracles,
             voting_config,
+            observation_timeout,
             max_enrolled_subdomains,
         })
     }
@@ -333,11 +341,13 @@ impl From<OracleConfig> for proto::config::OracleConfig {
             oracles,
             voting_config,
             max_enrolled_subdomains,
+            observation_timeout,
         } = config;
         proto::config::OracleConfig {
             enabled,
             oracles: oracles.into_iter().map(Into::into).collect(),
             voting_config: Some(voting_config.into()),
+            observation_timeout: observation_timeout.as_secs() as i64,
             max_enrolled_subdomains: max_enrolled_subdomains as i64,
         }
     }
@@ -427,16 +437,18 @@ impl TryFrom<proto::action::observe::Observation> for Observation {
             .parse()
             .map_err(|_| crate::ParseError(TypeId::of::<fqdn::FQDN>()))?;
 
-        let hash_observed = HashObserved(
-            hash_observed
-                .ok_or_else(|| crate::ParseError(TypeId::of::<HashObserved>()))?
+        let hash_observed = if let Some(hash) = hash_observed {
+            let hash: [u8; 32] = hash
                 .to_vec()
                 .try_into()
-                .map_err(|_| crate::ParseError(TypeId::of::<HashObserved>()))?,
-        );
+                .map_err(|_| crate::ParseError(TypeId::of::<HashObserved>()))?;
+            HashObserved::Hash(hash)
+        } else {
+            HashObserved::NotFound
+        };
 
         let blockstamp = blockstamp
-            .ok_or_else(|| crate::ParseError(TypeId::of::<[u8; 32]>()))?
+            .ok_or_else(|| crate::ParseError(TypeId::of::<Blockstamp>()))?
             .try_into()
             .map_err(|_| crate::ParseError(TypeId::of::<Blockstamp>()))?;
 
@@ -457,7 +469,10 @@ impl From<Observation> for proto::action::observe::Observation {
         } = observation;
         proto::action::observe::Observation {
             domain: domain.to_string(),
-            hash_observed: Some(hash_observed.0.to_vec().into()),
+            hash_observed: match hash_observed {
+                HashObserved::Hash(h) => Some(h.to_vec().into()),
+                HashObserved::NotFound => None,
+            },
             blockstamp: Some(blockstamp.into()),
         }
     }
@@ -479,13 +494,14 @@ impl TryFrom<proto::action::observe::observation::Blockstamp> for Blockstamp {
             .try_into()
             .map_err(|_| crate::ParseError(TypeId::of::<[u8; 32]>()))?;
 
-        let block_number: u64 = block_number
+        let block_height: Height = u64::try_from(block_number)
+            .map_err(|_| crate::ParseError(TypeId::of::<u64>()))?
             .try_into()
-            .map_err(|_| crate::ParseError(TypeId::of::<u64>()))?;
+            .map_err(|_| crate::ParseError(TypeId::of::<Height>()))?;
 
         Ok(Blockstamp {
             app_hash: block_hash,
-            block_number,
+            block_height,
         })
     }
 }
@@ -494,11 +510,11 @@ impl From<Blockstamp> for proto::action::observe::observation::Blockstamp {
     fn from(blockstamp: Blockstamp) -> Self {
         let Blockstamp {
             app_hash,
-            block_number,
+            block_height,
         } = blockstamp;
         proto::action::observe::observation::Blockstamp {
             block_hash: app_hash.as_bytes().to_vec().into(),
-            block_number: block_number as i64,
+            block_number: block_height.value() as i64,
         }
     }
 }

@@ -20,6 +20,7 @@ message Config {
         VotingConfig voting_config = 2;
         bool enabled = 3;
         int64 max_enrolled_subdomains = 4;
+        int64 observation_timeout = 5;
     }
 
     message OnionConfig {

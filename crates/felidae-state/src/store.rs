@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use cnidarium::{RootHash, Snapshot, StateDelta, StateRead, StateWrite, Storage};
 use color_eyre::{Report, eyre};
 use felidae_proto::DomainType;
