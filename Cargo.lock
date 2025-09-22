@@ -768,6 +768,7 @@ dependencies = [
  "felidae-proto",
  "felidae-types",
  "futures",
+ "hex",
  "tendermint",
  "tracing",
 ]

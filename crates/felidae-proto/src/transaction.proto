@@ -29,6 +29,7 @@ message Config {
     AdminConfig admin_config = 1;
     OracleConfig oracle_config = 2;
     OnionConfig onion_config = 3;
+    int64 version = 4;
 }
 
 message Oracle {
@@ -63,9 +64,8 @@ message Action {
     message Reconfigure {
         Signature signature = 1;
         Config config = 2;
-        int64 version = 3;
-        Timestamp not_before = 4;
-        Timestamp not_after = 5;
+        Timestamp not_before = 3;
+        Timestamp not_after = 4;
     }
 
     message Observe {

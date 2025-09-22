@@ -56,13 +56,13 @@ pub enum Action {
 pub struct Reconfigure {
     pub admin: Admin,
     pub config: Config,
-    pub version: u64,
     pub not_before: Time,
     pub not_after: Time,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Config {
+    pub version: u64,
     pub admin_config: AdminConfig,
     pub oracle_config: OracleConfig,
     pub onion_config: OnionConfig,
@@ -76,7 +76,7 @@ pub struct AdminConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Admin {
-    identity: Bytes,
+    pub identity: Bytes,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -89,7 +89,7 @@ pub struct OracleConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Oracle {
-    identity: Bytes,
+    pub identity: Bytes,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

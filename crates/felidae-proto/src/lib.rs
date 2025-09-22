@@ -78,3 +78,7 @@ impl TryFrom<transaction::Timestamp> for tendermint::Time {
 impl DomainType for tendermint::block::Height {
     type Proto = u64;
 }
+
+impl DomainType for tendermint::vote::Power {
+    type Proto = u64;
+}

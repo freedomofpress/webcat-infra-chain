@@ -115,7 +115,6 @@ impl TryFrom<proto::action::Reconfigure> for Reconfigure {
         let proto::action::Reconfigure {
             signature,
             config,
-            version,
             not_before,
             not_after,
         } = value;
@@ -128,10 +127,6 @@ impl TryFrom<proto::action::Reconfigure> for Reconfigure {
         let config = config
             .map(TryInto::try_into)
             .ok_or_else(|| crate::ParseError(TypeId::of::<Config>()))??;
-
-        let version: u64 = version
-            .try_into()
-            .map_err(|_| crate::ParseError(TypeId::of::<u64>()))?;
 
         let not_before = not_before
             .map(TryInto::try_into)
@@ -146,7 +141,6 @@ impl TryFrom<proto::action::Reconfigure> for Reconfigure {
         Ok(Reconfigure {
             admin,
             config,
-            version,
             not_before,
             not_after,
         })
@@ -158,14 +152,12 @@ impl From<Reconfigure> for proto::action::Reconfigure {
         let Reconfigure {
             admin,
             config,
-            version,
             not_before,
             not_after,
         } = reconfigure;
         proto::action::Reconfigure {
             signature: Some(admin.into()),
             config: Some(config.into()),
-            version: version as i64,
             not_before: Some(not_before.into()),
             not_after: Some(not_after.into()),
         }
@@ -215,10 +207,15 @@ impl TryFrom<proto::Config> for Config {
 
     fn try_from(value: proto::Config) -> Result<Self, Self::Error> {
         let proto::Config {
+            version,
             admin_config,
             oracle_config,
             onion_config,
         } = value;
+
+        let version = version
+            .try_into()
+            .map_err(|_| crate::ParseError(TypeId::of::<u64>()))?;
 
         let admin_config = admin_config
             .map(TryInto::try_into)
@@ -233,6 +230,7 @@ impl TryFrom<proto::Config> for Config {
             .ok_or_else(|| crate::ParseError(TypeId::of::<OnionConfig>()))??;
 
         Ok(Config {
+            version,
             admin_config,
             oracle_config,
             onion_config,
@@ -243,11 +241,13 @@ impl TryFrom<proto::Config> for Config {
 impl From<Config> for proto::Config {
     fn from(config: Config) -> Self {
         let Config {
+            version,
             admin_config,
             oracle_config,
             onion_config,
         } = config;
         proto::Config {
+            version: version as i64,
             admin_config: Some(admin_config.into()),
             oracle_config: Some(oracle_config.into()),
             onion_config: Some(onion_config.into()),

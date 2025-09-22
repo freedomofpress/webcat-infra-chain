@@ -12,3 +12,4 @@ futures = { workspace = true }
 aws-lc-rs = { workspace = true }
 tracing = { workspace = true }
 tendermint = { workspace = true }
+hex = { workspace = true }

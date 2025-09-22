@@ -14,7 +14,6 @@ fn sign_and_verify() {
             action: Some(action::Action::Reconfigure(action::Reconfigure {
                 signature: Some(Signature::unsigned(public_key.clone().into())),
                 config: None,
-                version: 0,
                 not_before: None,
                 not_after: None,
             })),
@@ -48,7 +47,6 @@ fn sign_and_verify_bad_sig() {
             action: Some(action::Action::Reconfigure(action::Reconfigure {
                 signature: Some(Signature::unsigned(public_key.clone().into())),
                 config: None,
-                version: 0,
                 not_before: None,
                 not_after: None,
             })),
@@ -91,7 +89,6 @@ fn sign_and_verify_missing_sig() {
             action: Some(action::Action::Reconfigure(action::Reconfigure {
                 signature: Some(Signature::unsigned(public_key.clone().into())),
                 config: None,
-                version: 0,
                 not_before: None,
                 not_after: None,
             })),

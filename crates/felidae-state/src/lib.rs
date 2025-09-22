@@ -4,6 +4,8 @@ extern crate tracing;
 #[macro_use]
 extern crate color_eyre;
 
+use std::time::Duration;
+
 use aws_lc_rs::digest;
 use cnidarium::{RootHash, Storage};
 use color_eyre::{
@@ -11,15 +13,17 @@ use color_eyre::{
     eyre::{OptionExt, bail},
 };
 use felidae_types::transaction::{
-    Action, AuthenticatedTx, ChainId, Config, Observe, Reconfigure, Transaction,
+    Action, Admin, AdminConfig, AuthenticatedTx, ChainId, Config, Delay, Observe, OnionConfig,
+    Oracle, OracleConfig, Quorum, Reconfigure, Timeout, Total, Transaction, VotingConfig,
 };
 use tendermint::{
-    AppHash, Hash, Time,
+    AppHash, Time,
     abci::{
-        self, request, response,
-        types::{BlockSignatureInfo, CommitInfo, Misbehavior, MisbehaviorKind, VoteInfo},
+        request, response,
+        types::{BlockSignatureInfo, CommitInfo, Misbehavior, Validator, VoteInfo},
     },
     block::{BlockIdFlag, Header, Height},
+    vote::Power,
 };
 
 mod store;
@@ -74,6 +78,12 @@ impl State {
         Ok(())
     }
 
+    /// Discard all pending changes.
+    pub fn abort(&mut self) {
+        self.internal.abort();
+        self.canonical.abort();
+    }
+
     /// Initialize the chain state.
     pub async fn init_chain(
         &mut self,
@@ -100,6 +110,33 @@ impl State {
         if !app_state_bytes.is_empty() {
             bail!("app state must be empty");
         }
+
+        // Set the initial config in the state:
+        self.set_config(Config {
+            version: 0,
+            admin_config: AdminConfig {
+                admins: vec![], // Default admin set: the first reconfig will set this
+                voting_config: VotingConfig {
+                    total: Total(0),   // No admins required to initially reconfigure
+                    quorum: Quorum(0), // No quorum required to initially reconfigure
+                    timeout: Timeout(Duration::from_secs(0)), // No follow-up voting for initial reconfig
+                    delay: Delay(Duration::from_secs(0)),     // No delay for initial reconfig
+                },
+            },
+            oracle_config: OracleConfig {
+                enabled: false,  // Oracles disabled initially
+                oracles: vec![], // No oracles initially
+                voting_config: VotingConfig {
+                    total: Total(0),                             // No oracles initially
+                    quorum: Quorum(0),                           // No voting initially
+                    timeout: Timeout(Duration::from_secs(0)),    // No voting initially
+                    delay: Delay(Duration::from_secs(u64::MAX)), // No voting initially
+                },
+                max_enrolled_subdomains: 0, // No subdomains initially
+            },
+            onion_config: OnionConfig { enabled: false },
+        })
+        .await?;
 
         Ok(response::InitChain {
             consensus_params: Some(consensus_params),
@@ -161,6 +198,8 @@ impl State {
             }
         }
 
+        // TODO: Tombstone inactive validators?
+
         // Tombstone byzantine validators
         for Misbehavior {
             validator,
@@ -170,12 +209,15 @@ impl State {
             total_voting_power: _,
         } in byzantine_validators
         {
-            // TODO: tombstone this validator
+            self.tombstone_validator(validator).await?;
         }
 
         // Record the current block height and time:
         self.set_block_height(height).await?;
         self.set_block_time(time).await?;
+
+        // TODO: Process pending config changes
+        // TODO: Process pending oracle observations
 
         Ok(response::BeginBlock { events: vec![] })
     }
@@ -239,23 +281,38 @@ impl State {
     /// Handle a reconfiguration action.
     pub async fn reconfigure(&self, reconfig: &Reconfigure) -> Result<(), Report> {
         let Reconfigure {
-            admin,
+            admin: Admin { identity },
             config,
-            version,
             not_before,
             not_after,
         } = reconfig;
-        todo!("handle reconfiguration");
+
+        // Ensure the current time is within the not_before and not_after bounds:
+        let current_time = self.block_time().await?;
+        if current_time < *not_before {
+            bail!("current time is before the not_before bound");
+        }
+        if current_time > *not_after {
+            bail!("current time is after the not_after bound");
+        }
+
+        // Check the config for current validity:
+        self.check_config(config).await?;
+
+        // TODO: enqueue the config in the vote queue for config changes
+
         Ok(())
     }
 
     /// Handle an observation action.
     pub async fn observe(&self, observe: &Observe) -> Result<(), Report> {
         let Observe {
-            oracle,
+            oracle: Oracle { identity },
             observation,
         } = observe;
-        todo!("handle observations");
+
+        // TODO: enqueue the observation in the vote queue for observations
+
         Ok(())
     }
 
@@ -319,6 +376,142 @@ impl State {
     /// Set the current block time in the state.
     async fn set_block_time(&mut self, time: Time) -> Result<(), Report> {
         self.internal.put("current/block_time", time).await;
+        Ok(())
+    }
+
+    /// Declare a new validator by its address.
+    pub async fn declare_validator(&mut self, validator: Validator) -> Result<(), Report> {
+        // Check to ensure the validator does not exist already (prevents redeclaring tombstoned
+        // validators to set their power back to non-zero):
+        let existing: Option<Power> = self
+            .internal
+            .get(&format!(
+                "current/validators/{}",
+                hex::encode(validator.address)
+            ))
+            .await?;
+        if let Some(existing) = existing {
+            bail!(
+                "Validator {} already exists with power {}",
+                hex::encode(validator.address),
+                existing,
+            );
+        }
+
+        self.internal
+            .put(
+                &format!("current/validators/{}", hex::encode(validator.address)),
+                validator.power,
+            )
+            .await;
+
+        Ok(())
+    }
+
+    /// Tombstone a validator by its address.
+    pub async fn tombstone_validator(
+        &mut self,
+        Validator { address, .. }: Validator,
+    ) -> Result<(), Report> {
+        // Check to make sure the validator exists:
+        let existing: Option<Power> = self
+            .internal
+            .get(&format!("current/validators/{}", hex::encode(address)))
+            .await?;
+        if existing.is_none() {
+            bail!("Validator {} does not exist", hex::encode(address));
+        }
+
+        self.internal
+            .put(
+                &format!("current/validators/{}", hex::encode(address)),
+                Power::from(0u32),
+            )
+            .await;
+
+        Ok(())
+    }
+
+    /// Check a config for internal consistency and validity, as well as validity against the
+    /// current config.
+    pub async fn check_config(
+        &self,
+        Config {
+            version,
+            admin_config:
+                AdminConfig {
+                    admins,
+                    voting_config: admin_voting_config,
+                },
+            oracle_config:
+                OracleConfig {
+                    enabled: _, // Can be enabled or not
+                    oracles,
+                    voting_config: oracle_voting_config,
+                    max_enrolled_subdomains,
+                },
+            onion_config:
+                OnionConfig {
+                    enabled: _, // Can be enabled or not
+                },
+        }: &Config,
+    ) -> Result<(), Report> {
+        // Ensure the version is greater than the current version:
+        let current_config = self.config().await?;
+        if *version <= current_config.version {
+            bail!("new config version must be greater than current version");
+        }
+
+        // Check that the voting configs are valid:
+        self.check_voting_config(Total(admins.len() as u64), admin_voting_config)?;
+        self.check_voting_config(Total(oracles.len() as u64), oracle_voting_config)?;
+
+        // Ensure that max_enrolled_subdomains is non-zero:
+        if *max_enrolled_subdomains == 0 {
+            bail!("max_enrolled_subdomains must be non-zero");
+        }
+
+        // Ensure that max_enrolled_subdomains does not decrease:
+        if *max_enrolled_subdomains < current_config.oracle_config.max_enrolled_subdomains {
+            bail!("max_enrolled_subdomains cannot decrease");
+        }
+
+        Ok(())
+    }
+
+    pub fn check_voting_config(
+        &self,
+        expected_total: Total,
+        voting_config: &VotingConfig,
+    ) -> Result<(), Report> {
+        let VotingConfig {
+            total,
+            quorum,
+            timeout: _, // Any timeout is acceptable
+            delay: _,   // Any delay is acceptable
+        } = voting_config;
+
+        // Ensure the total matches the expected total:
+        if *total != expected_total {
+            bail!(
+                "voting config total {} does not match expected total {}",
+                total.0,
+                expected_total.0
+            );
+        }
+
+        // Ensure the quorum is non-zero and less than or equal to the total:
+        if quorum.0 == 0 {
+            bail!("voting config quorum must be non-zero");
+        }
+        if quorum.0 > total.0 {
+            bail!(
+                "voting config quorum {} cannot be greater than total {}",
+                quorum.0,
+                total.0
+            );
+        }
+
         Ok(())
     }
 }

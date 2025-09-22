@@ -57,6 +57,15 @@ impl Store {
         }
     }
 
+    /// Set a value in the state by key, encoding it from the given domain type.
+    pub async fn put<V: DomainType>(&mut self, key: &str, value: V)
+    where
+        Report: From<<V as TryFrom<V::Proto>>::Error>,
+    {
+        let bytes = value.encode_to_vec();
+        self.delta.put_raw(key.to_string(), bytes);
+    }
+
     /// Get a stream over all keys in the state.
     pub async fn prefix_keys(
         &self,
@@ -84,14 +93,5 @@ impl Store {
             }
             Err(e) => Err(eyre::eyre!(e)),
         })
-    }
-
-    /// Set a value in the state by key, encoding it from the given domain type.
-    pub async fn put<V: DomainType>(&mut self, key: &str, value: V)
-    where
-        Report: From<<V as TryFrom<V::Proto>>::Error>,
-    {
-        let bytes = value.encode_to_vec();
-        self.delta.put_raw(key.to_string(), bytes);
     }
 }
