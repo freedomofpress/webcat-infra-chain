@@ -15,6 +15,8 @@ fn sign_and_verify() {
                 signature: Some(Signature::unsigned(public_key.clone().into())),
                 config: None,
                 version: 0,
+                not_before: None,
+                not_after: None,
             })),
         }],
     }
@@ -47,6 +49,8 @@ fn sign_and_verify_bad_sig() {
                 signature: Some(Signature::unsigned(public_key.clone().into())),
                 config: None,
                 version: 0,
+                not_before: None,
+                not_after: None,
             })),
         }],
     }
@@ -88,6 +92,8 @@ fn sign_and_verify_missing_sig() {
                 signature: Some(Signature::unsigned(public_key.clone().into())),
                 config: None,
                 version: 0,
+                not_before: None,
+                not_after: None,
             })),
         }],
     }

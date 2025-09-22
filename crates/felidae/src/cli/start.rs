@@ -5,18 +5,18 @@ use std::{
     task::{Context, Poll},
 };
 
-use aws_lc_rs::digest;
 use clap::Parser;
+use cnidarium::Storage;
 use color_eyre::eyre::{OptionExt, bail};
-use felidae_proto as proto;
-use felidae_types::transaction::{AuthenticatedTx, Transaction};
+use felidae_state::State;
+use felidae_types::transaction::AuthenticatedTx;
 use futures::future::BoxFuture;
-use prost::{Message, bytes::Bytes};
+use prost::bytes::Bytes;
 use tendermint::{
     AppHash,
     abci::Code,
     block::Height,
-    v0_34::abci::{self, ConsensusResponse, MempoolResponse},
+    v0_34::abci::{self, ConsensusRequest, ConsensusResponse, MempoolResponse},
 };
 use tower::{BoxError, Service};
 
@@ -33,9 +33,12 @@ pub struct Start {
 }
 
 #[derive(Clone)]
-pub struct Mempool {}
+pub struct CoreService {
+    internal: Storage,
+    canonical: Storage,
+}
 
-impl Service<abci::MempoolRequest> for Mempool {
+impl Service<abci::MempoolRequest> for CoreService {
     type Response = abci::MempoolResponse;
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
@@ -46,6 +49,9 @@ impl Service<abci::MempoolRequest> for Mempool {
 
     fn call(&mut self, req: abci::MempoolRequest) -> Self::Future {
         info!(?req);
+
+        // Create a new state for this request, which we will never commit:
+        let state = State::new(self.internal.clone(), self.canonical.clone());
 
         Box::pin(async move {
             let reject = || {
@@ -64,25 +70,22 @@ impl Service<abci::MempoolRequest> for Mempool {
 
             // Parse the proto into the domain type, validating structure and verifying signatures:
             let Ok(tx) = AuthenticatedTx::from_proto(tx_bytes) else {
+                warn!("failed to parse or authenticate transaction");
                 return reject();
             };
 
-            // TODO: Speculatively execute the transaction against the chain state without
-            // committing the results of the execution:
-            //
-            // Check the chain ID, then run through each action in order, check it for
-            // well-formedness and validity against the current state, and apply its effects to a
-            // copy of the current state. If any action is invalid, reject the transaction.
+            // Try to execute the transaction against the current state:
+            if let Err(e) = state.deliver_authenticated_tx(&tx).await {
+                warn!("transaction execution failed: {e}");
+                return reject();
+            }
 
             Ok(MempoolResponse::CheckTx(abci::response::CheckTx::default()))
         })
     }
 }
 
-#[derive(Clone)]
-pub struct Consensus {}
-
-impl Service<abci::ConsensusRequest> for Consensus {
+impl Service<ConsensusRequest> for CoreService {
     type Response = abci::ConsensusResponse;
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
@@ -91,86 +94,54 @@ impl Service<abci::ConsensusRequest> for Consensus {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: abci::ConsensusRequest) -> Self::Future {
+    fn call(&mut self, req: ConsensusRequest) -> Self::Future {
         info!(?req);
+
+        let mut state = State::new(self.internal.clone(), self.canonical.clone());
 
         Box::pin(async move {
             Ok(match req {
-                abci::ConsensusRequest::InitChain(abci::request::InitChain {
-                    time: _,
-                    chain_id,
-                    consensus_params,
-                    validators,
-                    app_state_bytes,
-                    initial_height,
-                }) => {
-                    // TODO: construct initial state from app_state_bytes
-                    let app_state = String::from_utf8(app_state_bytes.to_vec())?;
-                    info!(app_state);
-
-                    let app_hash = AppHash::try_from(Bytes::new()).expect("invalid app hash"); // TODO: initial app hash
-
-                    ConsensusResponse::InitChain(abci::response::InitChain {
-                        consensus_params: Some(consensus_params),
-                        validators,
-                        app_hash,
-                    })
+                ConsensusRequest::InitChain(init_chain) => {
+                    ConsensusResponse::InitChain(state.init_chain(init_chain).await?)
                 }
 
-                abci::ConsensusRequest::BeginBlock(abci::request::BeginBlock {
-                    hash,
-                    header,
-                    last_commit_info,
-                    byzantine_validators,
-                }) => ConsensusResponse::BeginBlock(abci::response::BeginBlock {
-                    // TODO: tombstone byzantine validators
-                    // TODO: track validator uptime
-                    ..Default::default()
-                }),
+                ConsensusRequest::BeginBlock(begin_block) => {
+                    ConsensusResponse::BeginBlock(state.begin_block(begin_block).await?)
+                }
 
-                abci::ConsensusRequest::DeliverTx(abci::request::DeliverTx { tx }) => {
-                    // Delivering a transaction is just running its CheckTx logic again:
-                    let mut mempool = Mempool {};
-                    let MempoolResponse::CheckTx(abci::response::CheckTx {
-                        code,
-                        data,
-                        log,
-                        info,
-                        gas_wanted,
-                        gas_used,
-                        events,
-                        codespace,
-                        ..
-                    }) = mempool
-                        .call(abci::MempoolRequest::CheckTx(abci::request::CheckTx {
-                            tx: tx.clone(),
-                            kind: abci::request::CheckTxKind::New,
+                ConsensusRequest::DeliverTx(abci::request::DeliverTx { tx: tx_bytes }) => {
+                    let reject = || {
+                        // Rejecting a transaction means returning a non-zero code
+                        Ok(ConsensusResponse::DeliverTx(abci::response::DeliverTx {
+                            code: Code::Err(NonZero::new(1).expect("1 != 0")),
+                            ..Default::default()
                         }))
-                        .await?;
+                    };
 
-                    ConsensusResponse::DeliverTx(abci::response::DeliverTx {
-                        code,
-                        data,
-                        log,
-                        info,
-                        gas_wanted,
-                        gas_used,
-                        events,
-                        codespace,
-                    })
+                    // Parse the proto into the domain type, validating structure and verifying signatures:
+                    let Ok(tx) = AuthenticatedTx::from_proto(tx_bytes) else {
+                        warn!("failed to parse or authenticate transaction");
+                        return reject();
+                    };
+
+                    // Try to execute the transaction against the current state:
+                    if let Err(e) = state.deliver_authenticated_tx(&tx).await {
+                        warn!("transaction execution failed: {e}");
+                        return reject();
+                    }
+
+                    ConsensusResponse::DeliverTx(abci::response::DeliverTx::default())
                 }
 
-                abci::ConsensusRequest::EndBlock(abci::request::EndBlock { height: _ }) => {
-                    ConsensusResponse::EndBlock(abci::response::EndBlock {
-                        ..Default::default()
-                    })
+                ConsensusRequest::EndBlock(end_block) => {
+                    ConsensusResponse::EndBlock(state.end_block(end_block).await?)
                 }
 
-                abci::ConsensusRequest::Commit => {
-                    let app_hash = Bytes::new(); // TODO: calculate app hash
+                ConsensusRequest::Commit => {
+                    state.commit().await?;
 
                     ConsensusResponse::Commit(abci::response::Commit {
-                        data: app_hash,
+                        data: state.root_hashes().await?.app_hash.0.to_vec().into(),
                         ..Default::default()
                     })
                 }
@@ -179,10 +150,7 @@ impl Service<abci::ConsensusRequest> for Consensus {
     }
 }
 
-#[derive(Clone)]
-pub struct Info {}
-
-impl Service<abci::InfoRequest> for Info {
+impl Service<abci::InfoRequest> for CoreService {
     type Response = abci::InfoResponse;
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
@@ -233,10 +201,7 @@ impl Service<abci::InfoRequest> for Info {
     }
 }
 
-#[derive(Clone)]
-pub struct Snapshot {}
-
-impl Service<abci::SnapshotRequest> for Snapshot {
+impl Service<abci::SnapshotRequest> for CoreService {
     type Response = abci::SnapshotResponse;
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
@@ -255,23 +220,39 @@ impl Service<abci::SnapshotRequest> for Snapshot {
 impl Run for Start {
     async fn run(self) -> color_eyre::Result<()> {
         let Self { abci, rpc } = self;
-        let mempool = Mempool {};
-        let consensus = Consensus {};
-        let info = Info {};
-        let snapshot = Snapshot {};
-        let server = tower_abci::v034::ServerBuilder::default()
-            .mempool(mempool)
-            .consensus(consensus)
-            .info(info)
-            .snapshot(snapshot)
+
+        // Load up the internal and canonical storage backends:
+        let internal = Storage::load(todo!("specify path"), vec![])
+            .await
+            .or_else(|e| {
+                bail!("could not open storage at specified path: {e}");
+            })?;
+        let canonical = Storage::load(todo!("specify path"), vec![])
+            .await
+            .or_else(|e| {
+                bail!("could not open storage at specified path: {e}");
+            })?;
+
+        // All the ABCI services share the same core state:
+        let core = CoreService {
+            internal: internal.clone(),
+            canonical: canonical.clone(),
+        };
+
+        // Start the ABCI server:
+        tower_abci::v034::ServerBuilder::default()
+            .mempool(core.clone())
+            .consensus(core.clone())
+            .info(core.clone())
+            .snapshot(core)
             .finish()
-            .ok_or_eyre("could not construct ABCI server")?;
-        server
+            .ok_or_eyre("could not construct ABCI server")?
             .listen_tcp((IpAddr::V4(Ipv4Addr::LOCALHOST), abci))
             .await
             .or_else(|e| {
                 bail!("could not start ABCI server on port {abci}: {e}");
             })?;
+
         Ok(())
     }
 }

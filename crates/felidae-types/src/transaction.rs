@@ -1,8 +1,9 @@
 use aws_lc_rs::digest::{Context, SHA256};
+use felidae_proto::domain_types;
 use felidae_proto::transaction::{self as proto};
 use prost::bytes::Bytes;
-use std::{hash::Hash, ops::Deref};
-use tendermint::AppHash;
+use std::{hash::Hash, ops::Deref, time::Duration};
+use tendermint::{AppHash, Time};
 
 use crate::{SignError, Signer};
 
@@ -12,11 +13,33 @@ mod convert;
 mod authenticated;
 pub use authenticated::AuthenticatedTx;
 
+// Here are all the domain types that can be stored:
+domain_types!(
+    Transaction: proto::Transaction,
+    ChainId: String,
+    Unsigned: proto::Signature,
+    Action: proto::Action,
+    Reconfigure: proto::action::Reconfigure,
+    Config: proto::Config,
+    AdminConfig: proto::config::AdminConfig,
+    Admin: proto::Admin,
+    OracleConfig: proto::config::OracleConfig,
+    Oracle: proto::Oracle,
+    OnionConfig: proto::config::OnionConfig,
+    VotingConfig: proto::config::VotingConfig,
+    Observe: proto::action::Observe,
+    Observation: proto::action::observe::Observation,
+    Blockstamp: proto::action::observe::observation::Blockstamp,
+);
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Transaction {
-    pub chain_id: String,
+    pub chain_id: ChainId,
     pub actions: Vec<Action>,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ChainId(pub String);
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Unsigned {
@@ -34,6 +57,8 @@ pub struct Reconfigure {
     pub admin: Admin,
     pub config: Config,
     pub version: u64,
+    pub not_before: Time,
+    pub not_after: Time,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -87,10 +112,10 @@ pub struct Total(pub u64);
 pub struct Quorum(pub u64);
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Timeout(pub u64);
+pub struct Timeout(pub Duration);
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Delay(pub u64);
+pub struct Delay(pub Duration);
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Observe {

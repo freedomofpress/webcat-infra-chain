@@ -49,6 +49,11 @@ message Transaction {
     repeated Action actions = 2;
 }
 
+message Timestamp {
+    int64 seconds = 1;
+    int32 nanos = 2;
+}
+
 message Action {
     oneof action {
         Reconfigure reconfigure = 1;
@@ -59,6 +64,8 @@ message Action {
         Signature signature = 1;
         Config config = 2;
         int64 version = 3;
+        Timestamp not_before = 4;
+        Timestamp not_after = 5;
     }
 
     message Observe {

@@ -1,0 +1,14 @@
+[package]
+name = "felidae-state"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cnidarium = { workspace = true }
+felidae-types = { path = "../felidae-types" }
+felidae-proto = { path = "../felidae-proto" }
+color-eyre = { workspace = true }
+futures = { workspace = true }
+aws-lc-rs = { workspace = true }
+tracing = { workspace = true }
+tendermint = { workspace = true }

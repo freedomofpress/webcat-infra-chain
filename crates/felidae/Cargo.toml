@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 felidae-proto = { path = "../felidae-proto" }
 felidae-types = { path = "../felidae-types" }
+felidae-state = { path = "../felidae-state" }
 aws-lc-rs = { workspace = true }
 prost = { workspace = true }
 futures = { workspace = true }
@@ -17,3 +18,4 @@ tendermint = { workspace = true }
 color-eyre = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+cnidarium = { workspace = true }

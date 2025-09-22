@@ -10,6 +10,8 @@ impl TryFrom<proto::Transaction> for Transaction {
     fn try_from(tx: proto::Transaction) -> Result<Self, Self::Error> {
         let proto::Transaction { chain_id, actions } = tx;
 
+        let chain_id = ChainId(chain_id);
+
         let actions = actions
             .into_iter()
             .map(TryInto::try_into)
@@ -23,9 +25,27 @@ impl From<Transaction> for proto::Transaction {
     fn from(tx: Transaction) -> Self {
         let Transaction { chain_id, actions } = tx;
         proto::Transaction {
-            chain_id,
+            chain_id: chain_id.0,
             actions: actions.into_iter().map(Into::into).collect(),
         }
+    }
+}
+
+impl TryFrom<String> for ChainId {
+    type Error = crate::ParseError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if value.is_empty() {
+            Err(crate::ParseError(TypeId::of::<ChainId>()))
+        } else {
+            Ok(ChainId(value))
+        }
+    }
+}
+
+impl From<ChainId> for String {
+    fn from(value: ChainId) -> Self {
+        value.0
     }
 }
 
@@ -96,6 +116,8 @@ impl TryFrom<proto::action::Reconfigure> for Reconfigure {
             signature,
             config,
             version,
+            not_before,
+            not_after,
         } = value;
 
         let admin: Admin = signature
@@ -111,10 +133,22 @@ impl TryFrom<proto::action::Reconfigure> for Reconfigure {
             .try_into()
             .map_err(|_| crate::ParseError(TypeId::of::<u64>()))?;
 
+        let not_before = not_before
+            .map(TryInto::try_into)
+            .ok_or_else(|| crate::ParseError(TypeId::of::<tendermint::Time>()))?
+            .map_err(|_| crate::ParseError(TypeId::of::<tendermint::Time>()))?;
+
+        let not_after = not_after
+            .map(TryInto::try_into)
+            .ok_or_else(|| crate::ParseError(TypeId::of::<tendermint::Time>()))?
+            .map_err(|_| crate::ParseError(TypeId::of::<tendermint::Time>()))?;
+
         Ok(Reconfigure {
             admin,
             config,
             version,
+            not_before,
+            not_after,
         })
     }
 }
@@ -125,11 +159,15 @@ impl From<Reconfigure> for proto::action::Reconfigure {
             admin,
             config,
             version,
+            not_before,
+            not_after,
         } = reconfigure;
         proto::action::Reconfigure {
             signature: Some(admin.into()),
             config: Some(config.into()),
             version: version as i64,
+            not_before: Some(not_before.into()),
+            not_after: Some(not_after.into()),
         }
     }
 }
@@ -342,16 +380,12 @@ impl TryFrom<proto::config::VotingConfig> for VotingConfig {
                 .try_into()
                 .map_err(|_| crate::ParseError(TypeId::of::<u64>()))?,
         );
-        let timeout = Timeout(
-            timeout
-                .try_into()
-                .map_err(|_| crate::ParseError(TypeId::of::<u64>()))?,
-        );
-        let delay = Delay(
-            delay
-                .try_into()
-                .map_err(|_| crate::ParseError(TypeId::of::<u64>()))?,
-        );
+        let timeout = Timeout(Duration::from_secs(
+            u64::try_from(timeout).map_err(|_| crate::ParseError(TypeId::of::<u64>()))?,
+        ));
+        let delay = Delay(Duration::from_secs(
+            u64::try_from(delay).map_err(|_| crate::ParseError(TypeId::of::<u64>()))?,
+        ));
 
         Ok(VotingConfig {
             total,
@@ -373,8 +407,8 @@ impl From<VotingConfig> for proto::config::VotingConfig {
         proto::config::VotingConfig {
             total: total.0 as i64,
             quorum: quorum.0 as i64,
-            timeout: timeout.0 as i64,
-            delay: delay.0 as i64,
+            timeout: timeout.0.as_secs() as i64,
+            delay: delay.0.as_secs() as i64,
         }
     }
 }
