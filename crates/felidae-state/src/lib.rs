@@ -1,9 +1,6 @@
 #[macro_use]
 extern crate tracing;
 
-#[macro_use]
-extern crate color_eyre;
-
 use std::{collections::BTreeSet, time::Duration};
 
 use aws_lc_rs::digest;
@@ -13,11 +10,12 @@ use color_eyre::{
     eyre::{OptionExt, bail, eyre},
 };
 use felidae_types::transaction::{
-    Action, Admin, AdminConfig, AuthenticatedTx, Blockstamp, ChainId, Config, Delay, HashObserved,
-    Observation, Observe, OnionConfig, Oracle, OracleConfig, Quorum, Reconfigure, Timeout, Total,
-    Transaction, VotingConfig,
+    Action, Admin, AdminConfig, AuthenticatedTx, Blockstamp, ChainId, Config, Delay, Domain,
+    HashObserved, Observation, Observe, OnionConfig, Oracle, OracleConfig, Quorum, Reconfigure,
+    Timeout, Total, Transaction, VotingConfig,
 };
 use futures::StreamExt;
+use prost::bytes::Bytes;
 use tendermint::{
     AppHash, Time,
     abci::{
@@ -31,6 +29,9 @@ use tendermint::{
 
 mod store;
 use store::Store;
+
+mod vote_queue;
+use vote_queue::{Vote, VoteQueue};
 
 pub struct State {
     internal: Store,
@@ -149,6 +150,11 @@ impl State {
         })
         .await?;
 
+        // Declare the initial validator set:
+        for validator in validators.iter() {
+            self.declare_validator(validator.clone()).await?;
+        }
+
         Ok(response::InitChain {
             consensus_params: Some(consensus_params),
             validators,
@@ -232,17 +238,64 @@ impl State {
         // Record the previous block's app hash:
         self.record_app_hash(app_hash).await?;
 
-        // TODO: Process config votes into pending config changes
-        // TODO: Process oracle votes into pending observations
+        // Timeout expired votes in the vote queues
+        self.admin_voting()
+            .await?
+            .timeout_expired_votes(self)
+            .await?;
+        self.oracle_voting()
+            .await?
+            .timeout_expired_votes(self)
+            .await?;
 
-        // TODO: Process ripe pending config changes into current config
-        // TODO: Process ripe pending oracle observations into canonical state
+        // Process ripe pending config changes into current config
+        for (_, new_config) in self
+            .admin_voting()
+            .await?
+            .promote_pending_changes(self)
+            .await?
+        {
+            // We want to only apply configs with a version greater than the current version, to
+            // avoid replay attacks. This can only happen if there are multiple pending config
+            // changes: this prevents someone from re-submitting an older but still-pending config
+            // change sequenced after a newer config change, but in the same block. If this were to
+            // be permitted, this would allow the older config to override the newer config, without
+            // requiring interaction by admins, since this is a replay of already signed data.
+            //
+            // This is also prevented by a check on the version in the reconfigure action, but
+            // checking it here too is defense in depth.
+            let current_config = self.config().await?;
+            if current_config.version >= new_config.version {
+                info!(
+                    version = new_config.version,
+                    "Skipping new config with older version than current"
+                );
+                continue;
+            }
+
+            info!(version = new_config.version, "Applying new config",);
+            self.set_config(new_config).await?;
+        }
+
+        // Process ripe pending oracle observations into canonical state
+        for (subdomain, hash_observed) in self
+            .oracle_voting()
+            .await?
+            .promote_pending_changes(self)
+            .await?
+        {
+            if let HashObserved::Hash(hash) = hash_observed {
+                self.canonical.put(&subdomain, Vec::from(hash)).await;
+            } else {
+                self.canonical.delete(&subdomain).await;
+            }
+        }
 
         Ok(response::BeginBlock { events: vec![] })
     }
 
     /// Execute a transaction against the current state, without committing the results yet.
-    pub async fn deliver_authenticated_tx(&self, tx: &AuthenticatedTx) -> Result<(), Report> {
+    pub async fn deliver_authenticated_tx(&mut self, tx: &AuthenticatedTx) -> Result<(), Report> {
         let Transaction { actions, .. } = &**tx;
 
         // First, check the chain ID to see if it matches the current chain ID.
@@ -295,7 +348,7 @@ impl State {
     }
 
     /// Handle a reconfiguration action.
-    async fn reconfigure(&self, reconfig: &Reconfigure) -> Result<(), Report> {
+    async fn reconfigure(&mut self, reconfig: &Reconfigure) -> Result<(), Report> {
         let Reconfigure {
             admin: admin @ Admin { identity },
             config,
@@ -328,18 +381,51 @@ impl State {
         // Check the config for current validity:
         self.check_config(config).await?;
 
-        // TODO: enqueue the config in the vote queue for config changes
+        // Ensure that the version is greater than the current version:
+        if config.version <= current_config.version {
+            bail!(
+                "config version {} must be greater than current version {}",
+                config.version,
+                current_config.version
+            );
+        }
+
+        // Ensure that the version is greater than any pending config change:
+        if let Some(pending_config) = self.admin_voting().await?.pending_for_key(self, "").await? {
+            if pending_config.version >= config.version {
+                bail!(
+                    "newly proposed config version {} must be greater than pending version {}",
+                    config.version,
+                    pending_config.version
+                );
+            }
+        }
+
+        // Enqueue the config change in the vote queue for admin reconfigurations
+        self.admin_voting()
+            .await?
+            .cast(
+                self,
+                &Vote {
+                    key: "".to_string(), // There is only one admin config at a time
+                    party: hex::encode(identity),
+                    time: current_time,
+                    value: config.clone(),
+                },
+            )
+            .await?;
 
         Ok(())
     }
 
     /// Handle an observation action.
-    async fn observe(&self, observe: &Observe) -> Result<(), Report> {
+    async fn observe(&mut self, observe: &Observe) -> Result<(), Report> {
         let Observe {
             oracle: oracle @ Oracle { identity },
             observation:
                 Observation {
-                    domain,
+                    domain: subdomain,
+                    zone,
                     hash_observed,
                     blockstamp:
                         Blockstamp {
@@ -386,15 +472,103 @@ impl State {
             bail!("blockstamp app hash does not match recorded app hash at block {block_height}");
         }
 
-        if let HashObserved::NotFound = hash_observed {
-            // TODO: check that the domain exists in the union of canonical state or pending queue
-        } else {
-            // TODO: check that either the domain exists in (the union of canonical state or pending
-            // queue), or adding one more subdomain for this domain would not exceed the
-            // max_enrolled_subdomains
+        // Ensure that the domain is a strict subdomain of the zone
+        if !subdomain.name.is_subdomain_of(&zone.name) && subdomain.name.depth() > zone.name.depth()
+        {
+            bail!("domain {} is not a subdomain of zone {}", subdomain, zone);
         }
 
-        // TODO: enqueue the observation in the vote queue for observations
+        // Compute the registered domain (the registration zone plus one additional label)
+        let registered_domain: Domain = subdomain
+            .name
+            .hierarchy()
+            .nth(subdomain.name.depth() - zone.name.depth() - 1)
+            .ok_or_eyre("zone depths invalid (should not happen)")?
+            .to_owned()
+            .into();
+
+        // Prevent unenrolling non-existent subdomains or enrolling too many new subdomains:
+        if self.canonical_hash(subdomain).await?.is_none() {
+            let pending_change = self
+                .oracle_voting()
+                .await?
+                .pending_for_key(self, &subdomain.to_string())
+                .await?;
+            if let Some(HashObserved::NotFound) | None = pending_change {
+                // In this case, we know the subdomain does not exist in pending or canonical state, or
+                // is currently already queued for deletion:
+
+                if let HashObserved::NotFound = hash_observed {
+                    // This prevents oracles from voting to delete a subdomain that does not exist.
+                    bail!(
+                        "cannot vote to delete subdomain {subdomain} which is either unknown or already queued for deletion",
+                    );
+                } else {
+                    // If the subdomain does not exist, ensure that the oracle is allowed to register a new
+                    // subdomain under the registered domain.
+                    let max_enrolled_subdomains =
+                        current_config.oracle_config.max_enrolled_subdomains;
+
+                    // Count the number of distinct subdomains under the registered domain in both
+                    // the canonical state and the pending changes, and ensure it is less than the max
+                    // allowed:
+                    let registered_domain_votes = self
+                        .oracle_voting()
+                        .await?
+                        .votes_for_key(self, &registered_domain.to_string())
+                        .await?;
+                    let subdomain_votes = self
+                        .oracle_voting()
+                        .await?
+                        .votes_for_key_prefix(self, &format!("{registered_domain}."))
+                        .await?;
+                    let registered_domain_pending = self
+                        .oracle_voting()
+                        .await?
+                        .pending_for_key(self, &registered_domain.to_string())
+                        .await?;
+                    let subdomain_pending = self
+                        .oracle_voting()
+                        .await?
+                        .pending_for_key_prefix(self, &format!("{registered_domain}."))
+                        .await?;
+                    let canonical_subdomains =
+                        self.canonical_subdomains(&registered_domain).await?;
+
+                    // We collect all the places in the pipeline, from voting to pending to canonical:
+                    let unique_subdomains = registered_domain_votes
+                        .into_iter()
+                        .map(|v| v.key)
+                        .chain(subdomain_votes.into_iter().map(|v| v.key))
+                        .chain(registered_domain_pending.map(|_| registered_domain.to_string()))
+                        .chain(subdomain_pending.into_iter().map(|(k, _)| k))
+                        .chain(canonical_subdomains.into_iter())
+                        .collect::<BTreeSet<_>>()
+                        .len();
+
+                    // If adding this new subdomain would exceed the max, bail:
+                    if unique_subdomains as u64 + 1 >= max_enrolled_subdomains {
+                        bail!(
+                            "cannot register new subdomain {subdomain} under {registered_domain}: would exceed max enrolled subdomains of {max_enrolled_subdomains}",
+                        );
+                    }
+                }
+            }
+        }
+
+        // Enqueue the observation in the vote queue for oracle observations
+        self.oracle_voting()
+            .await?
+            .cast(
+                self,
+                &Vote {
+                    key: subdomain.to_string(),
+                    party: hex::encode(identity),
+                    time: current_time,
+                    value: hash_observed.clone(),
+                },
+            )
+            .await?;
 
         Ok(())
     }
@@ -575,7 +749,7 @@ impl State {
     /// Get all active validators.
     async fn active_validators(&self) -> Result<Vec<Update>, Report> {
         let mut updates = vec![];
-        let mut stream = self.internal.prefix::<Power>("current/validators/").await;
+        let mut stream = self.internal.prefix::<Power>("current/validators/");
         while let Some(Ok((key, power))) = stream.next().await {
             let pub_key = hex::decode(key.trim_start_matches("current/validators/"))?;
             if power.value() > 0 {
@@ -666,6 +840,8 @@ impl State {
         Ok(())
     }
 
+    /// Ensure that a voting config is internally consistent, and valid with respect to the expected
+    /// total number of voting parties.
     fn check_voting_config(
         &self,
         expected_total: Total,
@@ -700,5 +876,64 @@ impl State {
         }
 
         Ok(())
+    }
+
+    /// Get the vote queue for oracle observations.
+    async fn oracle_voting(&mut self) -> Result<VoteQueue<HashObserved>, Report> {
+        Ok(VoteQueue::<HashObserved>::new(
+            "oracle_voting/",
+            self.config().await?.oracle_config.voting_config.clone(),
+        ))
+    }
+
+    /// Get the vote queue for admin updates.
+    async fn admin_voting(&mut self) -> Result<VoteQueue<Config>, Report> {
+        Ok(VoteQueue::<Config>::new(
+            "admin_voting/",
+            self.config().await?.admin_config.voting_config.clone(),
+        ))
+    }
+
+    /// Get the canonical hash for a given subdomain, if it exists.
+    async fn canonical_hash(&self, subdomain: &Domain) -> Result<Option<[u8; 32]>, Report> {
+        if let Some(data) = self.canonical.get::<Bytes>(&subdomain.to_string()).await? {
+            let bytes: Bytes = data;
+            if bytes.len() != 32 {
+                bail!("canonical hash for {} has invalid length", subdomain);
+            }
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&bytes);
+            Ok(Some(hash))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Returns a count of all subdomains including the registered domain itself in the canonical
+    /// state.
+    async fn canonical_subdomains(
+        &self,
+        registered_domain: &Domain,
+    ) -> Result<Vec<String>, Report> {
+        let mut subdomains = self.canonical_strict_subdomains(registered_domain).await?;
+        if self.canonical_hash(registered_domain).await?.is_some() {
+            subdomains.push(registered_domain.to_string());
+        }
+        Ok(subdomains)
+    }
+
+    /// Returns a count of all subdomains under a registered domain in the canonical state.
+    ///
+    /// This does not include the registered domain itself, only its subdomains.
+    async fn canonical_strict_subdomains(
+        &self,
+        registered_domain: &Domain,
+    ) -> Result<Vec<String>, Report> {
+        let mut subdomains = Vec::new();
+        let mut stream = self.canonical.prefix_keys(&format!("{registered_domain}."));
+        while let Some(Ok(subdomain)) = stream.next().await {
+            subdomains.push(subdomain);
+        }
+        Ok(subdomains)
     }
 }

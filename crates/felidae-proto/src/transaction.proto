@@ -75,9 +75,13 @@ message Action {
                 bytes block_hash = 1;
                 int64 block_number = 2;
             }
+            message HashObserved {
+                bytes hash = 1;
+            }
             string domain = 1;
-            optional bytes hash_observed = 2;
-            Blockstamp blockstamp = 3;
+            string zone = 2;
+            HashObserved hash_observed = 3;
+            Blockstamp blockstamp = 4;
         }
 
         Signature signature = 1;

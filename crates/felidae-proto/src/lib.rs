@@ -86,3 +86,15 @@ impl DomainType for tendermint::vote::Power {
 impl DomainType for tendermint::AppHash {
     type Proto = bytes::Bytes;
 }
+
+impl DomainType for () {
+    type Proto = ();
+}
+
+impl DomainType for Vec<u8> {
+    type Proto = bytes::Bytes;
+}
+
+impl DomainType for bytes::Bytes {
+    type Proto = bytes::Bytes;
+}

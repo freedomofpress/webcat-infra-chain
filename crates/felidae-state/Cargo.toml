@@ -13,3 +13,4 @@ aws-lc-rs = { workspace = true }
 tracing = { workspace = true }
 tendermint = { workspace = true }
 hex = { workspace = true }
+prost = { workspace = true }

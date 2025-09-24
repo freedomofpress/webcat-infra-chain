@@ -51,7 +51,7 @@ impl Service<abci::MempoolRequest> for CoreService {
         info!(?req);
 
         // Create a new state for this request, which we will never commit:
-        let state = State::new(self.internal.clone(), self.canonical.clone());
+        let mut state = State::new(self.internal.clone(), self.canonical.clone());
 
         Box::pin(async move {
             let reject = || {

@@ -1,5 +1,6 @@
 use aws_lc_rs::signature::{EdDSAParameters, ParsedPublicKey};
 use felidae_proto::transaction::{self as proto, KeyPair};
+use fqdn::FQDN;
 use std::any::TypeId;
 
 use super::*;
@@ -429,23 +430,26 @@ impl TryFrom<proto::action::observe::Observation> for Observation {
     fn try_from(value: proto::action::observe::Observation) -> Result<Self, Self::Error> {
         let proto::action::observe::Observation {
             domain,
+            zone,
             hash_observed,
             blockstamp,
         } = value;
 
-        let domain = domain
-            .parse()
-            .map_err(|_| crate::ParseError(TypeId::of::<fqdn::FQDN>()))?;
-
-        let hash_observed = if let Some(hash) = hash_observed {
-            let hash: [u8; 32] = hash
-                .to_vec()
-                .try_into()
-                .map_err(|_| crate::ParseError(TypeId::of::<HashObserved>()))?;
-            HashObserved::Hash(hash)
-        } else {
-            HashObserved::NotFound
+        let domain = Domain {
+            name: domain
+                .parse()
+                .map_err(|_| crate::ParseError(TypeId::of::<fqdn::FQDN>()))?,
         };
+
+        let zone = Domain {
+            name: zone
+                .parse()
+                .map_err(|_| crate::ParseError(TypeId::of::<fqdn::FQDN>()))?,
+        };
+
+        let hash_observed = hash_observed
+            .map(TryInto::try_into)
+            .ok_or_else(|| crate::ParseError(TypeId::of::<HashObserved>()))??;
 
         let blockstamp = blockstamp
             .ok_or_else(|| crate::ParseError(TypeId::of::<Blockstamp>()))?
@@ -454,6 +458,7 @@ impl TryFrom<proto::action::observe::Observation> for Observation {
 
         Ok(Observation {
             domain,
+            zone,
             hash_observed,
             blockstamp,
         })
@@ -464,15 +469,14 @@ impl From<Observation> for proto::action::observe::Observation {
     fn from(observation: Observation) -> Self {
         let Observation {
             domain,
+            zone,
             hash_observed,
             blockstamp,
         } = observation;
         proto::action::observe::Observation {
             domain: domain.to_string(),
-            hash_observed: match hash_observed {
-                HashObserved::Hash(h) => Some(h.to_vec().into()),
-                HashObserved::NotFound => None,
-            },
+            zone: zone.to_string(),
+            hash_observed: Some(hash_observed.into()),
             blockstamp: Some(blockstamp.into()),
         }
     }
@@ -592,5 +596,17 @@ impl From<Oracle> for proto::Oracle {
 impl From<Oracle> for proto::Signature {
     fn from(oracle: Oracle) -> Self {
         proto::Signature::unsigned(oracle.identity)
+    }
+}
+
+impl From<FQDN> for Domain {
+    fn from(name: FQDN) -> Self {
+        Domain { name }
+    }
+}
+
+impl From<Domain> for FQDN {
+    fn from(domain: Domain) -> Self {
+        domain.name
     }
 }

@@ -68,11 +68,13 @@ impl Store {
         self.delta.put_raw(key.to_string(), bytes);
     }
 
+    /// Delete a value from the state by key.
+    pub async fn delete(&mut self, key: &str) {
+        self.delta.delete(key.to_string());
+    }
+
     /// Get a stream over all keys in the state.
-    pub async fn prefix_keys(
-        &self,
-        prefix: &str,
-    ) -> impl Stream<Item = Result<String, Report>> + '_ {
+    pub fn prefix_keys(&self, prefix: &str) -> impl Stream<Item = Result<String, Report>> + '_ {
         self.delta.prefix_keys(prefix).map(|res| match res {
             Ok(key) => Ok(key),
             Err(e) => Err(eyre::eyre!(e)),
@@ -81,7 +83,7 @@ impl Store {
 
     /// Get a stream over all key-value pairs in the state with the given prefix, decoding the
     /// values into the given domain type.
-    pub async fn prefix<V: DomainType>(
+    pub fn prefix<V: DomainType>(
         &self,
         prefix: &str,
     ) -> impl Stream<Item = Result<(String, V), Report>> + '_
@@ -95,5 +97,58 @@ impl Store {
             }
             Err(e) => Err(eyre::eyre!(e)),
         })
+    }
+
+    /// Get a value from the index by key, decoding it into the given domain type.
+    pub async fn index_get<V: DomainType>(&self, key: &[u8]) -> Result<Option<V>, Report>
+    where
+        Report: From<<V as TryFrom<V::Proto>>::Error>,
+    {
+        let bytes = self
+            .delta
+            .nonverifiable_get_raw(key)
+            .await
+            .map_err(|e| eyre::eyre!(e))?;
+        if let Some(bytes) = bytes {
+            let v = V::decode(bytes.as_ref())?;
+            Ok(Some(v))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Set a value in the index by key, encoding it from the given domain type.
+    pub async fn index_put<V: DomainType>(&mut self, key: &[u8], value: V)
+    where
+        Report: From<<V as TryFrom<V::Proto>>::Error>,
+    {
+        let bytes = value.encode_to_vec();
+        self.delta.nonverifiable_put_raw(key.to_vec(), bytes);
+    }
+
+    /// Delete a value from the index by key.
+    pub async fn index_delete(&mut self, key: &[u8]) {
+        self.delta.nonverifiable_delete(key.to_vec());
+    }
+
+    /// Get a stream over all keys and values in the index with the given prefix, decoding the
+    /// values into the given domain type.
+    pub fn index_prefix<V: DomainType>(
+        &self,
+        prefix: &[u8],
+    ) -> impl Stream<Item = Result<(Vec<u8>, V), Report>> + '_
+    where
+        Report: From<<V as TryFrom<V::Proto>>::Error>,
+    {
+        self.delta
+            .nonverifiable_prefix_raw(prefix)
+            .map(|res| match res {
+                Ok((key, bytes)) => {
+                    let v = V::decode(bytes.as_ref())?;
+                    Ok((key, v))
+                }
+
+                Err(e) => Err(eyre::eyre!(e)),
+            })
     }
 }

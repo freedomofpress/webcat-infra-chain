@@ -769,6 +769,7 @@ dependencies = [
  "felidae-types",
  "futures",
  "hex",
+ "prost 0.13.5",
  "tendermint",
  "tracing",
 ]
