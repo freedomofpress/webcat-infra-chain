@@ -15,6 +15,8 @@ jobs:
       - uses: actions/checkout@a81bbbf8298c0fa03ea29cdc473d45769f953675
         with:
           persist-credentials: false
+      # Install protobuf compiler
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       # dtolnay/rust-toolchain@30dc51db75d080812bc4a28ba3f342840b2e7dd7
       # (rust-toolchain@v1 latest reviewed and pinned)
       - uses: dtolnay/rust-toolchain@30dc51db75d080812bc4a28ba3f342840b2e7dd7
@@ -33,6 +35,8 @@ jobs:
       - uses: actions/checkout@a81bbbf8298c0fa03ea29cdc473d45769f953675
         with:
           persist-credentials: false
+      # Install protobuf compiler
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       # dtolnay/rust-toolchain@30dc51db75d080812bc4a28ba3f342840b2e7dd7
       - uses: dtolnay/rust-toolchain@30dc51db75d080812bc4a28ba3f342840b2e7dd7
         with:
