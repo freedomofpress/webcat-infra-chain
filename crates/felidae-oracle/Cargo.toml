@@ -1,0 +1,15 @@
+[package]
+name = "felidae-oracle"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+felidae-types = { path = "../felidae-types" }
+prost = { workspace = true }
+thiserror = { workspace = true }
+fqdn = { workspace = true }
+hex = { workspace = true }
+wasm-bindgen = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]

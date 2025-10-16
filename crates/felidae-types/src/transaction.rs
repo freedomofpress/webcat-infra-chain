@@ -2,7 +2,7 @@ use aws_lc_rs::digest::{Context, SHA256};
 use felidae_proto::domain_types;
 use felidae_proto::transaction::{self as proto};
 use prost::bytes::Bytes;
-use std::any::TypeId;
+use std::any::type_name;
 use std::fmt::Display;
 use std::{hash::Hash, ops::Deref, time::Duration};
 use tendermint::block::Height;
@@ -12,6 +12,10 @@ use crate::{SignError, Signer};
 
 /// Type conversions between the protobuf-generated types and the domain types.
 mod convert;
+
+/// Builder for transactions.
+mod build;
+pub use build::Builder;
 
 mod authenticated;
 pub use authenticated::AuthenticatedTx;
@@ -66,7 +70,7 @@ pub struct Reconfigure {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Config {
-    pub version: u64,
+    pub version: u32,
     pub admin_config: AdminConfig,
     pub oracle_config: OracleConfig,
     pub onion_config: OnionConfig,
@@ -175,7 +179,7 @@ impl TryFrom<proto::action::observe::observation::HashObserved> for HashObserved
         } else if value.hash.is_empty() {
             Ok(HashObserved::NotFound)
         } else {
-            Err(crate::ParseError(TypeId::of::<
+            Err(crate::ParseError(type_name::<
                 proto::action::observe::observation::HashObserved,
             >()))
         }

@@ -4,6 +4,7 @@ use felidae_proto::DomainType;
 use felidae_types::transaction::VotingConfig;
 use futures::TryStreamExt;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::hash::Hash;
 use tendermint::Time;
 
@@ -25,7 +26,7 @@ pub struct Vote<T> {
     pub value: T,
 }
 
-impl<T: DomainType + Eq + Hash> VoteQueue<T>
+impl<T: DomainType + Eq + Hash + Debug> VoteQueue<T>
 where
     Report: From<<T as TryFrom<T::Proto>>::Error>,
 {
@@ -43,6 +44,7 @@ where
         let old_votes = state
             .internal
             .index_prefix::<()>(&self.votes_by_timestamp_all_prefix())
+            .await
             .map_ok(|(key, ())| {
                 let (time, key, party) = self
                     .parse_index_votes_by_timestamp_key_party(&key)
@@ -81,6 +83,7 @@ where
         let pending = state
             .internal
             .index_prefix::<T>(&self.index_pending_by_timestamp_all_prefix())
+            .await
             .map_ok(|(key, value)| {
                 let (time, key) = self
                     .parse_index_pending_by_timestamp_key(&key)
@@ -125,6 +128,7 @@ where
         let votes_by_party = state
             .internal
             .prefix::<T>(&self.votes_by_key_party_prefix(key, party, true))
+            .await
             .map_ok(|(key, _)| key.to_string())
             .try_collect::<Vec<_>>()
             .await?;
@@ -159,6 +163,7 @@ where
         let votes = state
             .internal
             .prefix::<T>(&self.votes_by_key_prefix(key, true))
+            .await
             .map_ok(|(key, value)| {
                 let (_key, party, time) = self
                     .parse_votes_by_key_party_timestamp(&key)
@@ -203,6 +208,7 @@ where
         let pending_changes = state
             .internal
             .prefix::<T>(&self.pending_by_key_prefix(key, true))
+            .await
             .map_ok(|(key, _)| {
                 let (_key, time) = self
                     .parse_pending_by_key_timestamp(&key)
@@ -245,6 +251,7 @@ where
         let pending = state
             .internal
             .prefix::<T>(&self.pending_by_key_prefix(key, true))
+            .await
             .map_ok(|(_key, value)| value)
             .try_collect::<Vec<_>>()
             .await?;
@@ -266,6 +273,7 @@ where
         let pending = state
             .internal
             .prefix::<T>(&self.pending_by_key_prefix(prefix, false)) // Allow inexact key matches
+            .await
             .map_ok(|(key, value)| {
                 let (key, _time) = self
                     .parse_pending_by_key_timestamp(&key)
@@ -281,6 +289,7 @@ where
         let votes = state
             .internal
             .prefix::<T>(&self.votes_by_key_prefix(key, true))
+            .await
             .map_ok(|(key, value)| {
                 let (key, party, time) = self
                     .parse_votes_by_key_party_timestamp(&key)
@@ -305,6 +314,7 @@ where
         let votes = state
             .internal
             .prefix::<T>(&self.votes_by_key_prefix(prefix, false)) // Allow inexact key matches
+            .await
             .map_ok(|(key, value)| {
                 let (key, party, time) = self
                     .parse_votes_by_key_party_timestamp(&key)

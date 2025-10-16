@@ -27,15 +27,16 @@ pub struct Start {
     /// Which port should the ABCI server listen on?
     #[clap(long, default_value = "26658")]
     abci: u16,
-    /// Which port should the RPC server listen on?
-    #[clap(long, default_value = "1371")]
-    rpc: u16,
+    /// Which port should the API server listen on?
+    #[clap(long, default_value = "80")]
+    api: u16,
 }
 
 #[derive(Clone)]
 pub struct CoreService {
     internal: Storage,
     canonical: Storage,
+    pending: Option<State>,
 }
 
 impl Service<abci::MempoolRequest> for CoreService {
@@ -97,10 +98,13 @@ impl Service<ConsensusRequest> for CoreService {
     fn call(&mut self, req: ConsensusRequest) -> Self::Future {
         info!(?req);
 
-        let mut state = State::new(self.internal.clone(), self.canonical.clone());
+        let mut state = self
+            .pending
+            .clone()
+            .expect("pending state must be initialized before consensus calls");
 
         Box::pin(async move {
-            Ok(match req {
+            let response = match req {
                 ConsensusRequest::InitChain(init_chain) => {
                     ConsensusResponse::InitChain(state.init_chain(init_chain).await?)
                 }
@@ -145,7 +149,9 @@ impl Service<ConsensusRequest> for CoreService {
                         ..Default::default()
                     })
                 }
-            })
+            };
+
+            Ok(response)
         })
     }
 }
@@ -219,39 +225,96 @@ impl Service<abci::SnapshotRequest> for CoreService {
 
 impl Run for Start {
     async fn run(self) -> color_eyre::Result<()> {
-        let Self { abci, rpc } = self;
+        let Self { abci, api } = self;
+
+        // Determine the internal and canonical storage directories:
+        // TODO: allow overriding these via CLI args
+        // TODO: multiple storages means the possibility of a torn write: mitigate this?
+        let directories = directories::ProjectDirs::from("press", "freedom", "felidae")
+            .ok_or_eyre("could not determine internal storage directory")?;
+        let internal_dir = directories.data_local_dir().join("internal").to_path_buf();
+        let canonical_dir = directories.data_local_dir().join("canonical").to_path_buf();
+        std::fs::create_dir_all(&internal_dir)
+            .or_else(|e| bail!("could not create internal storage directory: {e}"))?;
+        std::fs::create_dir_all(&canonical_dir)
+            .or_else(|e| bail!("could not create canonical storage directory: {e}"))?;
 
         // Load up the internal and canonical storage backends:
-        let internal = Storage::load(todo!("specify path"), vec![])
-            .await
-            .or_else(|e| {
-                bail!("could not open storage at specified path: {e}");
-            })?;
-        let canonical = Storage::load(todo!("specify path"), vec![])
-            .await
-            .or_else(|e| {
-                bail!("could not open storage at specified path: {e}");
-            })?;
+        let internal = Storage::load(internal_dir, vec![]).await.or_else(|e| {
+            bail!("could not open storage at specified path: {e}");
+        })?;
+        let canonical = Storage::load(canonical_dir, vec![]).await.or_else(|e| {
+            bail!("could not open storage at specified path: {e}");
+        })?;
 
         // All the ABCI services share the same core state:
-        let core = CoreService {
+        let mut core = CoreService {
             internal: internal.clone(),
             canonical: canonical.clone(),
+            pending: None,
         };
 
         // Start the ABCI server:
-        tower_abci::v034::ServerBuilder::default()
-            .mempool(core.clone())
-            .consensus(core.clone())
-            .info(core.clone())
-            .snapshot(core)
-            .finish()
-            .ok_or_eyre("could not construct ABCI server")?
-            .listen_tcp((IpAddr::V4(Ipv4Addr::LOCALHOST), abci))
-            .await
-            .or_else(|e| {
-                bail!("could not start ABCI server on port {abci}: {e}");
-            })?;
+        let abci = tokio::spawn(async move {
+            tower_abci::v034::ServerBuilder::default()
+                .mempool(core.clone())
+                .info(core.clone())
+                .snapshot(core.clone())
+                .consensus({
+                    // In consensus, we need to keep track of pending state between calls:
+                    core.pending = Some(State::new(internal, canonical));
+                    core
+                })
+                .finish()
+                .ok_or_eyre("could not construct ABCI server")?
+                .listen_tcp((IpAddr::V4(Ipv4Addr::LOCALHOST), abci))
+                .await
+                .or_else(|e| {
+                    bail!("could not start ABCI server on port {abci}: {e}");
+                })
+        });
+
+        // Start the API server:
+        let api = tokio::spawn(async move {
+            use axum::{Router, routing::*};
+            let client = reqwest::Client::new();
+            let app = Router::new().route(
+                "/tx",
+                post(|body: Bytes| async move {
+                    // Proxy the transaction to the ABCI mempool:
+                    client
+                        .get(format!(
+                            "http://localhost:26657/v1/broadcast_tx_async/0x{}",
+                            hex::encode(body)
+                        ))
+                        .send()
+                        .await
+                        .map_err(|e| {
+                            (
+                                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                                format!("failed to send transaction to ABCI: {e}"),
+                            )
+                        })?
+                        .error_for_status()
+                        .map_err(|e| {
+                            (
+                                axum::http::StatusCode::BAD_REQUEST,
+                                format!("ABCI rejected transaction: {e}"),
+                            )
+                        })?;
+                    Ok::<_, (axum::http::StatusCode, String)>(())
+                }),
+            );
+            let listener =
+                tokio::net::TcpListener::bind((IpAddr::V4(Ipv4Addr::UNSPECIFIED), api)).await?;
+            axum::serve(listener, app).await
+        });
+
+        // Wait for either server to exit:
+        tokio::select! {
+            res = abci => res??,
+            res = api => res??,
+        }
 
         Ok(())
     }

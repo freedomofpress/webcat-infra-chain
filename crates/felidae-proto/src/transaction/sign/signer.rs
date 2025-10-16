@@ -2,14 +2,14 @@ use aws_lc_rs::rand::SystemRandom;
 
 use super::*;
 
-/// A signer is something that can sign a digest using one or more Ed25519 keypairs.
+/// A signer is something that can sign a digest using one or more keypairs.
 pub trait Signer {
     /// This should return the signature if and only if the public key matches a keypair that can
     /// produce a signature through the signer.
     fn sign_with(&self, public_key: &[u8], digest: Digest) -> Option<Vec<u8>>;
 }
 
-/// An async signer is something that can sign a digest using one or more Ed25519 keypairs,
+/// An async signer is something that can sign a digest using one or more keypairs,
 /// potentially performing asynchronous operations to do so.
 pub trait AsyncSigner {
     /// This should return the signature if and only if the public key matches a keypair that can

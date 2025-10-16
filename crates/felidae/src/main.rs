@@ -9,7 +9,9 @@ mod cli;
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
-    tracing_subscriber::fmt().init();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .init();
     color_eyre::install()?;
     tracing::debug!("Starting application");
     cli::Options::parse().run().await

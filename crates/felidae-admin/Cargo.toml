@@ -1,0 +1,7 @@
+[package]
+name = "felidae-admin"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+felidae-types = { path = "../felidae-types" }

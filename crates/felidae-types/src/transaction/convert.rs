@@ -1,7 +1,8 @@
+use std::any::type_name;
+
 use aws_lc_rs::signature::{EdDSAParameters, ParsedPublicKey};
 use felidae_proto::transaction::{self as proto, KeyPair};
 use fqdn::FQDN;
-use std::any::TypeId;
 
 use super::*;
 
@@ -37,7 +38,7 @@ impl TryFrom<String> for ChainId {
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         if value.is_empty() {
-            Err(crate::ParseError(TypeId::of::<ChainId>()))
+            Err(crate::ParseError(type_name::<ChainId>()))
         } else {
             Ok(ChainId(value))
         }
@@ -55,7 +56,7 @@ impl TryFrom<proto::Signature> for Unsigned {
 
     fn try_from(value: proto::Signature) -> Result<Self, Self::Error> {
         let _pk = ParsedPublicKey::new(&EdDSAParameters, &value.public_key)
-            .map_err(|_| crate::ParseError(TypeId::of::<ParsedPublicKey>()))?;
+            .map_err(|_| crate::ParseError(type_name::<ParsedPublicKey>()))?;
         Ok(Unsigned {
             public_key: value.public_key,
         })
@@ -83,15 +84,15 @@ impl TryFrom<proto::Action> for Action {
         match value.action {
             Some(proto::action::Action::Reconfigure(reconfigure)) => {
                 Ok(Action::Reconfigure(reconfigure.try_into().map_err(
-                    |_| crate::ParseError(TypeId::of::<Reconfigure>()),
+                    |_| crate::ParseError(type_name::<Reconfigure>()),
                 )?))
             }
             Some(proto::action::Action::Observe(observe)) => Ok(Action::Observe(
                 observe
                     .try_into()
-                    .map_err(|_| crate::ParseError(TypeId::of::<Observe>()))?,
+                    .map_err(|_| crate::ParseError(type_name::<Observe>()))?,
             )),
-            None => Err(crate::ParseError(TypeId::of::<Action>())),
+            None => Err(crate::ParseError(type_name::<Action>())),
         }
     }
 }
@@ -122,22 +123,22 @@ impl TryFrom<proto::action::Reconfigure> for Reconfigure {
 
         let admin: Admin = signature
             .map(Unsigned::try_from)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<Admin>()))??
+            .ok_or_else(|| crate::ParseError(type_name::<Admin>()))??
             .try_into()?;
 
         let config = config
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<Config>()))??;
+            .ok_or_else(|| crate::ParseError(type_name::<Config>()))??;
 
         let not_before = not_before
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<tendermint::Time>()))?
-            .map_err(|_| crate::ParseError(TypeId::of::<tendermint::Time>()))?;
+            .ok_or_else(|| crate::ParseError(type_name::<tendermint::Time>()))?
+            .map_err(|_| crate::ParseError(type_name::<tendermint::Time>()))?;
 
         let not_after = not_after
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<tendermint::Time>()))?
-            .map_err(|_| crate::ParseError(TypeId::of::<tendermint::Time>()))?;
+            .ok_or_else(|| crate::ParseError(type_name::<tendermint::Time>()))?
+            .map_err(|_| crate::ParseError(type_name::<tendermint::Time>()))?;
 
         Ok(Reconfigure {
             admin,
@@ -176,12 +177,12 @@ impl TryFrom<proto::action::Observe> for Observe {
 
         let oracle = signature
             .map(Unsigned::try_from)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<Oracle>()))??
+            .ok_or_else(|| crate::ParseError(type_name::<Oracle>()))??
             .try_into()?;
 
         let observation = observation
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<Observation>()))??;
+            .ok_or_else(|| crate::ParseError(type_name::<Observation>()))??;
 
         Ok(Observe {
             oracle,
@@ -216,19 +217,19 @@ impl TryFrom<proto::Config> for Config {
 
         let version = version
             .try_into()
-            .map_err(|_| crate::ParseError(TypeId::of::<u64>()))?;
+            .map_err(|_| crate::ParseError(type_name::<u32>()))?;
 
         let admin_config = admin_config
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<AdminConfig>()))??;
+            .ok_or_else(|| crate::ParseError(type_name::<AdminConfig>()))??;
 
         let oracle_config = oracle_config
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<OracleConfig>()))??;
+            .ok_or_else(|| crate::ParseError(type_name::<OracleConfig>()))??;
 
         let onion_config = onion_config
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<OnionConfig>()))??;
+            .ok_or_else(|| crate::ParseError(type_name::<OnionConfig>()))??;
 
         Ok(Config {
             version,
@@ -248,7 +249,7 @@ impl From<Config> for proto::Config {
             onion_config,
         } = config;
         proto::Config {
-            version: version as i64,
+            version: version.into(),
             admin_config: Some(admin_config.into()),
             oracle_config: Some(oracle_config.into()),
             onion_config: Some(onion_config.into()),
@@ -272,7 +273,7 @@ impl TryFrom<proto::config::AdminConfig> for AdminConfig {
 
         let voting_config = voting_config
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<VotingConfig>()))??;
+            .ok_or_else(|| crate::ParseError(type_name::<VotingConfig>()))??;
 
         Ok(AdminConfig {
             admins,
@@ -306,9 +307,8 @@ impl TryFrom<proto::config::OracleConfig> for OracleConfig {
             observation_timeout,
         } = value;
 
-        let max_enrolled_subdomains: u64 = max_enrolled_subdomains
-            .try_into()
-            .map_err(|_| crate::ParseError(TypeId::of::<u64>()))?;
+        let max_enrolled_subdomains: u64 = u64::try_from(max_enrolled_subdomains)
+            .map_err(|_| crate::ParseError(type_name::<u64>()))?;
 
         let oracles = oracles
             .into_iter()
@@ -317,12 +317,11 @@ impl TryFrom<proto::config::OracleConfig> for OracleConfig {
 
         let voting_config = voting_config
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<VotingConfig>()))??;
+            .ok_or_else(|| crate::ParseError(type_name::<VotingConfig>()))??;
 
         let observation_timeout = Duration::from_secs(
-            observation_timeout
-                .try_into()
-                .map_err(|_| crate::ParseError(TypeId::of::<Duration>()))?,
+            u64::try_from(observation_timeout)
+                .map_err(|_| crate::ParseError(type_name::<Duration>()))?,
         );
 
         Ok(OracleConfig {
@@ -348,8 +347,8 @@ impl From<OracleConfig> for proto::config::OracleConfig {
             enabled,
             oracles: oracles.into_iter().map(Into::into).collect(),
             voting_config: Some(voting_config.into()),
-            observation_timeout: observation_timeout.as_secs() as i64,
-            max_enrolled_subdomains: max_enrolled_subdomains as i64,
+            observation_timeout: i64::try_from(observation_timeout.as_secs()).unwrap_or(i64::MAX),
+            max_enrolled_subdomains: i64::try_from(max_enrolled_subdomains).unwrap_or(i64::MAX),
         }
     }
 }
@@ -381,21 +380,15 @@ impl TryFrom<proto::config::VotingConfig> for VotingConfig {
             delay,
         } = value;
 
-        let total = Total(
-            total
-                .try_into()
-                .map_err(|_| crate::ParseError(TypeId::of::<u64>()))?,
-        );
-        let quorum = Quorum(
-            quorum
-                .try_into()
-                .map_err(|_| crate::ParseError(TypeId::of::<u64>()))?,
-        );
+        let total =
+            Total(u64::try_from(total).map_err(|_| crate::ParseError(type_name::<Total>()))?);
+        let quorum =
+            Quorum(u64::try_from(quorum).map_err(|_| crate::ParseError(type_name::<Quorum>()))?);
         let timeout = Timeout(Duration::from_secs(
-            u64::try_from(timeout).map_err(|_| crate::ParseError(TypeId::of::<u64>()))?,
+            u64::try_from(timeout).map_err(|_| crate::ParseError(type_name::<Timeout>()))?,
         ));
         let delay = Delay(Duration::from_secs(
-            u64::try_from(delay).map_err(|_| crate::ParseError(TypeId::of::<u64>()))?,
+            u64::try_from(delay).map_err(|_| crate::ParseError(type_name::<Delay>()))?,
         ));
 
         Ok(VotingConfig {
@@ -416,10 +409,10 @@ impl From<VotingConfig> for proto::config::VotingConfig {
             delay,
         } = config;
         proto::config::VotingConfig {
-            total: total.0 as i64,
-            quorum: quorum.0 as i64,
-            timeout: timeout.0.as_secs() as i64,
-            delay: delay.0.as_secs() as i64,
+            total: i64::try_from(total.0).unwrap_or(i64::MAX),
+            quorum: i64::try_from(quorum.0).unwrap_or(i64::MAX),
+            timeout: i64::try_from(timeout.0.as_secs()).unwrap_or(i64::MAX),
+            delay: i64::try_from(delay.0.as_secs()).unwrap_or(i64::MAX),
         }
     }
 }
@@ -438,23 +431,23 @@ impl TryFrom<proto::action::observe::Observation> for Observation {
         let domain = Domain {
             name: domain
                 .parse()
-                .map_err(|_| crate::ParseError(TypeId::of::<fqdn::FQDN>()))?,
+                .map_err(|_| crate::ParseError(type_name::<fqdn::FQDN>()))?,
         };
 
         let zone = Domain {
             name: zone
                 .parse()
-                .map_err(|_| crate::ParseError(TypeId::of::<fqdn::FQDN>()))?,
+                .map_err(|_| crate::ParseError(type_name::<fqdn::FQDN>()))?,
         };
 
         let hash_observed = hash_observed
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(TypeId::of::<HashObserved>()))??;
+            .ok_or_else(|| crate::ParseError(type_name::<HashObserved>()))??;
 
         let blockstamp = blockstamp
-            .ok_or_else(|| crate::ParseError(TypeId::of::<Blockstamp>()))?
+            .ok_or_else(|| crate::ParseError(type_name::<Blockstamp>()))?
             .try_into()
-            .map_err(|_| crate::ParseError(TypeId::of::<Blockstamp>()))?;
+            .map_err(|_| crate::ParseError(type_name::<Blockstamp>()))?;
 
         Ok(Observation {
             domain,
@@ -496,12 +489,12 @@ impl TryFrom<proto::action::observe::observation::Blockstamp> for Blockstamp {
         let block_hash = block_hash
             .to_vec()
             .try_into()
-            .map_err(|_| crate::ParseError(TypeId::of::<[u8; 32]>()))?;
+            .map_err(|_| crate::ParseError(type_name::<[u8; 32]>()))?;
 
         let block_height: Height = u64::try_from(block_number)
-            .map_err(|_| crate::ParseError(TypeId::of::<u64>()))?
+            .map_err(|_| crate::ParseError(type_name::<Height>()))?
             .try_into()
-            .map_err(|_| crate::ParseError(TypeId::of::<Height>()))?;
+            .map_err(|_| crate::ParseError(type_name::<Height>()))?;
 
         Ok(Blockstamp {
             app_hash: block_hash,
@@ -518,7 +511,7 @@ impl From<Blockstamp> for proto::action::observe::observation::Blockstamp {
         } = blockstamp;
         proto::action::observe::observation::Blockstamp {
             block_hash: app_hash.as_bytes().to_vec().into(),
-            block_number: block_height.value() as i64,
+            block_number: i64::try_from(block_height.value()).unwrap_or(i64::MAX),
         }
     }
 }
@@ -528,7 +521,7 @@ impl TryFrom<proto::Admin> for Admin {
 
     fn try_from(value: proto::Admin) -> Result<Self, Self::Error> {
         let _pk = ParsedPublicKey::new(&EdDSAParameters, &value.public_key)
-            .map_err(|_| crate::ParseError(TypeId::of::<ParsedPublicKey>()))?;
+            .map_err(|_| crate::ParseError(type_name::<ParsedPublicKey>()))?;
         Ok(Admin {
             identity: value.public_key,
         })
@@ -540,7 +533,7 @@ impl TryFrom<Unsigned> for Admin {
 
     fn try_from(value: Unsigned) -> Result<Self, Self::Error> {
         let _pk = ParsedPublicKey::new(&EdDSAParameters, &value.public_key)
-            .map_err(|_| crate::ParseError(TypeId::of::<ParsedPublicKey>()))?;
+            .map_err(|_| crate::ParseError(type_name::<ParsedPublicKey>()))?;
         Ok(Admin {
             identity: value.public_key,
         })
@@ -566,7 +559,7 @@ impl TryFrom<proto::Oracle> for Oracle {
 
     fn try_from(value: proto::Oracle) -> Result<Self, Self::Error> {
         let _pk = ParsedPublicKey::new(&EdDSAParameters, &value.public_key)
-            .map_err(|_| crate::ParseError(TypeId::of::<ParsedPublicKey>()))?;
+            .map_err(|_| crate::ParseError(type_name::<ParsedPublicKey>()))?;
         Ok(Oracle {
             identity: value.public_key,
         })
@@ -578,7 +571,7 @@ impl TryFrom<Unsigned> for Oracle {
 
     fn try_from(value: Unsigned) -> Result<Self, Self::Error> {
         let _pk = ParsedPublicKey::new(&EdDSAParameters, &value.public_key)
-            .map_err(|_| crate::ParseError(TypeId::of::<ParsedPublicKey>()))?;
+            .map_err(|_| crate::ParseError(type_name::<ParsedPublicKey>()))?;
         Ok(Oracle {
             identity: value.public_key,
         })

@@ -33,6 +33,7 @@ use store::Store;
 mod vote_queue;
 use vote_queue::{Vote, VoteQueue};
 
+#[derive(Clone)]
 pub struct State {
     internal: Store,
     canonical: Store,
@@ -138,13 +139,13 @@ impl State {
                 enabled: false,  // Oracles disabled initially
                 oracles: vec![], // No oracles initially
                 voting_config: VotingConfig {
-                    total: Total(0),                             // No oracles initially
-                    quorum: Quorum(0),                           // No voting initially
-                    timeout: Timeout(Duration::from_secs(0)),    // No voting initially
-                    delay: Delay(Duration::from_secs(u64::MAX)), // No voting initially
+                    total: Total(0),                                    // No oracles initially
+                    quorum: Quorum(0),                                  // No voting initially
+                    timeout: Timeout(Duration::from_secs(0)),           // No voting initially
+                    delay: Delay(Duration::from_secs(i64::MAX as u64)), // No voting initially
                 },
                 max_enrolled_subdomains: 0, // No subdomains initially
-                observation_timeout: Duration::from_secs(u64::MAX), // No observations initially
+                observation_timeout: Duration::from_secs(i64::MAX as u64), // No observations initially
             },
             onion_config: OnionConfig { enabled: false },
         })
@@ -154,6 +155,9 @@ impl State {
         for validator in validators.iter() {
             self.declare_validator(validator.clone()).await?;
         }
+
+        // Commit the state:
+        self.commit().await?;
 
         Ok(response::InitChain {
             consensus_params: Some(consensus_params),
@@ -749,7 +753,7 @@ impl State {
     /// Get all active validators.
     async fn active_validators(&self) -> Result<Vec<Update>, Report> {
         let mut updates = vec![];
-        let mut stream = self.internal.prefix::<Power>("current/validators/");
+        let mut stream = self.internal.prefix::<Power>("current/validators/").await;
         while let Some(Ok((key, power))) = stream.next().await {
             let pub_key = hex::decode(key.trim_start_matches("current/validators/"))?;
             if power.value() > 0 {
@@ -930,7 +934,10 @@ impl State {
         registered_domain: &Domain,
     ) -> Result<Vec<String>, Report> {
         let mut subdomains = Vec::new();
-        let mut stream = self.canonical.prefix_keys(&format!("{registered_domain}."));
+        let mut stream = self
+            .canonical
+            .prefix_keys(&format!("{registered_domain}."))
+            .await;
         while let Some(Ok(subdomain)) = stream.next().await {
             subdomains.push(subdomain);
         }

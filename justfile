@@ -41,4 +41,6 @@ felidae:
 # Reset the node
 reset:
     just build-cometbft
+    just build-felidae
     ./cometbft/build/cometbft unsafe-reset-all
+    ./target/release/felidae reset

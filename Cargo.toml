@@ -6,7 +6,7 @@ members = [
     "crates/felidae-proto",
     "crates/felidae-types",
     "crates/felidae-traverse",
-    "crates/felidae-traverse-derive", "crates/felidae-state",
+    "crates/felidae-traverse-derive", "crates/felidae-state", "crates/felidae-oracle", "crates/felidae-admin",
 ]
 
 [workspace.dependencies]
@@ -33,3 +33,7 @@ cnidarium = "0.84"
 prost-types = { version = "0.14" }
 tendermint-proto = "0.40"
 hex = "0.4"
+wasm-bindgen = "0.2"
+directories = "6.0"
+axum = "0.8"
+reqwest = "0.12"
