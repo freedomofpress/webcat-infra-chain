@@ -156,8 +156,8 @@ impl State {
             self.declare_validator(validator.clone()).await?;
         }
 
-        // Commit the state:
-        self.commit().await?;
+        // // Commit the state:
+        // self.commit().await?;
 
         Ok(response::InitChain {
             consensus_params: Some(consensus_params),
@@ -395,14 +395,14 @@ impl State {
         }
 
         // Ensure that the version is greater than any pending config change:
-        if let Some(pending_config) = self.admin_voting().await?.pending_for_key(self, "").await? {
-            if pending_config.version >= config.version {
-                bail!(
-                    "newly proposed config version {} must be greater than pending version {}",
-                    config.version,
-                    pending_config.version
-                );
-            }
+        if let Some(pending_config) = self.admin_voting().await?.pending_for_key(self, "").await?
+            && pending_config.version >= config.version
+        {
+            bail!(
+                "newly proposed config version {} must be greater than pending version {}",
+                config.version,
+                pending_config.version
+            );
         }
 
         // Enqueue the config change in the vote queue for admin reconfigurations
@@ -613,7 +613,7 @@ impl State {
     }
 
     /// Get the current block height from the state.
-    async fn block_height(&self) -> Result<Height, Report> {
+    pub async fn block_height(&self) -> Result<Height, Report> {
         self.internal
             .get::<Height>("current/block_height")
             .await?

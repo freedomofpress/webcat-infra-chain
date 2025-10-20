@@ -168,25 +168,41 @@ impl Service<abci::InfoRequest> for CoreService {
     fn call(&mut self, req: abci::InfoRequest) -> Self::Future {
         info!(?req);
 
+        let internal = self.internal.clone();
+        let canonical = self.canonical.clone();
+
         Box::pin(async move {
             Ok(match req {
                 abci::InfoRequest::Info(abci::request::Info {
-                    version,
-                    block_version,
-                    p2p_version,
-                    abci_version,
-                }) => abci::InfoResponse::Info(abci::response::Info {
-                    data: env!("CARGO_PKG_NAME").to_string(),
-                    version: env!("CARGO_PKG_VERSION").to_string(),
-                    app_version: env!("CARGO_PKG_VERSION").to_string().parse().unwrap_or(0),
-                    last_block_height: Height::from(0u32), // FIXME: return the correct height
-                    last_block_app_hash: AppHash::try_from(Bytes::new()).expect("invalid app hash"), // FIXME: return the correct app hash
-                }),
+                    version: _,
+                    block_version: _,
+                    p2p_version: _,
+                    abci_version: _,
+                }) => {
+                    // Create a read-only state to get current height and app hash
+                    let state = State::new(internal, canonical);
+                    
+                    // Get the current height, defaulting to 0 if uninitialized
+                    let last_block_height = state.block_height().await.unwrap_or(Height::from(0u32));
+                    
+                    // Get the current app hash, defaulting to empty if uninitialized
+                    let last_block_app_hash = state.root_hashes().await
+                        .map(|hashes| AppHash::try_from(hashes.app_hash.0.to_vec()).expect("invalid app hash"))
+                        .unwrap_or_else(|_| AppHash::try_from(Bytes::new()).expect("invalid app hash"));
+
+                    abci::InfoResponse::Info(abci::response::Info {
+                        data: env!("CARGO_PKG_NAME").to_string(),
+                        version: env!("CARGO_PKG_VERSION").to_string(),
+                        app_version: env!("CARGO_PKG_VERSION").to_string().parse().unwrap_or(0),
+                        last_block_height,
+                        last_block_app_hash,
+                    })
+                },
                 abci::InfoRequest::Query(abci::request::Query {
-                    data,
-                    path,
-                    height,
-                    prove,
+                    data: _,
+                    path: _,
+                    height: _,
+                    prove: _,
                 }) => abci::InfoResponse::Query(abci::response::Query {
                     code: Code::Err(NonZero::new(1).expect("1 != 0")),
                     log: "query is not implemented".to_string(),
@@ -195,7 +211,7 @@ impl Service<abci::InfoRequest> for CoreService {
                 abci::InfoRequest::Echo(abci::request::Echo { message }) => {
                     abci::InfoResponse::Echo(abci::response::Echo { message })
                 }
-                abci::InfoRequest::SetOption(abci::request::SetOption { key, value }) => {
+                abci::InfoRequest::SetOption(abci::request::SetOption { key: _, value: _ }) => {
                     abci::InfoResponse::SetOption(abci::response::SetOption {
                         code: Code::Err(NonZero::new(1).expect("1 != 0")),
                         log: "set option is not implemented".to_string(),
@@ -284,7 +300,7 @@ impl Run for Start {
                     // Proxy the transaction to the ABCI mempool:
                     client
                         .get(format!(
-                            "http://localhost:26657/v1/broadcast_tx_async/0x{}",
+                            "http://localhost:26657/broadcast_tx_sync?tx=0x{}",
                             hex::encode(body)
                         ))
                         .send()
