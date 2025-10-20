@@ -57,6 +57,7 @@ pub struct Unsigned {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Action {
     Reconfigure(Reconfigure),
+    /// Post a result of observing a domain.
     Observe(Observe),
 }
 
@@ -109,8 +110,12 @@ pub struct OnionConfig {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VotingConfig {
     pub total: Total,
+    /// The minimum number of votes required to apply a vote result.
     pub quorum: Quorum,
+
     pub timeout: Timeout,
+    /// Vote is not canonical until this delay expires. If there's another
+    /// vote that applies in this time window, then the vote is not applied.
     pub delay: Delay,
 }
 
