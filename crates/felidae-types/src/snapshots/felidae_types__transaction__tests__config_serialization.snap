@@ -1,0 +1,5 @@
+---
+source: crates/felidae-types/src/transaction.rs
+expression: "serde_json::to_string(&config).unwrap()"
+---
+{"version":1,"admins":{"voting":{"total":3,"quorum":2,"timeout":"30s","delay":"5s"},"authorized":["00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"]},"oracles":{"enabled":true,"voting":{"total":5,"quorum":3,"timeout":"1m","delay":"10s"},"max_enrolled_subdomains":100,"observation_timeout":"2m","authorized":["01010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101"]},"onion":{"enabled":false}}

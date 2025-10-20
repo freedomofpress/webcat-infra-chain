@@ -120,19 +120,19 @@ impl State {
         // Set the initial config in the state:
         self.set_config(Config {
             version: 0,
-            admin_config: AdminConfig {
-                admins: vec![], // Default admin set: the first reconfig will set this
-                voting_config: VotingConfig {
+            admins: AdminConfig {
+                authorized: vec![], // Default admin set: the first reconfig will set this
+                voting: VotingConfig {
                     total: Total(0),   // No admins required to initially reconfigure
                     quorum: Quorum(0), // No quorum required to initially reconfigure
                     timeout: Timeout(Duration::from_secs(0)), // No follow-up voting for initial reconfig
                     delay: Delay(Duration::from_secs(0)),     // No delay for initial reconfig
                 },
             },
-            oracle_config: OracleConfig {
-                enabled: false,  // Oracles disabled initially
-                oracles: vec![], // No oracles initially
-                voting_config: VotingConfig {
+            oracles: OracleConfig {
+                enabled: false,     // Oracles disabled initially
+                authorized: vec![], // No oracles initially
+                voting: VotingConfig {
                     total: Total(0),                                    // No oracles initially
                     quorum: Quorum(0),                                  // No voting initially
                     timeout: Timeout(Duration::from_secs(0)),           // No voting initially
@@ -141,7 +141,7 @@ impl State {
                 max_enrolled_subdomains: 0, // No subdomains initially
                 observation_timeout: Duration::from_secs(i64::MAX as u64), // No observations initially
             },
-            onion_config: OnionConfig { enabled: false },
+            onion: OnionConfig { enabled: false },
         })
         .await?;
 
@@ -357,12 +357,8 @@ impl State {
         // Check that the admin is a current admin (or that there are no admins yet -- i.e. this is
         // the initial configuration being set, which can be done without permission):
         let current_config = self.config().await?;
-        if !current_config.admin_config.admins.is_empty()
-            && !current_config
-                .admin_config
-                .admins
-                .iter()
-                .any(|a| a == admin)
+        if !current_config.admins.authorized.is_empty()
+            && !current_config.admins.authorized.iter().any(|a| a == admin)
         {
             bail!("not a current admin: {}", hex::encode(identity));
         }
@@ -436,8 +432,8 @@ impl State {
         // Check that the oracle is a current oracle:
         let current_config = self.config().await?;
         if !current_config
-            .oracle_config
             .oracles
+            .authorized
             .iter()
             .any(|o| o == oracle)
         {
@@ -460,7 +456,7 @@ impl State {
                 block_time
             )
         })?;
-        if observation_age >= current_config.oracle_config.observation_timeout {
+        if observation_age >= current_config.oracles.observation_timeout {
             bail!("blockstamp is too old based on observation timeout");
         }
 
@@ -504,8 +500,7 @@ impl State {
                 } else {
                     // If the subdomain does not exist, ensure that the oracle is allowed to register a new
                     // subdomain under the registered domain.
-                    let max_enrolled_subdomains =
-                        current_config.oracle_config.max_enrolled_subdomains;
+                    let max_enrolled_subdomains = current_config.oracles.max_enrolled_subdomains;
 
                     // Count the number of distinct subdomains under the registered domain in both
                     // the canonical state and the pending changes, and ensure it is less than the max
@@ -798,23 +793,22 @@ impl State {
         &self,
         Config {
             version,
-            admin_config:
+            admins:
                 AdminConfig {
-                    admins,
-                    voting_config: admin_voting_config,
+                    authorized: admins,
+                    voting: admin_voting_config,
                 },
-            oracle_config:
+            oracles:
                 OracleConfig {
                     enabled: _, // Can be enabled or not
-                    oracles,
-                    voting_config: oracle_voting_config,
+                    authorized: oracles,
+                    voting: oracle_voting_config,
                     max_enrolled_subdomains,
                     observation_timeout: _, // Any timeout is acceptable
                 },
-            onion_config:
-                OnionConfig {
-                    enabled: _, // Can be enabled or not
-                },
+            onion: OnionConfig {
+                enabled: _, // Can be enabled or not
+            },
         }: &Config,
     ) -> Result<(), Report> {
         // Ensure the version is greater than the current version:
@@ -833,7 +827,7 @@ impl State {
         }
 
         // Ensure that max_enrolled_subdomains does not decrease:
-        if *max_enrolled_subdomains < current_config.oracle_config.max_enrolled_subdomains {
+        if *max_enrolled_subdomains < current_config.oracles.max_enrolled_subdomains {
             bail!("max_enrolled_subdomains cannot decrease");
         }
 
@@ -882,7 +876,7 @@ impl State {
     async fn oracle_voting(&mut self) -> Result<VoteQueue<HashObserved>, Report> {
         Ok(VoteQueue::<HashObserved>::new(
             "oracle_voting/",
-            self.config().await?.oracle_config.voting_config.clone(),
+            self.config().await?.oracles.voting.clone(),
         ))
     }
 
@@ -890,7 +884,7 @@ impl State {
     async fn admin_voting(&mut self) -> Result<VoteQueue<Config>, Report> {
         Ok(VoteQueue::<Config>::new(
             "admin_voting/",
-            self.config().await?.admin_config.voting_config.clone(),
+            self.config().await?.admins.voting.clone(),
         ))
     }
 

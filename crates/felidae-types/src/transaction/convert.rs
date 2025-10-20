@@ -224,9 +224,9 @@ impl TryFrom<proto::Config> for Config {
 
         Ok(Config {
             version,
-            admin_config,
-            oracle_config,
-            onion_config,
+            admins: admin_config,
+            oracles: oracle_config,
+            onion: onion_config,
         })
     }
 }
@@ -235,9 +235,9 @@ impl From<Config> for proto::Config {
     fn from(config: Config) -> Self {
         let Config {
             version,
-            admin_config,
-            oracle_config,
-            onion_config,
+            admins: admin_config,
+            oracles: oracle_config,
+            onion: onion_config,
         } = config;
         proto::Config {
             version: version.into(),
@@ -267,8 +267,8 @@ impl TryFrom<proto::config::AdminConfig> for AdminConfig {
             .ok_or_else(|| crate::ParseError::new::<VotingConfig>("missing".to_string()))??;
 
         Ok(AdminConfig {
-            admins,
-            voting_config,
+            authorized: admins,
+            voting: voting_config,
         })
     }
 }
@@ -276,8 +276,8 @@ impl TryFrom<proto::config::AdminConfig> for AdminConfig {
 impl From<AdminConfig> for proto::config::AdminConfig {
     fn from(config: AdminConfig) -> Self {
         let AdminConfig {
-            admins,
-            voting_config,
+            authorized: admins,
+            voting: voting_config,
         } = config;
         proto::config::AdminConfig {
             admins: admins.into_iter().map(Into::into).collect(),
@@ -317,8 +317,8 @@ impl TryFrom<proto::config::OracleConfig> for OracleConfig {
 
         Ok(OracleConfig {
             enabled,
-            oracles,
-            voting_config,
+            authorized: oracles,
+            voting: voting_config,
             observation_timeout,
             max_enrolled_subdomains,
         })
@@ -329,8 +329,8 @@ impl From<OracleConfig> for proto::config::OracleConfig {
     fn from(config: OracleConfig) -> Self {
         let OracleConfig {
             enabled,
-            oracles,
-            voting_config,
+            authorized: oracles,
+            voting: voting_config,
             max_enrolled_subdomains,
             observation_timeout,
         } = config;

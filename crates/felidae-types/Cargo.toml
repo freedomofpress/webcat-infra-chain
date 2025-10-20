@@ -11,4 +11,10 @@ parking_lot = { workspace = true }
 fqdn = { workspace = true }
 tendermint = { workspace = true }
 serde = { workspace = true }
+serde_with = { workspace = true }
+humantime-serde = { workspace = true }
 hex = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+serde_json = { workspace = true }

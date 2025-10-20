@@ -1,6 +1,8 @@
 use felidae_proto::domain_types;
 use felidae_proto::transaction::{self as proto};
 use prost::bytes::Bytes;
+use serde::{Deserialize, Serialize};
+use serde_with::{DisplayFromStr, hex::Hex, serde_as};
 use std::fmt::Display;
 use std::{hash::Hash, ops::Deref, time::Duration};
 use tendermint::block::Height;
@@ -38,73 +40,87 @@ domain_types!(
     Blockstamp: proto::action::observe::observation::Blockstamp,
 );
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Transaction {
     pub chain_id: ChainId,
     pub actions: Vec<Action>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct ChainId(pub String);
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde_as]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct Unsigned {
+    #[serde_as(as = "Hex")]
     pub public_key: Bytes,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Action {
     Reconfigure(Reconfigure),
     Observe(Observe),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Reconfigure {
-    pub admin: Admin,
+    #[serde(flatten)]
     pub config: Config,
     pub not_before: Time,
     pub not_after: Time,
+    pub admin: Admin,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Config {
     pub version: u32,
-    pub admin_config: AdminConfig,
-    pub oracle_config: OracleConfig,
-    pub onion_config: OnionConfig,
+    pub admins: AdminConfig,
+    pub oracles: OracleConfig,
+    pub onion: OnionConfig,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct AdminConfig {
-    pub admins: Vec<Admin>,
-    pub voting_config: VotingConfig,
+    pub voting: VotingConfig,
+    pub authorized: Vec<Admin>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde_as]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct Admin {
+    #[serde_as(as = "Hex")]
     pub identity: Bytes,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde_as]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct OracleConfig {
     pub enabled: bool,
-    pub oracles: Vec<Oracle>,
-    pub voting_config: VotingConfig,
+    pub voting: VotingConfig,
     pub max_enrolled_subdomains: u64,
+    #[serde(with = "humantime_serde")]
     pub observation_timeout: Duration,
+    pub authorized: Vec<Oracle>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde_as]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct Oracle {
+    #[serde_as(as = "Hex")]
     pub identity: Bytes,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct OnionConfig {
     pub enabled: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct VotingConfig {
     pub total: Total,
     pub quorum: Quorum,
@@ -112,38 +128,48 @@ pub struct VotingConfig {
     pub delay: Delay,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct Total(pub u64);
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct Quorum(pub u64);
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Timeout(pub Duration);
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Timeout(#[serde(with = "humantime_serde")] pub Duration);
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Delay(pub Duration);
+#[serde_as]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Delay(#[serde(with = "humantime_serde")] pub Duration);
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Observe {
-    pub oracle: Oracle,
+    #[serde(flatten)]
     pub observation: Observation,
+    pub oracle: Oracle,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Observation {
     pub domain: Domain,
     pub zone: Zone,
-    pub hash_observed: HashObserved,
+    #[serde(flatten)]
     pub blockstamp: Blockstamp,
+    pub hash_observed: HashObserved,
 }
 
 /// A fully qualified domain name (FQDN).
 ///
 /// This wrapper type changes the Display implementation to order the name's components from most
 /// significant to least significant (e.g. "com.example.www" instead of "www.example.com").
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde_as]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct Domain {
+    #[serde_as(as = "DisplayFromStr")]
     pub name: fqdn::FQDN,
 }
 
@@ -151,8 +177,11 @@ pub struct Domain {
 ///
 /// This wrapper type changes the Display implementation to order the name's components from most
 /// significant to least significant (e.g. "com.example.www" instead of "www.example.com").
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde_as]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct Zone {
+    #[serde_as(as = "DisplayFromStr")]
     pub name: fqdn::FQDN,
 }
 
@@ -178,16 +207,20 @@ impl Display for Zone {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde_as]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum HashObserved {
-    Hash([u8; 32]),
+    Hash(#[serde_as(as = "Hex")] [u8; 32]),
     NotFound,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[serde_as]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Blockstamp {
-    pub app_hash: AppHash,
     pub block_height: Height,
+    #[serde_as(as = "Hex")]
+    pub app_hash: AppHash,
 }
 
 impl PartialOrd for Blockstamp {
@@ -208,5 +241,113 @@ impl Hash for Blockstamp {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.app_hash.as_bytes().hash(state);
         self.block_height.hash(state);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use insta::assert_snapshot;
+
+    #[test]
+    fn test_observe_serialization() {
+        let observe = Observe {
+            oracle: Oracle {
+                identity: Bytes::from_static(&[0u8; 64]),
+            },
+            observation: Observation {
+                domain: Domain {
+                    name: fqdn::FQDN::from_ascii_str("example.com.").unwrap(),
+                },
+                zone: Zone {
+                    name: fqdn::FQDN::from_ascii_str("com.").unwrap(),
+                },
+                hash_observed: HashObserved::Hash([0u8; 32]),
+                blockstamp: Blockstamp {
+                    app_hash: AppHash::try_from([0u8; 32].to_vec()).unwrap(),
+                    block_height: Height::from(0u32),
+                },
+            },
+        };
+        assert_snapshot!(serde_json::to_string(&observe).unwrap());
+    }
+
+    #[test]
+    fn test_config_serialization() {
+        let config = Config {
+            version: 1,
+            admins: AdminConfig {
+                authorized: vec![Admin {
+                    identity: Bytes::from_static(&[0u8; 64]),
+                }],
+                voting: VotingConfig {
+                    total: Total(3),
+                    quorum: Quorum(2),
+                    timeout: Timeout(Duration::from_secs(30)),
+                    delay: Delay(Duration::from_secs(5)),
+                },
+            },
+            oracles: OracleConfig {
+                enabled: true,
+                authorized: vec![Oracle {
+                    identity: Bytes::from_static(&[1u8; 64]),
+                }],
+                voting: VotingConfig {
+                    total: Total(5),
+                    quorum: Quorum(3),
+                    timeout: Timeout(Duration::from_secs(60)),
+                    delay: Delay(Duration::from_secs(10)),
+                },
+                max_enrolled_subdomains: 100,
+                observation_timeout: Duration::from_secs(120),
+            },
+            onion: OnionConfig { enabled: false },
+        };
+        assert_snapshot!(serde_json::to_string(&config).unwrap());
+    }
+
+    #[test]
+    fn test_transaction_serialization() {
+        let tx = Transaction {
+            chain_id: ChainId("test-chain".to_string()),
+            actions: vec![Action::Reconfigure(Reconfigure {
+                admin: Admin {
+                    identity: Bytes::from_static(&[0u8; 64]),
+                },
+                not_before: Time::from_unix_timestamp(1_650_000_000, 0).unwrap(),
+                not_after: Time::from_unix_timestamp(1_660_000_000, 0).unwrap(),
+                config: Config {
+                    version: 1,
+                    admins: AdminConfig {
+                        authorized: vec![Admin {
+                            identity: Bytes::from_static(&[0u8; 64]),
+                        }],
+                        voting: VotingConfig {
+                            total: Total(3),
+                            quorum: Quorum(2),
+                            timeout: Timeout(Duration::from_secs(30)),
+                            delay: Delay(Duration::from_secs(5)),
+                        },
+                    },
+                    oracles: OracleConfig {
+                        enabled: true,
+                        authorized: vec![Oracle {
+                            identity: Bytes::from_static(&[1u8; 64]),
+                        }],
+                        voting: VotingConfig {
+                            total: Total(5),
+                            quorum: Quorum(3),
+                            timeout: Timeout(Duration::from_secs(60)),
+                            delay: Delay(Duration::from_secs(10)),
+                        },
+                        max_enrolled_subdomains: 100,
+                        observation_timeout: Duration::from_secs(120),
+                    },
+                    onion: OnionConfig { enabled: false },
+                },
+            })],
+        };
+        assert_snapshot!(serde_json::to_string(&tx).unwrap());
     }
 }
