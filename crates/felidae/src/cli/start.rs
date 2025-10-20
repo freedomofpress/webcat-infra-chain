@@ -27,9 +27,6 @@ pub struct Start {
     /// Which port should the ABCI server listen on?
     #[clap(long, default_value = "26658")]
     abci: u16,
-    /// Which port should the API server listen on?
-    #[clap(long, default_value = "80")]
-    api: u16,
 }
 
 #[derive(Clone)]
@@ -248,7 +245,7 @@ impl Service<abci::SnapshotRequest> for CoreService {
 
 impl Run for Start {
     async fn run(self) -> color_eyre::Result<()> {
-        let Self { abci, api } = self;
+        let Self { abci } = self;
 
         // Determine the internal and canonical storage directories:
         // TODO: allow overriding these via CLI args
@@ -297,46 +294,9 @@ impl Run for Start {
                 })
         });
 
-        // Start the API server:
-        let api = tokio::spawn(async move {
-            use axum::{Router, routing::*};
-            let client = reqwest::Client::new();
-            let app = Router::new().route(
-                "/tx",
-                post(|body: Bytes| async move {
-                    // Proxy the transaction to the ABCI mempool:
-                    client
-                        .get(format!(
-                            "http://localhost:26657/broadcast_tx_sync?tx=0x{}",
-                            hex::encode(body)
-                        ))
-                        .send()
-                        .await
-                        .map_err(|e| {
-                            (
-                                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                                format!("failed to send transaction to ABCI: {e}"),
-                            )
-                        })?
-                        .error_for_status()
-                        .map_err(|e| {
-                            (
-                                axum::http::StatusCode::BAD_REQUEST,
-                                format!("ABCI rejected transaction: {e}"),
-                            )
-                        })?;
-                    Ok::<_, (axum::http::StatusCode, String)>(())
-                }),
-            );
-            let listener =
-                tokio::net::TcpListener::bind((IpAddr::V4(Ipv4Addr::UNSPECIFIED), api)).await?;
-            axum::serve(listener, app).await
-        });
-
-        // Wait for either server to exit:
+        // Wait for everything to exit:
         tokio::select! {
             res = abci => res??,
-            res = api => res??,
         }
 
         Ok(())
