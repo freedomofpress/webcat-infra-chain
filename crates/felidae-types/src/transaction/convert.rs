@@ -1,5 +1,3 @@
-use std::any::type_name;
-
 use felidae_proto::transaction::{self as proto, KeyPair};
 use fqdn::FQDN;
 
@@ -37,7 +35,7 @@ impl TryFrom<String> for ChainId {
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         if value.is_empty() {
-            Err(crate::ParseError(type_name::<ChainId>()))
+            Err(crate::ParseError::new::<ChainId>(value))
         } else {
             Ok(ChainId(value))
         }
@@ -80,16 +78,12 @@ impl TryFrom<proto::Action> for Action {
     fn try_from(value: proto::Action) -> Result<Self, Self::Error> {
         match value.action {
             Some(proto::action::Action::Reconfigure(reconfigure)) => {
-                Ok(Action::Reconfigure(reconfigure.try_into().map_err(
-                    |_| crate::ParseError(type_name::<Reconfigure>()),
-                )?))
+                Ok(Action::Reconfigure(reconfigure.try_into()?))
             }
-            Some(proto::action::Action::Observe(observe)) => Ok(Action::Observe(
-                observe
-                    .try_into()
-                    .map_err(|_| crate::ParseError(type_name::<Observe>()))?,
-            )),
-            None => Err(crate::ParseError(type_name::<Action>())),
+            Some(proto::action::Action::Observe(observe)) => {
+                Ok(Action::Observe(observe.try_into()?))
+            }
+            None => Err(crate::ParseError::new::<Action>("missing".to_string())),
         }
     }
 }
@@ -120,22 +114,22 @@ impl TryFrom<proto::action::Reconfigure> for Reconfigure {
 
         let admin: Admin = signature
             .map(Unsigned::try_from)
-            .ok_or_else(|| crate::ParseError(type_name::<Admin>()))??
+            .ok_or_else(|| crate::ParseError::new::<Admin>("missing".to_string()))??
             .try_into()?;
 
         let config = config
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(type_name::<Config>()))??;
+            .ok_or_else(|| crate::ParseError::new::<Config>("missing".to_string()))??;
 
         let not_before = not_before
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(type_name::<tendermint::Time>()))?
-            .map_err(|_| crate::ParseError(type_name::<tendermint::Time>()))?;
+            .ok_or_else(|| crate::ParseError::new::<tendermint::Time>("missing".to_string()))?
+            .map_err(|_| crate::ParseError::new::<tendermint::Time>("missing".to_string()))?;
 
         let not_after = not_after
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(type_name::<tendermint::Time>()))?
-            .map_err(|_| crate::ParseError(type_name::<tendermint::Time>()))?;
+            .ok_or_else(|| crate::ParseError::new::<tendermint::Time>("missing".to_string()))?
+            .map_err(|_| crate::ParseError::new::<tendermint::Time>("missing".to_string()))?;
 
         Ok(Reconfigure {
             admin,
@@ -174,12 +168,12 @@ impl TryFrom<proto::action::Observe> for Observe {
 
         let oracle = signature
             .map(Unsigned::try_from)
-            .ok_or_else(|| crate::ParseError(type_name::<Oracle>()))??
+            .ok_or_else(|| crate::ParseError::new::<Oracle>("missing".to_string()))??
             .try_into()?;
 
         let observation = observation
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(type_name::<Observation>()))??;
+            .ok_or_else(|| crate::ParseError::new::<Observation>("missing".to_string()))??;
 
         Ok(Observe {
             oracle,
@@ -214,19 +208,19 @@ impl TryFrom<proto::Config> for Config {
 
         let version = version
             .try_into()
-            .map_err(|_| crate::ParseError(type_name::<u32>()))?;
+            .map_err(|_| crate::ParseError::new::<u32>("missing".to_string()))?;
 
         let admin_config = admin_config
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(type_name::<AdminConfig>()))??;
+            .ok_or_else(|| crate::ParseError::new::<AdminConfig>("missing".to_string()))??;
 
         let oracle_config = oracle_config
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(type_name::<OracleConfig>()))??;
+            .ok_or_else(|| crate::ParseError::new::<OracleConfig>("missing".to_string()))??;
 
         let onion_config = onion_config
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(type_name::<OnionConfig>()))??;
+            .ok_or_else(|| crate::ParseError::new::<OnionConfig>("missing".to_string()))??;
 
         Ok(Config {
             version,
@@ -270,7 +264,7 @@ impl TryFrom<proto::config::AdminConfig> for AdminConfig {
 
         let voting_config = voting_config
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(type_name::<VotingConfig>()))??;
+            .ok_or_else(|| crate::ParseError::new::<VotingConfig>("missing".to_string()))??;
 
         Ok(AdminConfig {
             admins,
@@ -305,7 +299,7 @@ impl TryFrom<proto::config::OracleConfig> for OracleConfig {
         } = value;
 
         let max_enrolled_subdomains: u64 = u64::try_from(max_enrolled_subdomains)
-            .map_err(|_| crate::ParseError(type_name::<u64>()))?;
+            .map_err(|_| crate::ParseError::new::<u64>("missing".to_string()))?;
 
         let oracles = oracles
             .into_iter()
@@ -314,11 +308,11 @@ impl TryFrom<proto::config::OracleConfig> for OracleConfig {
 
         let voting_config = voting_config
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(type_name::<VotingConfig>()))??;
+            .ok_or_else(|| crate::ParseError::new::<VotingConfig>("missing".to_string()))??;
 
         let observation_timeout = Duration::from_secs(
             u64::try_from(observation_timeout)
-                .map_err(|_| crate::ParseError(type_name::<Duration>()))?,
+                .map_err(|_| crate::ParseError::new::<Duration>("missing".to_string()))?,
         );
 
         Ok(OracleConfig {
@@ -378,14 +372,14 @@ impl TryFrom<proto::config::VotingConfig> for VotingConfig {
         } = value;
 
         let total =
-            Total(u64::try_from(total).map_err(|_| crate::ParseError(type_name::<Total>()))?);
+            Total(u64::try_from(total).map_err(|_| crate::ParseError::new::<Total>(total))?);
         let quorum =
-            Quorum(u64::try_from(quorum).map_err(|_| crate::ParseError(type_name::<Quorum>()))?);
+            Quorum(u64::try_from(quorum).map_err(|_| crate::ParseError::new::<Quorum>(quorum))?);
         let timeout = Timeout(Duration::from_secs(
-            u64::try_from(timeout).map_err(|_| crate::ParseError(type_name::<Timeout>()))?,
+            u64::try_from(timeout).map_err(|_| crate::ParseError::new::<Timeout>(timeout))?,
         ));
         let delay = Delay(Duration::from_secs(
-            u64::try_from(delay).map_err(|_| crate::ParseError(type_name::<Delay>()))?,
+            u64::try_from(delay).map_err(|_| crate::ParseError::new::<Delay>(delay))?,
         ));
 
         Ok(VotingConfig {
@@ -426,25 +420,22 @@ impl TryFrom<proto::action::observe::Observation> for Observation {
         } = value;
 
         let domain = Domain {
-            name: domain
-                .parse()
-                .map_err(|_| crate::ParseError(type_name::<fqdn::FQDN>()))?,
+            name: FQDN::from_ascii_str(&domain)
+                .map_err(|_| crate::ParseError::new::<Domain>(domain))?,
         };
 
-        let zone = Domain {
-            name: zone
-                .parse()
-                .map_err(|_| crate::ParseError(type_name::<fqdn::FQDN>()))?,
+        let zone = Zone {
+            name: FQDN::from_ascii_str(&zone).map_err(|_| crate::ParseError::new::<Zone>(zone))?,
         };
 
         let hash_observed = hash_observed
             .map(TryInto::try_into)
-            .ok_or_else(|| crate::ParseError(type_name::<HashObserved>()))??;
+            .ok_or_else(|| crate::ParseError::new::<HashObserved>("missing".to_string()))??;
 
         let blockstamp = blockstamp
-            .ok_or_else(|| crate::ParseError(type_name::<Blockstamp>()))?
+            .ok_or_else(|| crate::ParseError::new::<Blockstamp>("missing".to_string()))?
             .try_into()
-            .map_err(|_| crate::ParseError(type_name::<Blockstamp>()))?;
+            .map_err(|_| crate::ParseError::new::<Blockstamp>("missing".to_string()))?;
 
         Ok(Observation {
             domain,
@@ -486,12 +477,12 @@ impl TryFrom<proto::action::observe::observation::Blockstamp> for Blockstamp {
         let block_hash = block_hash
             .to_vec()
             .try_into()
-            .map_err(|_| crate::ParseError(type_name::<[u8; 32]>()))?;
+            .map_err(|_| crate::ParseError::new::<AppHash>("missing".to_string()))?;
 
         let block_height: Height = u64::try_from(block_number)
-            .map_err(|_| crate::ParseError(type_name::<Height>()))?
+            .map_err(|_| crate::ParseError::new::<Height>("missing".to_string()))?
             .try_into()
-            .map_err(|_| crate::ParseError(type_name::<Height>()))?;
+            .map_err(|_| crate::ParseError::new::<Height>("missing".to_string()))?;
 
         Ok(Blockstamp {
             app_hash: block_hash,
@@ -590,5 +581,50 @@ impl From<FQDN> for Domain {
 impl From<Domain> for FQDN {
     fn from(domain: Domain) -> Self {
         domain.name
+    }
+}
+
+impl TryFrom<proto::action::observe::observation::HashObserved> for HashObserved {
+    type Error = crate::ParseError;
+
+    fn try_from(
+        value: proto::action::observe::observation::HashObserved,
+    ) -> Result<Self, Self::Error> {
+        if value.hash.len() == 32 {
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&value.hash);
+            Ok(HashObserved::Hash(hash))
+        } else if value.hash.is_empty() {
+            Ok(HashObserved::NotFound)
+        } else {
+            Err(crate::ParseError::new::<HashObserved>(hex::encode(
+                value.hash,
+            )))
+        }
+    }
+}
+
+impl From<HashObserved> for proto::action::observe::observation::HashObserved {
+    fn from(value: HashObserved) -> Self {
+        match value {
+            HashObserved::Hash(hash) => proto::action::observe::observation::HashObserved {
+                hash: hash.to_vec().into(),
+            },
+            HashObserved::NotFound => {
+                proto::action::observe::observation::HashObserved { hash: Bytes::new() }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn domain_parse() {
+        let domain_str = "com.";
+        let domain: FQDN = domain_str.parse().unwrap();
+        assert_eq!(domain.to_string(), domain_str);
     }
 }

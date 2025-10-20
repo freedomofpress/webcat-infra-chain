@@ -1,7 +1,6 @@
 use felidae_proto::domain_types;
 use felidae_proto::transaction::{self as proto};
 use prost::bytes::Bytes;
-use std::any::type_name;
 use std::fmt::Display;
 use std::{hash::Hash, ops::Deref, time::Duration};
 use tendermint::block::Height;
@@ -134,7 +133,7 @@ pub struct Observe {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Observation {
     pub domain: Domain,
-    pub zone: Domain,
+    pub zone: Zone,
     pub hash_observed: HashObserved,
     pub blockstamp: Blockstamp,
 }
@@ -148,12 +147,32 @@ pub struct Domain {
     pub name: fqdn::FQDN,
 }
 
+/// A fully qualified domain name (FQDN) that is meant to be treated as a zone.
+///
+/// This wrapper type changes the Display implementation to order the name's components from most
+/// significant to least significant (e.g. "com.example.www" instead of "www.example.com").
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Zone {
+    pub name: fqdn::FQDN,
+}
+
 impl Display for Domain {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let parts: Vec<&str> = self.name.labels().collect();
         write!(
             f,
-            "{}",
+            "{}.",
+            parts.iter().rev().cloned().collect::<Vec<&str>>().join(".")
+        )
+    }
+}
+
+impl Display for Zone {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let parts: Vec<&str> = self.name.labels().collect();
+        write!(
+            f,
+            "{}.",
             parts.iter().rev().cloned().collect::<Vec<&str>>().join(".")
         )
     }
@@ -163,39 +182,6 @@ impl Display for Domain {
 pub enum HashObserved {
     Hash([u8; 32]),
     NotFound,
-}
-
-impl TryFrom<proto::action::observe::observation::HashObserved> for HashObserved {
-    type Error = crate::ParseError;
-
-    fn try_from(
-        value: proto::action::observe::observation::HashObserved,
-    ) -> Result<Self, Self::Error> {
-        if value.hash.len() == 32 {
-            let mut hash = [0u8; 32];
-            hash.copy_from_slice(&value.hash);
-            Ok(HashObserved::Hash(hash))
-        } else if value.hash.is_empty() {
-            Ok(HashObserved::NotFound)
-        } else {
-            Err(crate::ParseError(type_name::<
-                proto::action::observe::observation::HashObserved,
-            >()))
-        }
-    }
-}
-
-impl From<HashObserved> for proto::action::observe::observation::HashObserved {
-    fn from(value: HashObserved) -> Self {
-        match value {
-            HashObserved::Hash(hash) => proto::action::observe::observation::HashObserved {
-                hash: hash.to_vec().into(),
-            },
-            HashObserved::NotFound => {
-                proto::action::observe::observation::HashObserved { hash: Bytes::new() }
-            }
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

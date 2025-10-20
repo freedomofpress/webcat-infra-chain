@@ -27,6 +27,10 @@ build-felidae:
 test:
     cargo test
 
+# Build WASM package for felidae-oracle
+build-wasm:
+    cd crates/felidae-oracle && wasm-pack build --target web --out-dir pkg
+
 # Run CometBFT (builds if necessary)
 cometbft:
     just build-cometbft

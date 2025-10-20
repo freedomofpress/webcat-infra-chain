@@ -951,6 +951,7 @@ version = "0.1.0"
 dependencies = [
  "felidae-proto",
  "fqdn",
+ "hex",
  "parking_lot",
  "prost 0.13.5",
  "serde",

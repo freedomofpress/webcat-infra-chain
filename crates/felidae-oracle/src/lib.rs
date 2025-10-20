@@ -38,13 +38,13 @@ type WitnessError = JsError;
 #[cfg(not(target_arch = "wasm32"))]
 type WitnessError = Error;
 
-/// Create a JSON-encoded, signed transaction witnessing the given observation on the given chain,
+/// Create a hex-encoded, signed transaction witnessing the given observation on the given chain,
 /// using the given oracle signing key.
 ///
 /// The oracle signing key must be the hex encoding of a valid ECDSA-P256 private key in PKCS#8
 /// format.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
-pub fn witness_json(
+pub fn witness(
     signing_key: String,
     chain_id: String,
     app_hash: String,
@@ -64,7 +64,7 @@ pub fn witness_json(
                 domain: transaction::Domain {
                     name: domain.parse()?,
                 },
-                zone: transaction::Domain {
+                zone: transaction::Zone {
                     name: zone.parse()?,
                 },
                 hash_observed: if !hash_observed.is_empty() {
@@ -87,10 +87,10 @@ pub fn witness_json(
             },
         )
         .build()
-        .sign_to_json(keypair)?;
+        .sign_to_proto(keypair)?;
 
     // Check the result of signing and return the JSON or error.
-    let _auth_tx = AuthenticatedTx::from_json(&tx)?;
+    let _auth_tx = AuthenticatedTx::from_proto(&tx)?;
 
-    Ok(tx)
+    Ok(hex::encode(tx))
 }

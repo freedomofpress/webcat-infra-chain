@@ -11,3 +11,4 @@ parking_lot = { workspace = true }
 fqdn = { workspace = true }
 tendermint = { workspace = true }
 serde = { workspace = true }
+hex = { workspace = true }

@@ -1,0 +1,11 @@
+[package]
+name = "felidae-oracle"
+description = "WEBCAT Oracle WASM bindings for TypeScript/JavaScript"
+license = "MIT"
+repository = "https://github.com/freedomofpress/webcat-infra-chain"
+
+[package.metadata.wasm-pack.profile.release]
+wee-alloc = false
+
+[package.metadata.wasm-pack.profile.dev]
+wee-alloc = false

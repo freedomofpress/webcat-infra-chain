@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Felidae Oracle WASM Test</title>
+</head>
+<body>
+    <h1>Felidae Oracle WASM Test</h1>
+    <button id="test-btn">Test witness function</button>
+    <pre id="output"></pre>
+
+    <script type="module">
+        import init, { witness } from './pkg/felidae_oracle.js';
+
+        async function test() {
+            const output = document.getElementById('output');
+            try {
+                // Initialize the WASM module
+                await init();
+                output.textContent = 'WASM module initialized successfully!\n';
+
+                // Test with a proper PKCS#8 P-256 private key (test key only!)
+                const dummyKey = "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104202ce957c6d8dfb78a38ec24dabed3fe6f298354048d1b1a9be1231dc396530acaa14403420004114f031f9e61961403e2b08beb7c5c0185dd7a9f555f7d1671492bad60ee8070432dcfd88dd5005ffc529ee8e477b4a38075a8023aaa7b960f5ef6408ef609ff";
+
+                const result = witness(
+                    dummyKey,
+                    "test-chain",
+                    "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", // 64 hex chars (32 bytes)
+                    12345n,
+                    "example.com.",
+                    "com.",
+                    "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890" // 64 hex chars (32 bytes)
+                );
+
+                output.textContent += 'Success! Generated witness transaction:\n' + result + '\n';
+            } catch (error) {
+                output.textContent += 'Error: ' + error.message + '\n' + error.stack;
+            }
+        }
+
+        document.getElementById('test-btn').addEventListener('click', test);
+    </script>
+</body>
+</html>
