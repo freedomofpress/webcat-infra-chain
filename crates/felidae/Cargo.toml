@@ -7,7 +7,6 @@ edition = "2024"
 felidae-proto = { path = "../felidae-proto" }
 felidae-types = { path = "../felidae-types" }
 felidae-state = { path = "../felidae-state" }
-ring = { workspace = true }
 prost = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true }

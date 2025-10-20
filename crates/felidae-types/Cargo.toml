@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 felidae-proto = { path = "../felidae-proto" }
-ring = { workspace = true }
 prost = { workspace = true }
 thiserror = { workspace = true }
 parking_lot = { workspace = true }

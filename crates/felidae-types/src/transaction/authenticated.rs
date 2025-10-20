@@ -20,7 +20,7 @@ impl AuthenticatedTx {
     /// domain type.
     pub fn from_json(json: &str) -> Result<AuthenticatedTx, crate::ParseError> {
         Ok(AuthenticatedTx(
-            proto::Transaction::authenticate_from_json(Context::new(&SHA256), json)?.try_into()?,
+            proto::Transaction::authenticate_from_json(json)?.try_into()?,
         ))
     }
 
@@ -28,7 +28,7 @@ impl AuthenticatedTx {
     /// type.
     pub fn from_proto<B: AsRef<[u8]>>(buf: B) -> Result<AuthenticatedTx, crate::ParseError> {
         Ok(AuthenticatedTx(
-            proto::Transaction::authenticate_from_proto(Context::new(&SHA256), buf)?.try_into()?,
+            proto::Transaction::authenticate_from_proto(buf)?.try_into()?,
         ))
     }
 }
@@ -36,11 +36,11 @@ impl AuthenticatedTx {
 impl Transaction {
     /// Serialize the transaction to JSON, signing all its actions with the given signer.
     pub fn sign_to_json(self, signer: impl Signer) -> Result<String, SignError> {
-        proto::Transaction::from(self).sign_to_json(Context::new(&SHA256), signer)
+        proto::Transaction::from(self).sign_to_json(signer)
     }
 
     /// Encode the transaction to bytes, signing all its actions with the given signer.
     pub fn sign_to_proto(self, signer: impl Signer) -> Result<Vec<u8>, SignError> {
-        proto::Transaction::from(self).sign_to_proto(Context::new(&SHA256), signer)
+        proto::Transaction::from(self).sign_to_proto(signer)
     }
 }

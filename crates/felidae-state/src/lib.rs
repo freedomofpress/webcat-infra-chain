@@ -15,7 +15,7 @@ use felidae_types::transaction::{
 };
 use futures::StreamExt;
 use prost::bytes::Bytes;
-use ring::digest;
+use sha2::{Digest, Sha256};
 use tendermint::{
     AppHash, Time,
     abci::{
@@ -69,16 +69,10 @@ impl State {
             internal,
             canonical,
             app_hash: {
-                let mut context = digest::Context::new(&digest::SHA256);
+                let mut context = Sha256::new();
                 context.update(internal.as_ref());
                 context.update(canonical.as_ref());
-                RootHash(
-                    context
-                        .finish()
-                        .as_ref()
-                        .try_into()
-                        .expect("SHA256 output is 32 bytes"),
-                )
+                RootHash(context.finalize().into())
             },
         })
     }
@@ -718,15 +712,16 @@ impl State {
             ..
         }: Validator,
     ) -> Result<(), Report> {
-        // Go through the list of active validators, taking the address (SHA-256 hash of the public
-        // key's first 20 bytes) as and checking if it matches the given address:
+        // Go through the list of active validators, taking the address (first 20 bytes of the
+        // SHA-256 hash of the public key) as and checking if it matches the given address:
         let active_validators = self.active_validators().await?;
         let mut bad_pub_key = None;
         for Update { pub_key, .. } in active_validators {
             // Compute the address of this validator:
-            let mut context = digest::Context::new(&digest::SHA256);
-            context.update(&pub_key.to_bytes()[..20]);
-            let validator_address = context.finish().as_ref().to_vec();
+            let mut context = Sha256::new();
+            context.update(pub_key.to_bytes());
+            let pub_key_hash: [u8; 32] = context.finalize().into();
+            let validator_address = &pub_key_hash[0..20];
 
             // If the address matches, we've found the bad validator:
             if validator_address == bad_address {
@@ -773,12 +768,13 @@ impl State {
         let mut voting_validators = Vec::new();
         for Update { pub_key, .. } in active_validators {
             // Compute the address of this validator:
-            let mut context = digest::Context::new(&digest::SHA256);
-            context.update(&pub_key.to_bytes()[..20]);
-            let validator_address = context.finish().as_ref().to_vec();
+            let mut context = Sha256::new();
+            context.update(pub_key.to_bytes());
+            let pub_key_hash: [u8; 32] = context.finalize().into();
+            let validator_address = &pub_key_hash[0..20];
 
             // If the address is in the list of voting addresses, mark it as having voted:
-            if addresses.contains(validator_address.as_slice()) {
+            if addresses.contains(validator_address) {
                 voting_validators.push(pub_key);
             }
         }

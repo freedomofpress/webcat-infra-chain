@@ -12,6 +12,7 @@ hex = { workspace = true }
 wasm-bindgen = { workspace = true }
 js-sys = { workspace = true }
 web-sys = { workspace = true }
+getrandom = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]

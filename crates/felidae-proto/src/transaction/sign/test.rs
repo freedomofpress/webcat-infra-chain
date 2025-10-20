@@ -6,7 +6,7 @@ fn sign_and_verify() {
     use crate::transaction::{Action, Signature, Transaction, action};
 
     let keypair = KeyPair::generate().unwrap();
-    let public_key = keypair.public_key().as_ref().to_vec();
+    let public_key = keypair.public_key();
 
     let signed_tx = Transaction {
         chain_id: "test_chain".into(),
@@ -19,7 +19,7 @@ fn sign_and_verify() {
             })),
         }],
     }
-    .sign_all(keypair, Context::new(&ring::digest::SHA256))
+    .sign_all(keypair)
     .unwrap();
 
     let action::Action::Reconfigure(reconfigure) = signed_tx.actions[0].action.as_ref().unwrap()
@@ -29,9 +29,7 @@ fn sign_and_verify() {
     let signature = reconfigure.signature.as_ref().unwrap();
     assert!(!signature.signature.is_empty());
 
-    signed_tx
-        .verify_all(Context::new(&ring::digest::SHA256))
-        .unwrap();
+    signed_tx.verify_all().unwrap();
 }
 
 #[test]
@@ -39,7 +37,7 @@ fn sign_and_verify_bad_sig() {
     use crate::transaction::{Action, Signature, Transaction, action};
 
     let keypair = KeyPair::generate().unwrap();
-    let public_key = keypair.public_key().as_ref().to_vec();
+    let public_key = keypair.public_key();
 
     let mut signed_tx = Transaction {
         chain_id: "test_chain".into(),
@@ -52,7 +50,7 @@ fn sign_and_verify_bad_sig() {
             })),
         }],
     }
-    .sign_all(keypair, Context::new(&ring::digest::SHA256))
+    .sign_all(keypair)
     .unwrap();
 
     let action::Action::Reconfigure(reconfigure) = signed_tx.actions[0].action.as_mut().unwrap()
@@ -69,11 +67,7 @@ fn sign_and_verify_bad_sig() {
     // Ensure the signature is still non-empty:
     assert!(!signature.signature.is_empty());
 
-    assert!(
-        signed_tx
-            .verify_all(Context::new(&ring::digest::SHA256))
-            .is_err()
-    );
+    assert!(signed_tx.verify_all().is_err());
 }
 
 #[test]
@@ -81,7 +75,7 @@ fn sign_and_verify_missing_sig() {
     use crate::transaction::{Action, Signature, Transaction, action};
 
     let keypair = KeyPair::generate().unwrap();
-    let public_key = keypair.public_key().as_ref().to_vec();
+    let public_key = keypair.public_key();
 
     let mut signed_tx = Transaction {
         chain_id: "test_chain".into(),
@@ -94,7 +88,7 @@ fn sign_and_verify_missing_sig() {
             })),
         }],
     }
-    .sign_all(keypair, Context::new(&ring::digest::SHA256))
+    .sign_all(keypair)
     .unwrap();
 
     let action::Action::Reconfigure(reconfigure) = signed_tx.actions[0].action.as_mut().unwrap()
@@ -106,9 +100,5 @@ fn sign_and_verify_missing_sig() {
     // Strip the signature by setting it to empty:
     signature.signature = Bytes::new();
 
-    assert!(
-        signed_tx
-            .verify_all(Context::new(&ring::digest::SHA256))
-            .is_err()
-    );
+    assert!(signed_tx.verify_all().is_err());
 }

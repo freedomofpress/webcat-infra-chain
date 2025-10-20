@@ -1,6 +1,9 @@
-use pkcs8::EncodePrivateKey;
-use ring::rand::{SecureRandom, SystemRandom};
-use ring::signature::KeyPair as _;
+use p256::{
+    SecretKey,
+    ecdsa::{Signature, SigningKey, signature::Signer as _},
+};
+use pkcs8::{DecodePrivateKey, EncodePrivateKey};
+use rand_core::OsRng;
 
 use super::*;
 
@@ -8,7 +11,7 @@ use super::*;
 pub trait Signer {
     /// This should return the signature if and only if the public key matches a keypair that can
     /// produce a signature through the signer.
-    fn sign_with(&self, public_key: &[u8], digest: Digest) -> Option<Vec<u8>>;
+    fn sign_with(&self, public_key: &[u8], digest: Output<Sha256>) -> Option<Vec<u8>>;
 }
 
 /// An async signer is something that can sign a digest using one or more keypairs,
@@ -19,59 +22,52 @@ pub trait AsyncSigner {
     fn sign_with(
         &self,
         public_key: &[u8],
-        digest: Digest,
+        digest: Output<Sha256>,
     ) -> impl Future<Output = Option<Vec<u8>>> + Send + '_;
 }
 
 #[derive(Debug)]
 pub struct KeyPair {
-    keypair: ring::signature::EcdsaKeyPair,
+    signing_key: SigningKey,
 }
 
 impl KeyPair {
     /// Create a fresh new keypair.
-    pub fn generate() -> Result<Self, ring::error::Unspecified> {
-        let rng = SystemRandom::new();
-        let pkcs8_bytes = ring::signature::EcdsaKeyPair::generate_pkcs8(
-            &ring::signature::ECDSA_P256_SHA256_FIXED_SIGNING,
-            &rng,
-        )?;
-        let keypair = ring::signature::EcdsaKeyPair::from_pkcs8(
-            &ring::signature::ECDSA_P256_SHA256_FIXED_SIGNING,
-            pkcs8_bytes.as_ref(),
-            &rng,
-        )?;
-        Ok(Self { keypair })
+    pub fn generate() -> Result<Self, Box<dyn std::error::Error>> {
+        let secret_key = SecretKey::random(&mut OsRng);
+        let signing_key = SigningKey::from(secret_key);
+        Ok(Self { signing_key })
     }
 
     /// Get the public key corresponding to this keypair.
-    pub fn public_key(&self) -> &[u8] {
-        self.keypair.public_key().as_ref()
+    pub fn public_key(&self) -> Vec<u8> {
+        self.signing_key
+            .verifying_key()
+            .to_encoded_point(false)
+            .as_bytes()
+            .to_vec()
     }
 
     /// Create a new keypair from the given PKCS#8-encoded private key.
-    pub fn decode(pkcs8: &[u8]) -> Result<Self, ring::error::Unspecified> {
-        let rng = SystemRandom::new();
-        let keypair = ring::signature::EcdsaKeyPair::from_pkcs8(
-            &ring::signature::ECDSA_P256_SHA256_FIXED_SIGNING,
-            pkcs8,
-            &rng,
-        )?;
-        Ok(Self { keypair })
+    pub fn decode(pkcs8: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+        let secret_key = SecretKey::from_pkcs8_der(pkcs8)?;
+        let signing_key = SigningKey::from(secret_key);
+        Ok(Self { signing_key })
     }
 
     /// Serialize the keypair to PKCS#8 format.
-    pub fn encode(&self) -> Result<Vec<u8>, ring::error::Unspecified> {
-        todo!("serialize keypair to PKCS#8 format")
+    pub fn encode(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let secret_key = self.signing_key.as_nonzero_scalar();
+        let secret_key = SecretKey::from(secret_key);
+        Ok(secret_key.to_pkcs8_der()?.as_bytes().to_vec())
     }
 }
 
 impl Signer for KeyPair {
-    fn sign_with(&self, public_key: &[u8], digest: Digest) -> Option<Vec<u8>> {
+    fn sign_with(&self, public_key: &[u8], digest: Output<Sha256>) -> Option<Vec<u8>> {
         if self.public_key() == public_key {
-            let rng = SystemRandom::new();
-            let signature = self.keypair.sign(&rng, digest.as_ref()).ok()?;
-            Some(signature.as_ref().to_vec())
+            let signature: Signature = self.signing_key.sign(digest.as_ref());
+            Some(signature.to_bytes().to_vec())
         } else {
             None
         }
@@ -94,7 +90,7 @@ impl KeyPairs {
     /// Insert a keypair into the collection.
     pub fn insert(&mut self, keypair: KeyPair) {
         self.keypairs
-            .insert(Bytes::from(keypair.public_key().as_ref().to_vec()), keypair);
+            .insert(Bytes::from(keypair.public_key()), keypair);
     }
 
     /// Remove a keypair from the collection by its public key.
@@ -120,7 +116,7 @@ impl FromIterator<KeyPair> for KeyPairs {
 }
 
 impl Signer for KeyPairs {
-    fn sign_with(&self, public_key: &[u8], digest: Digest) -> Option<Vec<u8>> {
+    fn sign_with(&self, public_key: &[u8], digest: Output<Sha256>) -> Option<Vec<u8>> {
         self.keypairs
             .get(public_key)
             .and_then(|kp| kp.sign_with(public_key, digest))
