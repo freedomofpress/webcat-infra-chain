@@ -16,6 +16,7 @@ color-eyre = { workspace = true }
 tendermint = { workspace = true }
 prost-types = { workspace = true }
 tendermint-proto = { workspace = true }
+pkcs8 = { workspace = true }
 
 [build-dependencies]
 prost-build = { workspace = true }

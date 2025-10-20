@@ -1,4 +1,5 @@
-use ring::rand::SystemRandom;
+use pkcs8::EncodePrivateKey;
+use ring::rand::{SecureRandom, SystemRandom};
 use ring::signature::KeyPair as _;
 
 use super::*;
@@ -61,9 +62,7 @@ impl KeyPair {
 
     /// Serialize the keypair to PKCS#8 format.
     pub fn encode(&self) -> Result<Vec<u8>, ring::error::Unspecified> {
-        // Note: ring doesn't provide direct PKCS#8 serialization
-        // This would need to be implemented or use another crate
-        Err(ring::error::Unspecified)
+        todo!("serialize keypair to PKCS#8 format")
     }
 }
 
