@@ -1,3 +1,4 @@
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
 pub use felidae_types::{
@@ -32,12 +33,17 @@ pub enum Error {
     InvalidSigningKey,
 }
 
+#[cfg(target_arch = "wasm32")]
+type WitnessError = JsError;
+#[cfg(not(target_arch = "wasm32"))]
+type WitnessError = Error;
+
 /// Create a JSON-encoded, signed transaction witnessing the given observation on the given chain,
 /// using the given oracle signing key.
 ///
 /// The oracle signing key must be the hex encoding of a valid ECDSA-P256 private key in PKCS#8
 /// format.
-#[wasm_bindgen]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub fn witness_json(
     signing_key: String,
     chain_id: String,
@@ -46,7 +52,7 @@ pub fn witness_json(
     domain: String,
     zone: String,
     hash_observed: String,
-) -> Result<String, JsError> {
+) -> Result<String, WitnessError> {
     let keypair = KeyPair::decode(&hex::decode(signing_key).map_err(|_| Error::InvalidSigningKey)?)
         .map_err(|_| Error::InvalidSigningKey)?;
     let identity = keypair.public_key().to_vec();

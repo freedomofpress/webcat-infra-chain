@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.dependencies]
-aws-lc-rs = "1"
+ring = "0.17"
 clap = { version = "4.5", features = ["derive"] }
 futures = "0.3"
 tower = "0.5"
@@ -34,6 +34,8 @@ prost-types = { version = "0.14" }
 tendermint-proto = "0.40"
 hex = "0.4"
 wasm-bindgen = "0.2"
+js-sys = "0.3"
+web-sys = "0.3"
 directories = "6.0"
 axum = "0.8"
 reqwest = "0.12"

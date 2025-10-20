@@ -1,14 +1,11 @@
 use std::{any::Any, collections::HashMap};
 
-pub use aws_lc_rs::error::Unspecified as VerifyError;
-use aws_lc_rs::{
-    digest::{Context, Digest},
-    signature::{
-        ECDSA_P256_SHA256_FIXED, ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, KeyPair as _,
-        UnparsedPublicKey,
-    },
-};
 use prost::{Message as _, bytes::Bytes};
+pub use ring::error::Unspecified as VerifyError;
+use ring::{
+    digest::{Context, Digest},
+    signature::{ECDSA_P256_SHA256_FIXED, UnparsedPublicKey},
+};
 
 use felidae_traverse::Traverse;
 

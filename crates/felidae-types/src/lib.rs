@@ -1,7 +1,3 @@
-use std::any::TypeId;
-
-use felidae_proto::transaction::{self as proto};
-
 pub use felidae_proto::transaction::{
     AsyncSigner, KeyPair, KeyPairs, SignError, Signer, VerifyError,
 };

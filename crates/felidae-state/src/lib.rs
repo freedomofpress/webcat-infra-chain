@@ -3,7 +3,6 @@ extern crate tracing;
 
 use std::{collections::BTreeSet, time::Duration};
 
-use aws_lc_rs::digest;
 use cnidarium::{RootHash, Storage};
 use color_eyre::{
     Report,
@@ -16,6 +15,7 @@ use felidae_types::transaction::{
 };
 use futures::StreamExt;
 use prost::bytes::Bytes;
+use ring::digest;
 use tendermint::{
     AppHash, Time,
     abci::{

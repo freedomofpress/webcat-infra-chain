@@ -9,7 +9,7 @@ felidae-types = { path = "../felidae-types" }
 felidae-proto = { path = "../felidae-proto" }
 color-eyre = { workspace = true }
 futures = { workspace = true }
-aws-lc-rs = { workspace = true }
+ring = { workspace = true }
 tracing = { workspace = true }
 tendermint = { workspace = true }
 hex = { workspace = true }

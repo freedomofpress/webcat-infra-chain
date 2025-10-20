@@ -1,7 +1,7 @@
-use aws_lc_rs::digest::{Context, SHA256};
 use felidae_proto::domain_types;
 use felidae_proto::transaction::{self as proto};
 use prost::bytes::Bytes;
+use ring::digest::{Context, SHA256};
 use std::any::type_name;
 use std::fmt::Display;
 use std::{hash::Hash, ops::Deref, time::Duration};

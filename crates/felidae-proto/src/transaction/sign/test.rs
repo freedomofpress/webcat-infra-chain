@@ -19,7 +19,7 @@ fn sign_and_verify() {
             })),
         }],
     }
-    .sign_all(keypair, Context::new(&aws_lc_rs::digest::SHA256))
+    .sign_all(keypair, Context::new(&ring::digest::SHA256))
     .unwrap();
 
     let action::Action::Reconfigure(reconfigure) = signed_tx.actions[0].action.as_ref().unwrap()
@@ -30,7 +30,7 @@ fn sign_and_verify() {
     assert!(!signature.signature.is_empty());
 
     signed_tx
-        .verify_all(Context::new(&aws_lc_rs::digest::SHA256))
+        .verify_all(Context::new(&ring::digest::SHA256))
         .unwrap();
 }
 
@@ -52,7 +52,7 @@ fn sign_and_verify_bad_sig() {
             })),
         }],
     }
-    .sign_all(keypair, Context::new(&aws_lc_rs::digest::SHA256))
+    .sign_all(keypair, Context::new(&ring::digest::SHA256))
     .unwrap();
 
     let action::Action::Reconfigure(reconfigure) = signed_tx.actions[0].action.as_mut().unwrap()
@@ -71,7 +71,7 @@ fn sign_and_verify_bad_sig() {
 
     assert!(
         signed_tx
-            .verify_all(Context::new(&aws_lc_rs::digest::SHA256))
+            .verify_all(Context::new(&ring::digest::SHA256))
             .is_err()
     );
 }
@@ -94,7 +94,7 @@ fn sign_and_verify_missing_sig() {
             })),
         }],
     }
-    .sign_all(keypair, Context::new(&aws_lc_rs::digest::SHA256))
+    .sign_all(keypair, Context::new(&ring::digest::SHA256))
     .unwrap();
 
     let action::Action::Reconfigure(reconfigure) = signed_tx.actions[0].action.as_mut().unwrap()
@@ -108,7 +108,7 @@ fn sign_and_verify_missing_sig() {
 
     assert!(
         signed_tx
-            .verify_all(Context::new(&aws_lc_rs::digest::SHA256))
+            .verify_all(Context::new(&ring::digest::SHA256))
             .is_err()
     );
 }

@@ -130,30 +130,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
-name = "aws-lc-rs"
-version = "1.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94b8ff6c09cd57b16da53641caa860168b88c172a5ee163b0288d3d6eea12786"
-dependencies = [
- "aws-lc-sys",
- "untrusted 0.7.1",
- "zeroize",
-]
-
-[[package]]
-name = "aws-lc-sys"
-version = "0.31.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e44d16778acaf6a9ec9899b92cebd65580b83f685446bf2e1f5d3d732f99dcd"
-dependencies = [
- "bindgen 0.72.1",
- "cc",
- "cmake",
- "dunce",
- "fs_extra",
-]
-
-[[package]]
 name = "axum"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -269,8 +245,6 @@ dependencies = [
  "cexpr",
  "clang-sys",
  "itertools 0.13.0",
- "log",
- "prettyplease",
  "proc-macro2 1.0.101",
  "quote",
  "regex",
@@ -486,15 +460,6 @@ name = "clap_lex"
 version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
-
-[[package]]
-name = "cmake"
-version = "0.1.54"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7caa3f9de89ddbe2c607f4101924c5abec803763ae9534e4f4d7d8f84aa81f0"
-dependencies = [
- "cc",
-]
 
 [[package]]
 name = "cnidarium"
@@ -738,12 +703,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dunce"
-version = "1.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
-
-[[package]]
 name = "dyn-clone"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -832,7 +791,6 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 name = "felidae"
 version = "0.1.0"
 dependencies = [
- "aws-lc-rs",
  "axum",
  "clap",
  "cnidarium",
@@ -846,6 +804,7 @@ dependencies = [
  "parking_lot",
  "prost 0.13.5",
  "reqwest",
+ "ring",
  "tendermint",
  "tokio",
  "tower",
@@ -868,16 +827,17 @@ dependencies = [
  "felidae-types",
  "fqdn",
  "hex",
+ "js-sys",
  "prost 0.13.5",
  "thiserror 2.0.16",
  "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
 name = "felidae-proto"
 version = "0.1.0"
 dependencies = [
- "aws-lc-rs",
  "bytes",
  "color-eyre",
  "felidae-traverse",
@@ -885,6 +845,7 @@ dependencies = [
  "prost 0.13.5",
  "prost-build",
  "prost-types",
+ "ring",
  "serde",
  "serde_json",
  "tendermint",
@@ -896,7 +857,6 @@ dependencies = [
 name = "felidae-state"
 version = "0.1.0"
 dependencies = [
- "aws-lc-rs",
  "cnidarium",
  "color-eyre",
  "felidae-proto",
@@ -904,6 +864,7 @@ dependencies = [
  "futures",
  "hex",
  "prost 0.13.5",
+ "ring",
  "tendermint",
  "tokio",
  "tracing",
@@ -929,11 +890,11 @@ dependencies = [
 name = "felidae-types"
 version = "0.1.0"
 dependencies = [
- "aws-lc-rs",
  "felidae-proto",
  "fqdn",
  "parking_lot",
  "prost 0.13.5",
+ "ring",
  "serde",
  "tendermint",
  "thiserror 2.0.16",
@@ -1010,12 +971,6 @@ checksum = "c0f5d7f7b3eed2f771fc7f6fcb651f9560d7b0c483d75876082acb4649d266b3"
 dependencies = [
  "punycode",
 ]
-
-[[package]]
-name = "fs_extra"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 
 [[package]]
 name = "funty"
@@ -2642,7 +2597,7 @@ dependencies = [
  "cfg-if",
  "getrandom 0.2.16",
  "libc",
- "untrusted 0.9.0",
+ "untrusted",
  "windows-sys 0.52.0",
 ]
 
@@ -2732,7 +2687,7 @@ checksum = "e10b3f4191e8a80e6b43eebabfac91e5dcecebb27a71f04e820c47ec41d314bf"
 dependencies = [
  "ring",
  "rustls-pki-types",
- "untrusted 0.9.0",
+ "untrusted",
 ]
 
 [[package]]
@@ -3559,12 +3514,6 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
-
-[[package]]
-name = "untrusted"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
 
 [[package]]
 name = "untrusted"

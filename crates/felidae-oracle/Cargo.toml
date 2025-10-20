@@ -10,6 +10,8 @@ thiserror = { workspace = true }
 fqdn = { workspace = true }
 hex = { workspace = true }
 wasm-bindgen = { workspace = true }
+js-sys = { workspace = true }
+web-sys = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]

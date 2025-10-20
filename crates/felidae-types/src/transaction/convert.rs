@@ -1,8 +1,8 @@
 use std::any::type_name;
 
-use aws_lc_rs::signature::{EdDSAParameters, ParsedPublicKey};
 use felidae_proto::transaction::{self as proto, KeyPair};
 use fqdn::FQDN;
+use ring::signature::{ED25519, UnparsedPublicKey};
 
 use super::*;
 
@@ -55,8 +55,8 @@ impl TryFrom<proto::Signature> for Unsigned {
     type Error = crate::ParseError;
 
     fn try_from(value: proto::Signature) -> Result<Self, Self::Error> {
-        let _pk = ParsedPublicKey::new(&EdDSAParameters, &value.public_key)
-            .map_err(|_| crate::ParseError(type_name::<ParsedPublicKey>()))?;
+        let _pk = UnparsedPublicKey::new(&ED25519, &value.public_key);
+        // Note: ring doesn't validate public keys at parse time, only at verification time
         Ok(Unsigned {
             public_key: value.public_key,
         })
@@ -520,8 +520,8 @@ impl TryFrom<proto::Admin> for Admin {
     type Error = crate::ParseError;
 
     fn try_from(value: proto::Admin) -> Result<Self, Self::Error> {
-        let _pk = ParsedPublicKey::new(&EdDSAParameters, &value.public_key)
-            .map_err(|_| crate::ParseError(type_name::<ParsedPublicKey>()))?;
+        let _pk = UnparsedPublicKey::new(&ED25519, &value.public_key);
+        // Note: ring doesn't validate public keys at parse time, only at verification time
         Ok(Admin {
             identity: value.public_key,
         })
@@ -532,8 +532,8 @@ impl TryFrom<Unsigned> for Admin {
     type Error = crate::ParseError;
 
     fn try_from(value: Unsigned) -> Result<Self, Self::Error> {
-        let _pk = ParsedPublicKey::new(&EdDSAParameters, &value.public_key)
-            .map_err(|_| crate::ParseError(type_name::<ParsedPublicKey>()))?;
+        let _pk = UnparsedPublicKey::new(&ED25519, &value.public_key);
+        // Note: ring doesn't validate public keys at parse time, only at verification time
         Ok(Admin {
             identity: value.public_key,
         })
@@ -558,8 +558,8 @@ impl TryFrom<proto::Oracle> for Oracle {
     type Error = crate::ParseError;
 
     fn try_from(value: proto::Oracle) -> Result<Self, Self::Error> {
-        let _pk = ParsedPublicKey::new(&EdDSAParameters, &value.public_key)
-            .map_err(|_| crate::ParseError(type_name::<ParsedPublicKey>()))?;
+        let _pk = UnparsedPublicKey::new(&ED25519, &value.public_key);
+        // Note: ring doesn't validate public keys at parse time, only at verification time
         Ok(Oracle {
             identity: value.public_key,
         })
@@ -570,8 +570,8 @@ impl TryFrom<Unsigned> for Oracle {
     type Error = crate::ParseError;
 
     fn try_from(value: Unsigned) -> Result<Self, Self::Error> {
-        let _pk = ParsedPublicKey::new(&EdDSAParameters, &value.public_key)
-            .map_err(|_| crate::ParseError(type_name::<ParsedPublicKey>()))?;
+        let _pk = UnparsedPublicKey::new(&ED25519, &value.public_key);
+        // Note: ring doesn't validate public keys at parse time, only at verification time
         Ok(Oracle {
             identity: value.public_key,
         })

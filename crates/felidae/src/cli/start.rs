@@ -181,14 +181,21 @@ impl Service<abci::InfoRequest> for CoreService {
                 }) => {
                     // Create a read-only state to get current height and app hash
                     let state = State::new(internal, canonical);
-                    
+
                     // Get the current height, defaulting to 0 if uninitialized
-                    let last_block_height = state.block_height().await.unwrap_or(Height::from(0u32));
-                    
+                    let last_block_height =
+                        state.block_height().await.unwrap_or(Height::from(0u32));
+
                     // Get the current app hash, defaulting to empty if uninitialized
-                    let last_block_app_hash = state.root_hashes().await
-                        .map(|hashes| AppHash::try_from(hashes.app_hash.0.to_vec()).expect("invalid app hash"))
-                        .unwrap_or_else(|_| AppHash::try_from(Bytes::new()).expect("invalid app hash"));
+                    let last_block_app_hash = state
+                        .root_hashes()
+                        .await
+                        .map(|hashes| {
+                            AppHash::try_from(hashes.app_hash.0.to_vec()).expect("invalid app hash")
+                        })
+                        .unwrap_or_else(|_| {
+                            AppHash::try_from(Bytes::new()).expect("invalid app hash")
+                        });
 
                     abci::InfoResponse::Info(abci::response::Info {
                         data: env!("CARGO_PKG_NAME").to_string(),
@@ -197,7 +204,7 @@ impl Service<abci::InfoRequest> for CoreService {
                         last_block_height,
                         last_block_app_hash,
                     })
-                },
+                }
                 abci::InfoRequest::Query(abci::request::Query {
                     data: _,
                     path: _,
