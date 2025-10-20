@@ -62,6 +62,8 @@ You'll need to install the following tools:
  * [`protoc`](https://protobuf.dev/installation/)
  * [`just`](https://just.systems/man/en/)
 
+Or you can use the in-repo [nix flake](https://nixos.org/explore/) to bootstrap tooling.
+
 Once you have the dependencies installed, you can use the justfile targets locally.
 Build and run the chain by running both CometBFT and Felidae (the ABCI application),
 each in its own terminal window. Start CometBFT via:
