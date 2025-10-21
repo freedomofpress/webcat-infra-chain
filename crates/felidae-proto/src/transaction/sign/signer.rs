@@ -33,10 +33,10 @@ pub struct KeyPair {
 
 impl KeyPair {
     /// Create a fresh new keypair.
-    pub fn generate() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn generate() -> Self {
         let secret_key = SecretKey::random(&mut OsRng);
         let signing_key = SigningKey::from(secret_key);
-        Ok(Self { signing_key })
+        Self { signing_key }
     }
 
     /// Get the public key corresponding to this keypair.
@@ -49,14 +49,14 @@ impl KeyPair {
     }
 
     /// Create a new keypair from the given PKCS#8-encoded private key.
-    pub fn decode(pkcs8: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn decode(pkcs8: &[u8]) -> Result<Self, pkcs8::Error> {
         let secret_key = SecretKey::from_pkcs8_der(pkcs8)?;
         let signing_key = SigningKey::from(secret_key);
         Ok(Self { signing_key })
     }
 
     /// Serialize the keypair to PKCS#8 format.
-    pub fn encode(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub fn encode(&self) -> Result<Vec<u8>, pkcs8::Error> {
         let secret_key = self.signing_key.as_nonzero_scalar();
         let secret_key = SecretKey::from(secret_key);
         Ok(secret_key.to_pkcs8_der()?.as_bytes().to_vec())

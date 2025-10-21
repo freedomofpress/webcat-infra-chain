@@ -48,3 +48,4 @@ sha2 = "0.10"
 getrandom = { version = "0.2", features = ["js"] }
 insta = "1"
 humantime-serde = "1"
+humantime = "2"

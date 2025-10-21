@@ -925,14 +925,17 @@ dependencies = [
  "cnidarium",
  "color-eyre",
  "directories",
+ "felidae-admin",
  "felidae-proto",
  "felidae-state",
  "felidae-types",
  "futures",
  "hex",
+ "humantime",
  "parking_lot",
  "prost 0.13.5",
  "reqwest",
+ "serde_json",
  "tendermint",
  "tokio",
  "tower",
@@ -946,6 +949,9 @@ name = "felidae-admin"
 version = "0.1.0"
 dependencies = [
  "felidae-types",
+ "hex",
+ "tendermint",
+ "thiserror 2.0.16",
 ]
 
 [[package]]

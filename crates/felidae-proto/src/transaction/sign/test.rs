@@ -5,7 +5,7 @@ use super::*;
 fn sign_and_verify() {
     use crate::transaction::{Action, Signature, Transaction, action};
 
-    let keypair = KeyPair::generate().unwrap();
+    let keypair = KeyPair::generate();
     let public_key = keypair.public_key();
 
     let signed_tx = Transaction {
@@ -36,7 +36,7 @@ fn sign_and_verify() {
 fn sign_and_verify_bad_sig() {
     use crate::transaction::{Action, Signature, Transaction, action};
 
-    let keypair = KeyPair::generate().unwrap();
+    let keypair = KeyPair::generate();
     let public_key = keypair.public_key();
 
     let mut signed_tx = Transaction {
@@ -74,7 +74,7 @@ fn sign_and_verify_bad_sig() {
 fn sign_and_verify_missing_sig() {
     use crate::transaction::{Action, Signature, Transaction, action};
 
-    let keypair = KeyPair::generate().unwrap();
+    let keypair = KeyPair::generate();
     let public_key = keypair.public_key();
 
     let mut signed_tx = Transaction {

@@ -5,3 +5,6 @@ edition = "2024"
 
 [dependencies]
 felidae-types = { path = "../felidae-types" }
+thiserror = { workspace = true }
+hex = { workspace = true }
+tendermint = { workspace = true }

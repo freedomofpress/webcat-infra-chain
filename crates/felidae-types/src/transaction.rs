@@ -82,6 +82,36 @@ pub struct Config {
     pub onion: OnionConfig,
 }
 
+impl Config {
+    pub fn template(version: u32) -> Self {
+        Self {
+            version,
+            admins: AdminConfig {
+                voting: VotingConfig {
+                    total: Total(0),
+                    quorum: Quorum(0),
+                    timeout: Timeout(Duration::from_secs(24 * 60 * 60)),
+                    delay: Delay(Duration::from_secs(0)),
+                },
+                authorized: vec![],
+            },
+            oracles: OracleConfig {
+                enabled: false,
+                voting: VotingConfig {
+                    total: Total(0),
+                    quorum: Quorum(0),
+                    timeout: Timeout(Duration::from_secs(5 * 60)),
+                    delay: Delay(Duration::from_secs(7 * 24 * 60 * 60)),
+                },
+                max_enrolled_subdomains: 1,
+                observation_timeout: Duration::from_secs(5 * 60),
+                authorized: vec![],
+            },
+            onion: OnionConfig { enabled: false },
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct AdminConfig {
     pub voting: VotingConfig,

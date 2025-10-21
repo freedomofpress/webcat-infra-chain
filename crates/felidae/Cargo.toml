@@ -7,6 +7,7 @@ edition = "2024"
 felidae-proto = { path = "../felidae-proto" }
 felidae-types = { path = "../felidae-types" }
 felidae-state = { path = "../felidae-state" }
+felidae-admin = { path = "../felidae-admin" }
 prost = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true }
@@ -23,3 +24,5 @@ axum = { workspace = true }
 reqwest = { workspace = true }
 hex = { workspace = true }
 parking_lot = { workspace = true }
+serde_json = { workspace = true }
+humantime = { workspace = true }
