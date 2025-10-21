@@ -137,10 +137,28 @@ impl Service<ConsensusRequest> for CoreService {
                 }
 
                 ConsensusRequest::Commit => {
+                    // Log the current state before commit
+                    let root_hashes_before = state.root_hashes().await?;
+                    info!(
+                        "Before commit - Internal: {:?}, Canonical: {:?}, App: {:?}",
+                        root_hashes_before.internal,
+                        root_hashes_before.canonical,
+                        root_hashes_before.app_hash
+                    );
+
                     state.commit().await?;
 
+                    // Log the state after commit
+                    let root_hashes_after = state.root_hashes().await?;
+                    info!(
+                        "After commit - Internal: {:?}, Canonical: {:?}, App: {:?}",
+                        root_hashes_after.internal,
+                        root_hashes_after.canonical,
+                        root_hashes_after.app_hash
+                    );
+
                     ConsensusResponse::Commit(abci::response::Commit {
-                        data: state.root_hashes().await?.app_hash.into(),
+                        data: root_hashes_after.app_hash.into(),
                         ..Default::default()
                     })
                 }
@@ -176,6 +194,17 @@ impl Service<abci::InfoRequest> for CoreService {
                 }) => {
                     // Create a read-only state to get current height and app hash
                     let state = State::new(internal, canonical);
+                    info!("Storage state on startup:");
+                    info!("Internal storage: {:?}", state.internal.root_hash().await);
+                    info!("Canonical storage: {:?}", state.canonical.root_hash().await);
+
+                    let root_hashes = state
+                        .root_hashes()
+                        .await
+                        .expect("failed to get root hashes");
+                    info!("App hash: {:?}", root_hashes.app_hash);
+                    info!("Internal hash: {:?}", root_hashes.internal);
+                    info!("Canonical hash: {:?}", root_hashes.canonical);
 
                     // Get the current height, defaulting to 0 if uninitialized
                     let last_block_height =

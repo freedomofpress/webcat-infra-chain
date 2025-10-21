@@ -33,6 +33,8 @@ impl Store {
 
     /// Commit all pending changes to the underlying storage.
     pub async fn commit(&mut self) -> Result<(), Report> {
+        info!("Before commit - root hash: {:?}", self.root_hash().await);
+
         // Pull out the current delta and replace it with a new, empty one:
         let delta = mem::replace(
             &mut *self.delta.write().await,
@@ -50,6 +52,8 @@ impl Store {
 
         // NOTE: without the final step above, the delta would continue to refer to the snapshot
         // *before* the commit, which would lead to errors on subsequent reads/writes.
+
+        info!("After commit - root hash: {:?}", self.root_hash().await);
 
         Ok(())
     }

@@ -35,8 +35,8 @@ use vote_queue::{Vote, VoteQueue};
 
 #[derive(Clone)]
 pub struct State {
-    internal: Store,
-    canonical: Store,
+    pub internal: Store,
+    pub canonical: Store,
 }
 
 pub struct RootHashes {
@@ -79,8 +79,24 @@ impl State {
 
     /// Commit all pending changes to the underlying storage.
     pub async fn commit(&mut self) -> Result<(), Report> {
+        info!(
+            "Internal storage before commit: {:?}",
+            self.internal.root_hash().await
+        );
+        info!(
+            "Canonical storage before commit: {:?}",
+            self.canonical.root_hash().await
+        );
         self.internal.commit().await?;
         self.canonical.commit().await?;
+        info!(
+            "Internal storage after commit: {:?}",
+            self.internal.root_hash().await
+        );
+        info!(
+            "Canonical storage after commit: {:?}",
+            self.canonical.root_hash().await
+        );
         Ok(())
     }
 
