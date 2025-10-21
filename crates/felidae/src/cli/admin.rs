@@ -87,18 +87,18 @@ impl Run for Config {
         let keypair = keypair().await?;
 
         // Read and parse the configuration file:
-        let config_bytes = tokio::fs::read(&self.path).await.or_else(|_| {
-            Err(color_eyre::eyre::eyre!(
+        let config_bytes = tokio::fs::read(&self.path).await.map_err(|_| {
+            color_eyre::eyre::eyre!(
                 "could not read configuration file at: {}",
                 self.path.display()
-            ))
+            )
         })?;
         let config: felidae_types::transaction::Config = serde_json::from_slice(&config_bytes)
-            .or_else(|_| {
-                Err(color_eyre::eyre::eyre!(
+            .map_err(|_| {
+                color_eyre::eyre::eyre!(
                     "could not parse configuration file at: {}",
                     self.path.display()
-                ))
+                )
             })?;
 
         // Create the reconfiguration transaction:
@@ -111,8 +111,8 @@ impl Run for Config {
 
         // Submit the transaction to the node:
         reqwest::Client::new()
-            .get(self.node.join("/v1/broadcast_tx_sync")?)
-            .query(&[("tx", tx)])
+            .get(self.node.join("/broadcast_tx_sync")?)
+            .query(&[("tx", format!("0x{}", tx))])
             .send()
             .await?
             .error_for_status()?;
@@ -146,23 +146,17 @@ async fn keypath() -> color_eyre::Result<std::path::PathBuf> {
 
 async fn keypair() -> color_eyre::Result<KeyPair> {
     let keypath = keypath().await?;
-    let keyhex = tokio::fs::read_to_string(&keypath).await.or_else(|_| {
-        Err(color_eyre::eyre::eyre!(
-            "could not read admin keypair at: {}",
-            keypath.display()
-        ))
+    let keyhex = tokio::fs::read_to_string(&keypath).await.map_err(|_| {
+        color_eyre::eyre::eyre!("could not read admin keypair at: {}", keypath.display())
     })?;
-    let keybytes = hex::decode(keyhex.trim()).or_else(|_| {
-        Err(color_eyre::eyre::eyre!(
+    let keybytes = hex::decode(keyhex.trim()).map_err(|_| {
+        color_eyre::eyre::eyre!(
             "could not decode admin keypair hex at: {}",
             keypath.display()
-        ))
+        )
     })?;
-    let keypair = KeyPair::decode(&keybytes).or_else(|_| {
-        Err(color_eyre::eyre::eyre!(
-            "could not parse admin keypair at: {}",
-            keypath.display()
-        ))
+    let keypair = KeyPair::decode(&keybytes).map_err(|_| {
+        color_eyre::eyre::eyre!("could not parse admin keypair at: {}", keypath.display())
     })?;
     Ok(keypair)
 }

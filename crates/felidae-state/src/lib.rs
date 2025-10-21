@@ -42,7 +42,7 @@ pub struct State {
 pub struct RootHashes {
     pub internal: RootHash,
     pub canonical: RootHash,
-    pub app_hash: RootHash,
+    pub app_hash: AppHash,
 }
 
 impl State {
@@ -72,7 +72,7 @@ impl State {
                 let mut context = Sha256::new();
                 context.update(internal.as_ref());
                 context.update(canonical.as_ref());
-                RootHash(context.finalize().into())
+                AppHash::try_from(Bytes::from(Vec::from(<[u8; 32]>::from(context.finalize()))))?
             },
         })
     }
@@ -150,14 +150,13 @@ impl State {
             self.declare_validator(validator.clone()).await?;
         }
 
-        // // Commit the state:
-        // self.commit().await?;
+        // Commit the state:
+        self.commit().await?;
 
         Ok(response::InitChain {
             consensus_params: Some(consensus_params),
             validators,
-            app_hash: AppHash::try_from(self.root_hashes().await?.app_hash.0.to_vec())
-                .expect("AppHash is 32 bytes"),
+            app_hash: self.root_hashes().await?.app_hash,
         })
     }
 

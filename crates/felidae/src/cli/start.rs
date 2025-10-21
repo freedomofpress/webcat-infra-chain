@@ -11,9 +11,7 @@ use color_eyre::eyre::{OptionExt, bail};
 use felidae_state::State;
 use felidae_types::transaction::AuthenticatedTx;
 use futures::future::BoxFuture;
-use prost::bytes::Bytes;
 use tendermint::{
-    AppHash,
     abci::Code,
     block::Height,
     v0_34::abci::{self, ConsensusRequest, ConsensusResponse, MempoolResponse},
@@ -142,7 +140,7 @@ impl Service<ConsensusRequest> for CoreService {
                     state.commit().await?;
 
                     ConsensusResponse::Commit(abci::response::Commit {
-                        data: state.root_hashes().await?.app_hash.0.to_vec().into(),
+                        data: state.root_hashes().await?.app_hash.into(),
                         ..Default::default()
                     })
                 }
@@ -187,12 +185,8 @@ impl Service<abci::InfoRequest> for CoreService {
                     let last_block_app_hash = state
                         .root_hashes()
                         .await
-                        .map(|hashes| {
-                            AppHash::try_from(hashes.app_hash.0.to_vec()).expect("invalid app hash")
-                        })
-                        .unwrap_or_else(|_| {
-                            AppHash::try_from(Bytes::new()).expect("invalid app hash")
-                        });
+                        .map(|hashes| hashes.app_hash)
+                        .unwrap_or_default();
 
                     abci::InfoResponse::Info(abci::response::Info {
                         data: env!("CARGO_PKG_NAME").to_string(),

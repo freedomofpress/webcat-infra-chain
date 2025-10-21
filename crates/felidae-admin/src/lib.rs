@@ -45,7 +45,7 @@ pub fn reconfigure(
 
     // Set the time window for validity of the reconfiguration based on the current time and
     // specified timeout.
-    let not_before = Time::now();
+    let not_before = (Time::now() - Duration::from_secs(5)).map_err(|_| Error::InvalidTimeout)?;
     let not_after = (not_before + timeout).map_err(|_| Error::InvalidTimeout)?;
 
     let tx = transaction::Builder::new(ChainId(chain_id))
