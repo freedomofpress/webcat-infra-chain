@@ -3,7 +3,7 @@ extern crate tracing;
 
 use std::{collections::BTreeSet, time::Duration};
 
-use cnidarium::{RootHash, Storage};
+use cnidarium::RootHash;
 use color_eyre::{
     Report,
     eyre::{OptionExt, bail, eyre},
@@ -28,15 +28,15 @@ use tendermint::{
 };
 
 mod store;
-use store::Store;
+pub use store::Store;
+use store::Substore::{Canonical, Internal};
 
 mod vote_queue;
 use vote_queue::{Vote, VoteQueue};
 
 #[derive(Clone)]
 pub struct State {
-    internal: Store,
-    canonical: Store,
+    storage: Store,
 }
 
 pub struct RootHashes {
@@ -47,11 +47,8 @@ pub struct RootHashes {
 
 impl State {
     /// Create a new state.
-    pub fn new(internal: Storage, canonical: Storage) -> Self {
-        Self {
-            internal: Store::new(internal),
-            canonical: Store::new(canonical),
-        }
+    pub fn new(storage: Store) -> Self {
+        Self { storage }
     }
 
     /// Helper function to pad block heights for lexicographic ordering.
@@ -63,31 +60,25 @@ impl State {
 
     /// Get the 3 root hashes: internal, canonical, and app hash (hash of internal and canonical).
     pub async fn root_hashes(&self) -> Result<RootHashes, Report> {
-        let internal = self.internal.root_hash().await?;
-        let canonical = self.canonical.root_hash().await?;
+        let internal = self.storage.root_hash(Some(Internal)).await?;
+        let canonical = self.storage.root_hash(Some(Canonical)).await?;
+        let app_hash = AppHash::try_from(self.storage.root_hash(None).await?.0.to_vec())?;
         Ok(RootHashes {
             internal,
             canonical,
-            app_hash: {
-                let mut context = Sha256::new();
-                context.update(internal.as_ref());
-                context.update(canonical.as_ref());
-                AppHash::try_from(Bytes::from(Vec::from(<[u8; 32]>::from(context.finalize()))))?
-            },
+            app_hash,
         })
     }
 
     /// Commit all pending changes to the underlying storage.
     pub async fn commit(&mut self) -> Result<(), Report> {
-        self.internal.commit().await?;
-        self.canonical.commit().await?;
+        self.storage.commit().await?;
         Ok(())
     }
 
     /// Discard all pending changes.
     pub fn abort(&mut self) {
-        self.internal.abort();
-        self.canonical.abort();
+        self.storage.abort();
     }
 
     /// Initialize the chain state.
@@ -282,9 +273,11 @@ impl State {
             .await?
         {
             if let HashObserved::Hash(hash) = hash_observed {
-                self.canonical.put(&subdomain, Vec::from(hash)).await;
+                self.storage
+                    .put(Canonical, &subdomain, Vec::from(hash))
+                    .await;
             } else {
-                self.canonical.delete(&subdomain).await;
+                self.storage.delete(Canonical, &subdomain).await;
             }
         }
 
@@ -567,8 +560,8 @@ impl State {
 
     /// Get the current chain ID from the state.
     async fn chain_id(&self) -> Result<ChainId, Report> {
-        self.internal
-            .get::<ChainId>("parameters/chain_id")
+        self.storage
+            .get::<ChainId>(Internal, "parameters/chain_id")
             .await?
             .ok_or_eyre("chain ID not found in state; is the state initialized?")
     }
@@ -582,57 +575,63 @@ impl State {
             bail!("chain ID is already set; cannot set it again");
         }
 
-        self.internal.put("parameters/chain_id", chain_id).await;
+        self.storage
+            .put(Internal, "parameters/chain_id", chain_id)
+            .await;
         Ok(())
     }
 
     /// Get the current config from the state.
     async fn config(&self) -> Result<Config, Report> {
-        self.internal
-            .get::<Config>("parameters/config")
+        self.storage
+            .get::<Config>(Internal, "parameters/config")
             .await?
             .ok_or_eyre("config not found in state; is the state initialized?")
     }
 
     /// Set the current config in the state.
     async fn set_config(&mut self, config: Config) -> Result<(), Report> {
-        self.internal.put("parameters/config", config).await;
+        self.storage
+            .put(Internal, "parameters/config", config)
+            .await;
         Ok(())
     }
 
     /// Get the current block height from the state.
     pub async fn block_height(&self) -> Result<Height, Report> {
-        self.internal
-            .get::<Height>("current/block_height")
+        self.storage
+            .get::<Height>(Internal, "current/block_height")
             .await?
             .ok_or_eyre("block height not found in state; is the state initialized?")
     }
 
     /// Set the current block height in the state.
     async fn set_block_height(&mut self, height: Height) -> Result<(), Report> {
-        self.internal.put("current/block_height", height).await;
+        self.storage
+            .put(Internal, "current/block_height", height)
+            .await;
         Ok(())
     }
 
     /// Get the current block time from the state.
     async fn block_time(&self) -> Result<Time, Report> {
-        self.internal
-            .get::<Time>("current/block_time")
+        self.storage
+            .get::<Time>(Internal, "current/block_time")
             .await?
             .ok_or_eyre("block time not found in state; is the state initialized?")
     }
 
     /// Set the current block time in the state.
     async fn set_block_time(&mut self, time: Time) -> Result<(), Report> {
-        self.internal.put("current/block_time", time).await;
+        self.storage.put(Internal, "current/block_time", time).await;
         self.record_block_time(time).await?;
         Ok(())
     }
 
     /// Get the time of a specific block from the state.
     async fn time_of_block(&self, height: Height) -> Result<Time, Report> {
-        self.internal
-            .get::<Time>(&format!("blocktime/{}", Self::pad_height(height)))
+        self.storage
+            .get::<Time>(Internal, &format!("blocktime/{}", Self::pad_height(height)))
             .await?
             .ok_or_eyre("block time not found in state")
     }
@@ -640,8 +639,12 @@ impl State {
     /// Record the time of the current block in the state.
     async fn record_block_time(&mut self, time: Time) -> Result<(), Report> {
         let height = self.block_height().await?;
-        self.internal
-            .put(&format!("blocktime/{}", Self::pad_height(height)), time)
+        self.storage
+            .put(
+                Internal,
+                &format!("blocktime/{}", Self::pad_height(height)),
+                time,
+            )
             .await;
         Ok(())
     }
@@ -649,8 +652,9 @@ impl State {
     /// Record the app hash of the previous block in the state.
     async fn record_app_hash(&mut self, app_hash: AppHash) -> Result<(), Report> {
         let height = self.block_height().await?.value() - 1;
-        self.internal
+        self.storage
             .put(
+                Internal,
                 &format!("apphash/{}", Self::pad_height(height.try_into()?)),
                 app_hash.clone(),
             )
@@ -660,8 +664,11 @@ impl State {
 
     /// Get the app hash of a specific previous block from the state.
     async fn previous_app_hash(&self, block_height: Height) -> Result<AppHash, Report> {
-        self.internal
-            .get::<AppHash>(&format!("apphash/{}", Self::pad_height(block_height)))
+        self.storage
+            .get::<AppHash>(
+                Internal,
+                &format!("apphash/{}", Self::pad_height(block_height)),
+            )
             .await?
             .ok_or_eyre("app hash not found in state")
     }
@@ -671,11 +678,14 @@ impl State {
         // Check to ensure the validator does not exist already (prevents redeclaring tombstoned
         // validators to set their power back to non-zero):
         let existing: Option<Power> = self
-            .internal
-            .get(&format!(
-                "current/validators/{}",
-                hex::encode(validator.pub_key.to_bytes())
-            ))
+            .storage
+            .get(
+                Internal,
+                &format!(
+                    "current/validators/{}",
+                    hex::encode(validator.pub_key.to_bytes())
+                ),
+            )
             .await?;
         if let Some(existing) = existing {
             bail!(
@@ -685,8 +695,9 @@ impl State {
             );
         }
 
-        self.internal
+        self.storage
             .put(
+                Internal,
                 &format!(
                     "current/validators/{}",
                     hex::encode(validator.pub_key.to_bytes())
@@ -742,7 +753,10 @@ impl State {
     /// Get all active validators.
     async fn active_validators(&self) -> Result<Vec<Update>, Report> {
         let mut updates = vec![];
-        let mut stream = self.internal.prefix::<Power>("current/validators/").await;
+        let mut stream = self
+            .storage
+            .prefix::<Power>(Internal, "current/validators/")
+            .await;
         while let Some(Ok((key, power))) = stream.next().await {
             let pub_key = hex::decode(key.trim_start_matches("current/validators/"))?;
             if power.value() > 0 {
@@ -889,7 +903,11 @@ impl State {
 
     /// Get the canonical hash for a given subdomain, if it exists.
     async fn canonical_hash(&self, subdomain: &Domain) -> Result<Option<[u8; 32]>, Report> {
-        if let Some(data) = self.canonical.get::<Bytes>(&subdomain.to_string()).await? {
+        if let Some(data) = self
+            .storage
+            .get::<Bytes>(Canonical, &subdomain.to_string())
+            .await?
+        {
             let bytes: Bytes = data;
             if bytes.len() != 32 {
                 bail!("canonical hash for {} has invalid length", subdomain);
@@ -923,9 +941,10 @@ impl State {
         registered_domain: &Domain,
     ) -> Result<Vec<String>, Report> {
         let mut subdomains = Vec::new();
+        let registered_domain = format!("{registered_domain}.");
         let mut stream = self
-            .canonical
-            .prefix_keys(&format!("{registered_domain}."))
+            .storage
+            .prefix_keys(Canonical, &registered_domain)
             .await;
         while let Some(Ok(subdomain)) = stream.next().await {
             subdomains.push(subdomain);

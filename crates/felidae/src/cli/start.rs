@@ -6,9 +6,8 @@ use std::{
 };
 
 use clap::Parser;
-use cnidarium::Storage;
 use color_eyre::eyre::{OptionExt, bail};
-use felidae_state::State;
+use felidae_state::{State, Store};
 use felidae_types::transaction::AuthenticatedTx;
 use futures::future::BoxFuture;
 use tendermint::{
@@ -29,8 +28,7 @@ pub struct Start {
 
 #[derive(Clone)]
 pub struct CoreService {
-    internal: Storage,
-    canonical: Storage,
+    storage: Store,
     pending: Option<State>,
 }
 
@@ -47,7 +45,7 @@ impl Service<abci::MempoolRequest> for CoreService {
         info!(?req);
 
         // Create a new state for this request, which we will never commit:
-        let mut state = State::new(self.internal.clone(), self.canonical.clone());
+        let mut state = State::new(self.storage.clone());
 
         Box::pin(async move {
             let reject = || {
@@ -163,8 +161,7 @@ impl Service<abci::InfoRequest> for CoreService {
     fn call(&mut self, req: abci::InfoRequest) -> Self::Future {
         info!(?req);
 
-        let internal = self.internal.clone();
-        let canonical = self.canonical.clone();
+        let storage = self.storage.clone();
 
         Box::pin(async move {
             Ok(match req {
@@ -175,7 +172,7 @@ impl Service<abci::InfoRequest> for CoreService {
                     abci_version: _,
                 }) => {
                     // Create a read-only state to get current height and app hash
-                    let state = State::new(internal, canonical);
+                    let state = State::new(storage);
 
                     // Get the current height, defaulting to 0 if uninitialized
                     let last_block_height =
@@ -245,26 +242,17 @@ impl Run for Start {
         // TODO: allow overriding these via CLI args
         // TODO: multiple storages means the possibility of a torn write: mitigate this?
         let directories = directories::ProjectDirs::from("press", "freedom", "felidae")
-            .ok_or_eyre("could not determine internal storage directory")?;
-        let internal_dir = directories.data_local_dir().join("internal").to_path_buf();
-        let canonical_dir = directories.data_local_dir().join("canonical").to_path_buf();
-        std::fs::create_dir_all(&internal_dir)
-            .or_else(|e| bail!("could not create internal storage directory: {e}"))?;
-        std::fs::create_dir_all(&canonical_dir)
-            .or_else(|e| bail!("could not create canonical storage directory: {e}"))?;
+            .ok_or_eyre("could not determine storage directory")?;
+        let storage_dir = directories.data_local_dir().join("storage").to_path_buf();
+        std::fs::create_dir_all(&storage_dir)
+            .or_else(|e| bail!("could not create storage directory: {e}"))?;
 
-        // Load up the internal and canonical storage backends:
-        let internal = Storage::load(internal_dir, vec![]).await.or_else(|e| {
-            bail!("could not open storage at specified path: {e}");
-        })?;
-        let canonical = Storage::load(canonical_dir, vec![]).await.or_else(|e| {
-            bail!("could not open storage at specified path: {e}");
-        })?;
+        // Load up the storage backend:
+        let storage = Store::init(storage_dir).await?;
 
         // All the ABCI services share the same core state:
         let mut core = CoreService {
-            internal: internal.clone(),
-            canonical: canonical.clone(),
+            storage: storage.clone(),
             pending: None,
         };
 
@@ -276,7 +264,7 @@ impl Run for Start {
                 .snapshot(core.clone())
                 .consensus({
                     // In consensus, we need to keep track of pending state between calls:
-                    core.pending = Some(State::new(internal, canonical));
+                    core.pending = Some(State::new(storage));
                     core
                 })
                 .finish()

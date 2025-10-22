@@ -9,6 +9,7 @@ use std::hash::Hash;
 use tendermint::Time;
 
 use crate::State;
+use crate::store::Substore::Internal;
 
 /// Key construction and parsing functions for the vote queue.
 mod keys;
@@ -42,8 +43,8 @@ where
         // Remove any votes older than now - config.vote_timeout
         let now = state.block_time().await?;
         let old_votes = state
-            .internal
-            .index_prefix::<()>(&self.votes_by_timestamp_all_prefix())
+            .storage
+            .index_prefix::<()>(Internal, &self.votes_by_timestamp_all_prefix())
             .await
             .map_ok(|(key, ())| {
                 let (time, key, party) = self
@@ -59,12 +60,18 @@ where
             .await?;
         for (time, key, party) in old_votes {
             state
-                .internal
-                .delete(&self.votes_by_key_party_timestamp(&key, &party, time))
+                .storage
+                .delete(
+                    Internal,
+                    &self.votes_by_key_party_timestamp(&key, &party, time),
+                )
                 .await;
             state
-                .internal
-                .index_delete(&self.index_votes_by_timestamp_key_party(time, &key, &party))
+                .storage
+                .index_delete(
+                    Internal,
+                    &self.index_votes_by_timestamp_key_party(time, &key, &party),
+                )
                 .await;
         }
 
@@ -81,8 +88,8 @@ where
         // Get all the pending changes older than now - config.delay:
         let now = state.block_time().await?;
         let pending = state
-            .internal
-            .index_prefix::<T>(&self.index_pending_by_timestamp_all_prefix())
+            .storage
+            .index_prefix::<T>(Internal, &self.index_pending_by_timestamp_all_prefix())
             .await
             .map_ok(|(key, value)| {
                 let (time, key) = self
@@ -101,12 +108,12 @@ where
         let mut promoted = vec![];
         for (time, key, value) in pending {
             state
-                .internal
-                .delete(&self.pending_by_key_timestamp(&key, time))
+                .storage
+                .delete(Internal, &self.pending_by_key_timestamp(&key, time))
                 .await;
             state
-                .internal
-                .index_delete(&self.index_pending_by_timestamp_key(time, &key))
+                .storage
+                .index_delete(Internal, &self.index_pending_by_timestamp_key(time, &key))
                 .await;
             promoted.push((key, value));
         }
@@ -126,20 +133,21 @@ where
     ) -> Result<(), Report> {
         // 0. Remove any pre-existing vote by this party for this key
         let votes_by_party = state
-            .internal
-            .prefix::<T>(&self.votes_by_key_party_prefix(key, party, true))
+            .storage
+            .prefix::<T>(Internal, &self.votes_by_key_party_prefix(key, party, true))
             .await
             .map_ok(|(key, _)| key.to_string())
             .try_collect::<Vec<_>>()
             .await?;
         for key in votes_by_party {
-            state.internal.delete(&key).await;
+            state.storage.delete(Internal, &key).await;
         }
 
         // 1. Add to the list of votes by key/party/timestamp
         state
-            .internal
+            .storage
             .put(
+                Internal,
                 &self.votes_by_key_party_timestamp(key, party, *time),
                 value.clone(),
             )
@@ -147,8 +155,9 @@ where
 
         // 2. Add to the index of votes by timestamp/key/party
         state
-            .internal
+            .storage
             .index_put(
+                Internal,
                 &self.index_votes_by_timestamp_key_party(*time, key, party),
                 value.clone(),
             )
@@ -161,8 +170,8 @@ where
 
         // Get all the votes for this key:
         let votes = state
-            .internal
-            .prefix::<T>(&self.votes_by_key_prefix(key, true))
+            .storage
+            .prefix::<T>(Internal, &self.votes_by_key_prefix(key, true))
             .await
             .map_ok(|(key, value)| {
                 let (_key, party, time) = self
@@ -195,19 +204,25 @@ where
         // Delete all the votes for this key:
         for (party, time, _) in votes.iter() {
             state
-                .internal
-                .delete(&self.votes_by_key_party_timestamp(key, party, *time))
+                .storage
+                .delete(
+                    Internal,
+                    &self.votes_by_key_party_timestamp(key, party, *time),
+                )
                 .await;
             state
-                .internal
-                .index_delete(&self.index_votes_by_timestamp_key_party(*time, key, party))
+                .storage
+                .index_delete(
+                    Internal,
+                    &self.index_votes_by_timestamp_key_party(*time, key, party),
+                )
                 .await;
         }
 
         // Delete any existing pending changes for this key:
         let pending_changes = state
-            .internal
-            .prefix::<T>(&self.pending_by_key_prefix(key, true))
+            .storage
+            .prefix::<T>(Internal, &self.pending_by_key_prefix(key, true))
             .await
             .map_ok(|(key, _)| {
                 let (_key, time) = self
@@ -219,26 +234,28 @@ where
             .await?;
         for time in pending_changes {
             state
-                .internal
-                .delete(&self.pending_by_key_timestamp(key, time))
+                .storage
+                .delete(Internal, &self.pending_by_key_timestamp(key, time))
                 .await;
             state
-                .internal
-                .index_delete(&self.index_pending_by_timestamp_key(time, key))
+                .storage
+                .index_delete(Internal, &self.index_pending_by_timestamp_key(time, key))
                 .await;
         }
 
         // Add the winning value to the pending queue:
         state
-            .internal
+            .storage
             .put(
+                Internal,
                 &self.pending_by_key_timestamp(key, *time),
                 winning_value.clone(),
             )
             .await;
         state
-            .internal
+            .storage
             .index_put(
+                Internal,
                 &self.index_pending_by_timestamp_key(*time, key),
                 winning_value.clone(),
             )
@@ -249,8 +266,8 @@ where
 
     pub async fn pending_for_key(&self, state: &State, key: &str) -> Result<Option<T>, Report> {
         let pending = state
-            .internal
-            .prefix::<T>(&self.pending_by_key_prefix(key, true))
+            .storage
+            .prefix::<T>(Internal, &self.pending_by_key_prefix(key, true))
             .await
             .map_ok(|(_key, value)| value)
             .try_collect::<Vec<_>>()
@@ -271,8 +288,8 @@ where
         prefix: &str,
     ) -> Result<Vec<(String, T)>, Report> {
         let pending = state
-            .internal
-            .prefix::<T>(&self.pending_by_key_prefix(prefix, false)) // Allow inexact key matches
+            .storage
+            .prefix::<T>(Internal, &self.pending_by_key_prefix(prefix, false)) // Allow inexact key matches
             .await
             .map_ok(|(key, value)| {
                 let (key, _time) = self
@@ -287,8 +304,8 @@ where
 
     pub async fn votes_for_key(&self, state: &State, key: &str) -> Result<Vec<Vote<T>>, Report> {
         let votes = state
-            .internal
-            .prefix::<T>(&self.votes_by_key_prefix(key, true))
+            .storage
+            .prefix::<T>(Internal, &self.votes_by_key_prefix(key, true))
             .await
             .map_ok(|(key, value)| {
                 let (key, party, time) = self
@@ -312,8 +329,8 @@ where
         prefix: &str,
     ) -> Result<Vec<Vote<T>>, Report> {
         let votes = state
-            .internal
-            .prefix::<T>(&self.votes_by_key_prefix(prefix, false)) // Allow inexact key matches
+            .storage
+            .prefix::<T>(Internal, &self.votes_by_key_prefix(prefix, false)) // Allow inexact key matches
             .await
             .map_ok(|(key, value)| {
                 let (key, party, time) = self
