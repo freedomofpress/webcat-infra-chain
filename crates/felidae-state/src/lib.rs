@@ -141,9 +141,6 @@ impl State {
             self.declare_validator(validator.clone()).await?;
         }
 
-        // Commit the state:
-        self.commit().await?;
-
         Ok(response::InitChain {
             consensus_params: Some(consensus_params),
             validators,
@@ -236,51 +233,6 @@ impl State {
             .timeout_expired_votes(self)
             .await?;
 
-        // Process ripe pending config changes into current config
-        for (_, new_config) in self
-            .admin_voting()
-            .await?
-            .promote_pending_changes(self)
-            .await?
-        {
-            // We want to only apply configs with a version greater than the current version, to
-            // avoid replay attacks. This can only happen if there are multiple pending config
-            // changes: this prevents someone from re-submitting an older but still-pending config
-            // change sequenced after a newer config change, but in the same block. If this were to
-            // be permitted, this would allow the older config to override the newer config, without
-            // requiring interaction by admins, since this is a replay of already signed data.
-            //
-            // This is also prevented by a check on the version in the reconfigure action, but
-            // checking it here too is defense in depth.
-            let current_config = self.config().await?;
-            if current_config.version >= new_config.version {
-                info!(
-                    version = new_config.version,
-                    "Skipping new config with older version than current"
-                );
-                continue;
-            }
-
-            info!(version = new_config.version, "Applying new config",);
-            self.set_config(new_config).await?;
-        }
-
-        // Process ripe pending oracle observations into canonical state
-        for (subdomain, hash_observed) in self
-            .oracle_voting()
-            .await?
-            .promote_pending_changes(self)
-            .await?
-        {
-            if let HashObserved::Hash(hash) = hash_observed {
-                self.storage
-                    .put(Canonical, &subdomain, Vec::from(hash))
-                    .await;
-            } else {
-                self.storage.delete(Canonical, &subdomain).await;
-            }
-        }
-
         Ok(response::BeginBlock { events: vec![] })
     }
 
@@ -330,6 +282,51 @@ impl State {
             );
         }
 
+        // Process ripe pending config changes into current config
+        for (_, new_config) in self
+            .admin_voting()
+            .await?
+            .promote_pending_changes(self)
+            .await?
+        {
+            // We want to only apply configs with a version greater than the current version, to
+            // avoid replay attacks. This can only happen if there are multiple pending config
+            // changes: this prevents someone from re-submitting an older but still-pending config
+            // change sequenced after a newer config change, but in the same block. If this were to
+            // be permitted, this would allow the older config to override the newer config, without
+            // requiring interaction by admins, since this is a replay of already signed data.
+            //
+            // This is also prevented by a check on the version in the reconfigure action, but
+            // checking it here too is defense in depth.
+            let current_config = self.config().await?;
+            if current_config.version >= new_config.version {
+                info!(
+                    version = new_config.version,
+                    "Skipping new config with older version than current"
+                );
+                continue;
+            }
+
+            info!(version = new_config.version, "Applying new config",);
+            self.set_config(new_config).await?;
+        }
+
+        // Process ripe pending oracle observations into canonical state
+        for (subdomain, hash_observed) in self
+            .oracle_voting()
+            .await?
+            .promote_pending_changes(self)
+            .await?
+        {
+            if let HashObserved::Hash(hash) = hash_observed {
+                self.storage
+                    .put(Canonical, &subdomain, Vec::from(hash))
+                    .await;
+            } else {
+                self.storage.delete(Canonical, &subdomain).await;
+            }
+        }
+
         Ok(response::EndBlock {
             validator_updates: self.active_validators().await?,
             events: vec![],
@@ -349,6 +346,8 @@ impl State {
         // Check that the admin is a current admin (or that there are no admins yet -- i.e. this is
         // the initial configuration being set, which can be done without permission):
         let current_config = self.config().await?;
+        info!(?current_config);
+
         if !current_config.admins.authorized.is_empty()
             && !current_config.admins.authorized.iter().any(|a| a == admin)
         {
@@ -358,23 +357,14 @@ impl State {
         // Ensure the current time is within the not_before and not_after bounds:
         let current_time = self.block_time().await?;
         if current_time < *not_before {
-            bail!("current time is before the not_before bound");
+            bail!("current time {current_time} is before the not_before bound {not_before}");
         }
         if current_time > *not_after {
-            bail!("current time is after the not_after bound");
+            bail!("current time {current_time} is after the not_after bound {not_after}");
         }
 
         // Check the config for current validity:
         self.check_config(config).await?;
-
-        // Ensure that the version is greater than the current version:
-        if config.version <= current_config.version {
-            bail!(
-                "config version {} must be greater than current version {}",
-                config.version,
-                current_config.version
-            );
-        }
 
         // Ensure that the version is greater than any pending config change:
         if let Some(pending_config) = self.admin_voting().await?.pending_for_key(self, "").await?
@@ -827,7 +817,10 @@ impl State {
         // Ensure the version is greater than the current version:
         let current_config = self.config().await?;
         if *version <= current_config.version {
-            bail!("new config version must be greater than current version");
+            bail!(
+                "new config version {version} must be greater than current version {}",
+                current_config.version
+            );
         }
 
         // Check that the voting configs are valid:

@@ -74,6 +74,9 @@ impl Service<abci::MempoolRequest> for CoreService {
                 return reject();
             }
 
+            // Abort the state since this is just a mempool check:
+            state.abort();
+
             Ok(MempoolResponse::CheckTx(abci::response::CheckTx::default()))
         })
     }
