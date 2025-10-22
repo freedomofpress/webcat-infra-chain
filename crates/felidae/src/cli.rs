@@ -9,10 +9,14 @@ pub enum Options {
     /// Administer the Felidae network.
     #[command(subcommand)]
     Admin(admin::Admin),
+    /// Report observations as an oracle.
+    #[command(subcommand)]
+    Oracle(oracle::Oracle),
 }
 
 // One module per top-level subcommand
 mod admin;
+mod oracle;
 mod reset;
 mod start;
 
@@ -26,6 +30,7 @@ impl Run for Options {
             Self::Start(start) => start.run().await,
             Self::Reset(reset) => reset.run().await,
             Self::Admin(admin) => admin.run().await,
+            Self::Oracle(oracle) => oracle.run().await,
         }
     }
 }

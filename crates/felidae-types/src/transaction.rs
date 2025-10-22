@@ -192,9 +192,6 @@ pub struct Observation {
 }
 
 /// A fully qualified domain name (FQDN).
-///
-/// This wrapper type changes the Display implementation to order the name's components from most
-/// significant to least significant (e.g. "com.example.www" instead of "www.example.com").
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -203,10 +200,13 @@ pub struct Domain {
     pub name: fqdn::FQDN,
 }
 
+impl Display for Domain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)
+    }
+}
+
 /// A fully qualified domain name (FQDN) that is meant to be treated as a zone.
-///
-/// This wrapper type changes the Display implementation to order the name's components from most
-/// significant to least significant (e.g. "com.example.www" instead of "www.example.com").
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -215,25 +215,9 @@ pub struct Zone {
     pub name: fqdn::FQDN,
 }
 
-impl Display for Domain {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let parts: Vec<&str> = self.name.labels().collect();
-        write!(
-            f,
-            "{}.",
-            parts.iter().rev().cloned().collect::<Vec<&str>>().join(".")
-        )
-    }
-}
-
 impl Display for Zone {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let parts: Vec<&str> = self.name.labels().collect();
-        write!(
-            f,
-            "{}.",
-            parts.iter().rev().cloned().collect::<Vec<&str>>().join(".")
-        )
+        write!(f, "{}", self.name)
     }
 }
 

@@ -8,6 +8,7 @@ felidae-proto = { path = "../felidae-proto" }
 felidae-types = { path = "../felidae-types" }
 felidae-state = { path = "../felidae-state" }
 felidae-admin = { path = "../felidae-admin" }
+felidae-oracle = { path = "../felidae-oracle" }
 prost = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true }
@@ -25,4 +26,9 @@ reqwest = { workspace = true }
 hex = { workspace = true }
 parking_lot = { workspace = true }
 serde_json = { workspace = true }
+serde = { workspace = true }
 humantime = { workspace = true }
+json-rpc-types = { workspace = true }
+canonical_json = { workspace = true }
+sha2 = { workspace = true }
+serde_with = { workspace = true }

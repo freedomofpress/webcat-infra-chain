@@ -48,10 +48,12 @@ impl Service<abci::MempoolRequest> for CoreService {
         let mut state = State::new(self.storage.clone());
 
         Box::pin(async move {
-            let reject = || {
+            let reject = |e| {
                 // Rejecting a transaction means returning a non-zero code
+                warn!(%e);
                 Ok(MempoolResponse::CheckTx(abci::response::CheckTx {
                     code: Code::Err(NonZero::new(1).expect("1 != 0")),
+                    log: e,
                     ..Default::default()
                 }))
             };
@@ -63,15 +65,14 @@ impl Service<abci::MempoolRequest> for CoreService {
             }) = req;
 
             // Parse the proto into the domain type, validating structure and verifying signatures:
-            let Ok(tx) = AuthenticatedTx::from_proto(tx_bytes) else {
-                warn!("failed to parse or authenticate transaction");
-                return reject();
+            let tx = match AuthenticatedTx::from_proto(tx_bytes) {
+                Ok(tx) => tx,
+                Err(e) => return reject(e.to_string()),
             };
 
             // Try to execute the transaction against the current state:
             if let Err(e) = state.deliver_authenticated_tx(&tx).await {
-                warn!("transaction execution failed: {e}");
-                return reject();
+                return reject(e.to_string());
             }
 
             // Abort the state since this is just a mempool check:

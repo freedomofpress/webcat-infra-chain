@@ -424,7 +424,7 @@ impl State {
 
         // Ensure the blockstamp is not in the future
         let current_block_height = self.block_height().await?;
-        if *block_height >= current_block_height {
+        if *block_height > current_block_height {
             bail!("blockstamp {block_height} is in the future");
         }
 
@@ -445,13 +445,25 @@ impl State {
         // Ensure the blockstamp's app hash matches the app hash at the given block number
         let recorded_app_hash = self.previous_app_hash(*block_height).await?;
         if recorded_app_hash != *app_hash {
-            bail!("blockstamp app hash does not match recorded app hash at block {block_height}");
+            bail!(
+                "blockstamp app hash {app_hash} does not match recorded app hash {recorded_app_hash} for block {block_height}"
+            );
         }
 
-        // Ensure that the domain is a strict subdomain of the zone
-        if !subdomain.name.is_subdomain_of(&zone.name) && subdomain.name.depth() > zone.name.depth()
-        {
-            bail!("domain {} is not a subdomain of zone {}", subdomain, zone);
+        // Ensure that the domain is not equal to the zone, and instead is a strict subdomain of the zone:
+        if subdomain.name == zone.name {
+            bail!(
+                "observed domain {} must be a strict subdomain of zone {}",
+                subdomain,
+                zone
+            );
+        }
+        if !subdomain.name.is_subdomain_of(&zone.name) {
+            bail!(
+                "observed domain {} is not a subdomain of zone {}",
+                subdomain,
+                zone
+            );
         }
 
         // Compute the registered domain (the registration zone plus one additional label)

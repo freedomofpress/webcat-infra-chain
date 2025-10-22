@@ -455,8 +455,8 @@ impl From<Observation> for proto::action::observe::Observation {
             blockstamp,
         } = observation;
         proto::action::observe::Observation {
-            domain: domain.to_string(),
-            zone: zone.to_string(),
+            domain: domain.name.to_string(),
+            zone: zone.name.to_string(),
             hash_observed: Some(hash_observed.into()),
             blockstamp: Some(blockstamp.into()),
         }

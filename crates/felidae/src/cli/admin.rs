@@ -110,12 +110,16 @@ impl Run for Config {
         )?;
 
         // Submit the transaction to the node:
-        reqwest::Client::new()
+        let result = reqwest::Client::new()
             .get(self.node.join("/broadcast_tx_sync")?)
             .query(&[("tx", format!("0x{}", tx))])
             .send()
             .await?
-            .error_for_status()?;
+            .error_for_status()?
+            .text()
+            .await?;
+
+        info!(tx = %tx, result = %result, "submitted transaction");
 
         Ok(())
     }
