@@ -51,7 +51,6 @@ type WitnessError = Error;
 struct Enrollment {
     // Filling in the structure fields for enrollments ensures we will only certify
     // well-formed enrollments.
-    domain: String,
 }
 
 /// Create a hex-encoded, signed transaction witnessing the given observation on the given chain,

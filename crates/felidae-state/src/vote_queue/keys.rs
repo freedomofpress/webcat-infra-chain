@@ -1,8 +1,8 @@
 use super::*;
 
-impl<T: DomainType> VoteQueue<T>
+impl<K, V: DomainType> VoteQueue<K, V>
 where
-    Report: From<<T as TryFrom<T::Proto>>::Error>,
+    Report: From<<V as TryFrom<V::Proto>>::Error>,
 {
     pub(super) fn votes_by_key_party_timestamp(
         &self,

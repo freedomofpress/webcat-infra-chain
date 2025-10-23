@@ -48,6 +48,54 @@ impl From<ChainId> for String {
     }
 }
 
+impl TryFrom<String> for Domain {
+    type Error = crate::ParseError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let name = FQDN::from_ascii_str(&value)
+            .map_err(|_| crate::ParseError::new::<Domain>(value.clone()))?;
+        Ok(Domain { name })
+    }
+}
+
+impl From<Domain> for String {
+    fn from(value: Domain) -> Self {
+        value.name.to_string()
+    }
+}
+
+impl TryFrom<String> for Zone {
+    type Error = crate::ParseError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let name = FQDN::from_ascii_str(&value)
+            .map_err(|_| crate::ParseError::new::<Zone>(value.clone()))?;
+        Ok(Zone { name })
+    }
+}
+
+impl From<Zone> for String {
+    fn from(value: Zone) -> Self {
+        value.name.to_string()
+    }
+}
+
+impl From<PrefixOrderDomain> for String {
+    fn from(value: PrefixOrderDomain) -> Self {
+        value.name.to_string()
+    }
+}
+
+impl TryFrom<String> for PrefixOrderDomain {
+    type Error = crate::ParseError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let name = FQDN::from_ascii_str(&value)
+            .map_err(|_| crate::ParseError::new::<PrefixOrderDomain>(value.clone()))?;
+        Ok(PrefixOrderDomain { name })
+    }
+}
+
 impl TryFrom<proto::Signature> for Unsigned {
     type Error = crate::ParseError;
 
@@ -455,8 +503,8 @@ impl From<Observation> for proto::action::observe::Observation {
             blockstamp,
         } = observation;
         proto::action::observe::Observation {
-            domain: domain.name.to_string(),
-            zone: zone.name.to_string(),
+            domain: domain.into(),
+            zone: zone.into(),
             hash_observed: Some(hash_observed.into()),
             blockstamp: Some(blockstamp.into()),
         }
@@ -581,6 +629,22 @@ impl From<FQDN> for Domain {
 impl From<Domain> for FQDN {
     fn from(domain: Domain) -> Self {
         domain.name
+    }
+}
+
+impl From<Empty> for String {
+    fn from(_: Empty) -> Self {
+        String::new()
+    }
+}
+
+impl TryFrom<String> for Empty {
+    type Error = crate::ParseError;
+
+    fn try_from(string: String) -> Result<Self, crate::ParseError> {
+        string
+            .parse()
+            .map_err(|_| crate::ParseError::new::<Empty>(string))
     }
 }
 

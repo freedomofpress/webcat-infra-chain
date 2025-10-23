@@ -1,11 +1,11 @@
 use super::*;
 
-use felidae_types::transaction::{Delay, Quorum, Timeout, Total};
+use felidae_types::transaction::{Delay, Domain, Quorum, Timeout, Total};
 use std::time::Duration;
 
 #[test]
 fn test_vote_queue_keys() {
-    let queue: VoteQueue<()> = VoteQueue::new(
+    let queue: VoteQueue<Domain, ()> = VoteQueue::new(
         "my_prefix/",
         VotingConfig {
             total: Total(5),
@@ -35,7 +35,7 @@ fn test_vote_queue_keys() {
 
 #[test]
 fn test_votes_by_key_party_timestamp_inverse() {
-    let queue: VoteQueue<()> = VoteQueue::new(
+    let queue: VoteQueue<Domain, ()> = VoteQueue::new(
         "my_prefix/",
         VotingConfig {
             total: Total(5),
@@ -61,7 +61,7 @@ fn test_votes_by_key_party_timestamp_inverse() {
 
 #[test]
 fn test_index_votes_by_timestamp_key_party_inverse() {
-    let queue: VoteQueue<()> = VoteQueue::new(
+    let queue: VoteQueue<Domain, ()> = VoteQueue::new(
         "my_prefix/",
         VotingConfig {
             total: Total(5),
@@ -88,7 +88,7 @@ fn test_index_votes_by_timestamp_key_party_inverse() {
 
 #[test]
 fn test_pending_by_key_timestamp_inverse() {
-    let queue: VoteQueue<()> = VoteQueue::new(
+    let queue: VoteQueue<Domain, ()> = VoteQueue::new(
         "my_prefix/",
         VotingConfig {
             total: Total(5),
@@ -112,7 +112,7 @@ fn test_pending_by_key_timestamp_inverse() {
 
 #[test]
 fn test_index_pending_by_timestamp_key_inverse() {
-    let queue: VoteQueue<()> = VoteQueue::new(
+    let queue: VoteQueue<Domain, ()> = VoteQueue::new(
         "my_prefix/",
         VotingConfig {
             total: Total(5),

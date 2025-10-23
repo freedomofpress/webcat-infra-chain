@@ -111,6 +111,15 @@ impl Store {
         self.delta = Arc::new(RwLock::new(StateDelta::new(self.storage.latest_snapshot())));
     }
 
+    /// Create a logical fork of the store.
+    pub async fn fork(&self) -> Self {
+        let fork = self.delta.write().await.fork();
+        Self {
+            storage: self.storage.clone(),
+            delta: Arc::new(RwLock::new(fork)),
+        }
+    }
+
     /// Get a value from the state by key, decoding it into the given domain type.
     pub async fn get<V: DomainType>(
         &self,

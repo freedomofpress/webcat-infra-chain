@@ -3,7 +3,8 @@ use felidae_proto::transaction::{self as proto};
 use prost::bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, hex::Hex, serde_as};
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
+use std::str::FromStr;
 use std::{hash::Hash, ops::Deref, time::Duration};
 use tendermint::block::Height;
 use tendermint::{AppHash, Time};
@@ -23,6 +24,10 @@ pub use authenticated::AuthenticatedTx;
 // Here are all the domain types that can be stored:
 domain_types!(
     Transaction: proto::Transaction,
+    Domain: String,
+    Zone: String,
+    PrefixOrderDomain: String,
+    Empty: String,
     ChainId: String,
     Unsigned: proto::Signature,
     Action: proto::Action,
@@ -206,6 +211,55 @@ impl Display for Domain {
     }
 }
 
+/// A fully qualified domain name (FQDN) for a domain, displayed and parsed in order of its labels.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PrefixOrderDomain {
+    pub name: fqdn::FQDN,
+}
+
+impl Display for PrefixOrderDomain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut labels: Vec<&str> = self.name.labels().collect();
+        labels.reverse();
+        write!(f, ".{}", labels.join("."))
+    }
+}
+
+impl FromStr for PrefixOrderDomain {
+    type Err = fqdn::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut labels: Vec<&str> = s.trim_start_matches('.').split('.').collect();
+        labels.reverse();
+        let mut domain_string = labels.join(".");
+        domain_string.push('.');
+        let fqdn = fqdn::FQDN::from_str(&domain_string)?;
+        Ok(Self { name: fqdn })
+    }
+}
+
+/// A unit type that serializes as an empty string.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct Empty;
+
+impl Display for Empty {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "")
+    }
+}
+
+impl FromStr for Empty {
+    type Err = crate::ParseError;
+
+    fn from_str(string: &str) -> Result<Self, Self::Err> {
+        if string.is_empty() {
+            Ok(Empty)
+        } else {
+            Err(crate::ParseError::new::<Self>(string))
+        }
+    }
+}
+
 /// A fully qualified domain name (FQDN) that is meant to be treated as a zone.
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -222,11 +276,20 @@ impl Display for Zone {
 }
 
 #[serde_as]
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum HashObserved {
     Hash(#[serde_as(as = "Hex")] [u8; 32]),
     NotFound,
+}
+
+impl Debug for HashObserved {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HashObserved::Hash(hash) => write!(f, "{}", hex::encode(hash)),
+            HashObserved::NotFound => write!(f, "NotFound"),
+        }
+    }
 }
 
 #[serde_as]
@@ -263,6 +326,25 @@ mod tests {
     use super::*;
 
     use insta::assert_snapshot;
+
+    #[test]
+    fn test_domain_display_and_parse() {
+        let domain_str = "sub.example.com.";
+        let fqdn = fqdn::FQDN::from_ascii_str(domain_str).unwrap();
+        let domain = Domain { name: fqdn.clone() };
+        assert_eq!(domain.to_string(), domain_str);
+    }
+
+    #[test]
+    fn test_prefix_order_domain_display_and_parse() {
+        let domain_str = ".com.example.sub";
+        let prefix_order_domain = PrefixOrderDomain::from_str(domain_str).unwrap();
+        assert_eq!(prefix_order_domain.to_string(), ".com.example.sub");
+        assert_eq!(
+            prefix_order_domain.name,
+            fqdn::FQDN::from_ascii_str("sub.example.com.").unwrap()
+        );
+    }
 
     #[test]
     fn test_observe_serialization() {
