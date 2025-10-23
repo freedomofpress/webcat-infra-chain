@@ -13,7 +13,7 @@ use felidae_types::transaction::{
     HashObserved, Observation, Observe, OnionConfig, Oracle, OracleConfig, PrefixOrderDomain,
     Quorum, Reconfigure, Timeout, Total, Transaction, VotingConfig,
 };
-use futures::StreamExt;
+use futures::{Stream, StreamExt, TryStreamExt};
 use prost::bytes::Bytes;
 use sha2::{Digest, Sha256};
 use tendermint::{
@@ -494,7 +494,7 @@ impl State {
             .into();
 
         // Prevent unenrolling non-existent subdomains or enrolling too many new subdomains:
-        if self.canonical_hash(subdomain).await?.is_none() {
+        if self.canonical_hash(subdomain.clone()).await?.is_none() {
             let pending_change = self
                 .oracle_voting()
                 .await?
@@ -538,14 +538,17 @@ impl State {
                         .pending_for_key_prefix(self, &format!("{registered_domain}."))
                         .await?;
                     let canonical_subdomains =
-                        self.canonical_subdomains(&registered_domain).await?;
+                        self.canonical_subdomains(registered_domain.clone()).await?;
 
                     // We collect all the places in the pipeline, from voting to pending to canonical:
                     let unique_subdomains = registered_domain_votes
                         .into_iter()
                         .map(|v| v.key)
                         .chain(subdomain_votes.into_iter().map(|v| v.key))
-                        .chain(registered_domain_pending.map(|_| registered_domain.clone()))
+                        .chain(registered_domain_pending.map({
+                            let registered_domain = registered_domain.clone();
+                            move |_| registered_domain
+                        }))
                         .chain(subdomain_pending.into_iter().map(|(k, _)| k))
                         .chain(canonical_subdomains.into_iter())
                         .collect::<BTreeSet<_>>()
@@ -923,32 +926,80 @@ impl State {
     }
 
     /// Get the canonical hash for a given subdomain, if it exists.
-    async fn canonical_hash(&self, subdomain: &Domain) -> Result<Option<[u8; 32]>, Report> {
-        if let Some(data) = self
+    pub async fn canonical_hash(&self, subdomain: Domain) -> Result<Option<[u8; 32]>, Report> {
+        if let Some(bytes) = self
             .store
             .get::<Bytes>(Canonical, &subdomain.to_string())
             .await?
         {
-            let bytes: Bytes = data;
-            if bytes.len() != 32 {
-                bail!("canonical hash for {} has invalid length", subdomain);
-            }
-            let mut hash = [0u8; 32];
-            hash.copy_from_slice(&bytes);
+            let hash = <[u8; 32]>::try_from(&bytes[..])
+                .map_err(|_| eyre!("canonical hash for {} has invalid length", subdomain))?;
             Ok(Some(hash))
         } else {
             Ok(None)
         }
     }
 
-    /// Returns a count of all subdomains including the registered domain itself in the canonical
-    /// state.
-    async fn canonical_subdomains(
+    /// Get a stream of the canonical hashes for every subdomain under a registered domain,
+    /// not including the registered domain itself.
+    pub async fn canonical_strict_subdomains_hashes(
         &self,
         registered_domain: &Domain,
+    ) -> impl Stream<Item = Result<(Domain, [u8; 32]), Report>> + use<'_> {
+        let mut prefix = PrefixOrderDomain {
+            name: registered_domain.name.clone(),
+        }
+        .to_string();
+        prefix.push('.'); // e.g. ".com.example."
+
+        self.store
+            .prefix::<Bytes>(Canonical, prefix)
+            .await
+            .map(|result| {
+                let (key, bytes) = result?;
+                let prefix_ordered = PrefixOrderDomain::from_str(&key)?;
+                let domain = Domain {
+                    name: prefix_ordered.name,
+                };
+                let hash = <[u8; 32]>::try_from(&bytes[..])
+                    .map_err(|_| eyre!("canonical hash for {} has invalid length", domain))?;
+                Ok((domain, hash))
+            })
+    }
+
+    /// Get a stream of the canonical hashes for every subdomain including the registered domain
+    /// itself.
+    pub async fn canonical_subdomains_hashes(
+        &self,
+        registered_domain: Domain,
+    ) -> impl Stream<Item = Result<(Domain, [u8; 32]), Report>> + '_ {
+        let subdomains = self
+            .canonical_strict_subdomains_hashes(&registered_domain)
+            .await;
+
+        let domain_future = self.canonical_hash(registered_domain.clone());
+        let domain = futures::stream::once(domain_future).try_filter_map(move |hash| {
+            let registered_domain = registered_domain.clone();
+            async move { Ok(hash.map(|h| (registered_domain, h))) }
+        });
+
+        domain.chain(subdomains)
+    }
+
+    /// Returns a count of all subdomains including the registered domain itself in the canonical
+    /// state.
+    pub async fn canonical_subdomains(
+        &self,
+        registered_domain: Domain,
     ) -> Result<Vec<Domain>, Report> {
-        let mut subdomains = self.canonical_strict_subdomains(registered_domain).await?;
-        if self.canonical_hash(registered_domain).await?.is_some() {
+        let mut subdomains = self
+            .canonical_strict_subdomains(registered_domain.clone())
+            .await?;
+        if self
+            .canonical_hash(registered_domain.clone())
+            .await?
+            .is_some()
+        {
             subdomains.push(registered_domain.clone());
         }
         Ok(subdomains)
@@ -957,16 +1008,17 @@ impl State {
     /// Returns a count of all subdomains under a registered domain in the canonical state.
     ///
     /// This does not include the registered domain itself, only its subdomains.
-    async fn canonical_strict_subdomains(
+    pub async fn canonical_strict_subdomains(
         &self,
-        registered_domain: &Domain,
+        registered_domain: Domain,
     ) -> Result<Vec<Domain>, Report> {
-        let mut subdomains = Vec::new();
-        let registered_domain = PrefixOrderDomain {
+        let mut prefix = PrefixOrderDomain {
             name: registered_domain.name.clone(),
         }
         .to_string();
-        let prefix = format!("{registered_domain}."); // e.g. ".com.example."
+        prefix.push('.'); // e.g. ".com.example."
+
+        let mut subdomains = Vec::new();
         let mut stream = self.store.prefix_keys(Canonical, &prefix).await;
         while let Some(Ok(subdomain)) = stream.next().await {
             let prefix_ordered = PrefixOrderDomain::from_str(&subdomain)?;
@@ -987,13 +1039,13 @@ impl State {
         // We store subdomains in prefix order, e.g. ".com.example" instead of "example.com", to
         // allow prefix search for subdomains.
         let key = PrefixOrderDomain {
-            name: subdomain.name,
+            name: subdomain.name.clone(),
         }
-        .to_string();
+        .to_string(); // notice that we do not add a trailing dot here!
 
         if let HashObserved::Hash(hash) = hash_observed {
             info!(
-                domain = key,
+                domain = %subdomain.name,
                 hash = hex::encode(hash),
                 "updating canonical hash"
             );

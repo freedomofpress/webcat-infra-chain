@@ -187,6 +187,8 @@ impl Run for Start {
                 })
         });
 
+        // TODO: serve snapshot JSON with whole thing at '/' and prefixes at '/.com.example'
+
         // Wait for everything to exit:
         tokio::select! {
             res = abci => res??,

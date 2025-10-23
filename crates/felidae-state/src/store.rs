@@ -185,7 +185,7 @@ impl Store {
     pub async fn prefix<V: DomainType>(
         &self,
         substore: Substore,
-        prefix: &str,
+        prefix: impl AsRef<str>,
     ) -> impl Stream<Item = Result<(String, V), Report>> + '_
     where
         Report: From<<V as TryFrom<V::Proto>>::Error>,
@@ -193,7 +193,7 @@ impl Store {
         self.delta
             .read()
             .await
-            .prefix_raw(&substore.prefix(prefix))
+            .prefix_raw(&substore.prefix(prefix.as_ref()))
             .map(move |res| match res {
                 Ok((key, bytes)) => {
                     let v = V::decode(bytes.as_ref())?;
