@@ -59,6 +59,9 @@ impl Substore {
 
 impl Store {
     pub async fn init(path: PathBuf) -> Result<Self, Report> {
+        tokio::fs::create_dir_all(&path)
+            .await
+            .or_else(|e| eyre::bail!("could not create storage directory: {e}"))?;
         const SUBSTORES: [&str; 2] = ["internal", "canonical"];
         let storage = Storage::init(path, SUBSTORES.map(Into::into).to_vec())
             .await

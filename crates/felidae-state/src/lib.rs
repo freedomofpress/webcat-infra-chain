@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate tracing;
 
-use std::{collections::BTreeSet, str::FromStr, time::Duration};
+use std::{collections::BTreeSet, path::PathBuf, str::FromStr, time::Duration};
 
 use cnidarium::RootHash;
 use color_eyre::{
@@ -34,6 +34,9 @@ use store::Substore::{Canonical, Internal};
 mod vote_queue;
 use vote_queue::{Vote, VoteQueue};
 
+/// ABCI service implementation for [`State`].
+mod abci;
+
 #[derive(Clone)]
 pub struct State {
     store: Store,
@@ -47,8 +50,10 @@ pub struct RootHashes {
 
 impl State {
     /// Create a new state.
-    pub fn new(storage: Store) -> Self {
-        Self { store: storage }
+    pub async fn init(path: PathBuf) -> Result<Self, Report> {
+        Ok(Self {
+            store: Store::init(path).await?,
+        })
     }
 
     /// Fork the state to create a new logical branch.
@@ -164,7 +169,6 @@ impl State {
     }
 
     /// Begin a block, without committing yet.
-    #[instrument(skip(self, votes, byzantine_validators, chain_id, time))]
     pub async fn begin_block(
         &mut self,
         request::BeginBlock {
@@ -252,7 +256,7 @@ impl State {
         Ok(response::BeginBlock { events: vec![] })
     }
 
-    #[instrument(skip(self, tx_bytes))]
+    /// Deliver transaction bytes to the state.
     pub async fn deliver_tx(&mut self, tx_bytes: &[u8]) -> Result<(), Report> {
         let tx = AuthenticatedTx::from_proto(tx_bytes)?;
         self.deliver_authenticated_tx(&tx).await
@@ -290,7 +294,6 @@ impl State {
     }
 
     /// End a block, without committing yet.
-    #[instrument(skip(self))]
     pub async fn end_block(
         &mut self,
         request::EndBlock { height }: request::EndBlock,
