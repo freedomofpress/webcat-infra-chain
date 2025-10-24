@@ -7,10 +7,13 @@ use color_eyre::{
     Report,
     eyre::{OptionExt, bail, eyre},
 };
-use felidae_types::transaction::{
-    Action, Admin, AdminConfig, AuthenticatedTx, Blockstamp, ChainId, Config, Delay, Domain, Empty,
-    HashObserved, Observation, Observe, OnionConfig, Oracle, OracleConfig, PrefixOrderDomain,
-    Quorum, Reconfigure, Timeout, Total, Transaction, VotingConfig,
+use felidae_types::{
+    FQDN,
+    transaction::{
+        Action, Admin, AdminConfig, AuthenticatedTx, Blockstamp, ChainId, Config, Delay, Domain,
+        Empty, HashObserved, Observation, Observe, OnionConfig, Oracle, OracleConfig,
+        PrefixOrderDomain, Quorum, Reconfigure, Timeout, Total, Transaction, VotingConfig,
+    },
 };
 use futures::{Stream, StreamExt};
 use prost::Message;
@@ -878,11 +881,12 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
 
     /// Get the canonical hash for a given subdomain, if it exists.
     pub async fn canonical_hash(&self, subdomain: Domain) -> Result<Option<[u8; 32]>, Report> {
-        if let Some(bytes) = self
-            .store
-            .get::<Bytes>(Canonical, &subdomain.to_string())
-            .await?
-        {
+        let key = PrefixOrderDomain {
+            name: subdomain.name.clone(),
+        }
+        .to_string();
+
+        if let Some(bytes) = self.store.get::<Bytes>(Canonical, &key).await? {
             let hash = <[u8; 32]>::try_from(&bytes[..])
                 .map_err(|_| eyre!("canonical hash for {} has invalid length", subdomain))?;
             Ok(Some(hash))
@@ -901,7 +905,13 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             name: registered_domain.name.clone(),
         }
         .to_string();
-        prefix.push('.'); // e.g. ".com.example."
+
+        // Add a trailing dot to only get subdomains, not the registered domain itself, *UNLESS* the
+        // registered domain being queried is the root domain, in which case it already ends with a
+        // dot, so we shouldn't add one!
+        if registered_domain.name != FQDN::default() {
+            prefix.push('.'); // e.g. ".com.example."
+        }
 
         self.store.prefix::<Bytes>(Canonical, prefix).map(|result| {
             let (key, bytes) = result?;

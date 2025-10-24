@@ -86,9 +86,24 @@ pub fn app(storage: Storage) -> Router {
             let get_votes = async move {
                 let mut state = state;
                 let vote_queue = state.oracle_voting().await?;
-                let votes = vote_queue
-                    .votes_for_key_prefix(domain.into(), Some('.'))
-                    .await?;
+                // When the domain is not the root, include the trailing dot, so that we only get
+                // actual subdomains as opposed to random similar prefixes, but for the root domain,
+                // don't include the dot so we get every domain.
+                let votes = if domain.name != FQDN::default() {
+                    vote_queue
+                        .votes_for_key_prefix(domain.into(), Some('.'))
+                        .await?
+                } else {
+                    vote_queue
+                        .votes_for_key_prefix(
+                            Domain {
+                                name: FQDN::default(),
+                            }
+                            .into(),
+                            None,
+                        )
+                        .await?
+                };
                 #[derive(Serialize)]
                 struct OracleVote {
                     oracle: String,
@@ -179,9 +194,24 @@ pub fn app(storage: Storage) -> Router {
             let get_pending = async move {
                 let mut state = state;
                 let vote_queue = state.oracle_voting().await?;
-                let pending = vote_queue
-                    .pending_for_key_prefix(domain.into(), Some('.'))
-                    .await?;
+                // When the domain is not the root, include the trailing dot, so that we only get
+                // actual subdomains as opposed to random similar prefixes, but for the root domain,
+                // don't include the dot so we get every domain.
+                let pending = if domain.name != FQDN::default() {
+                    vote_queue
+                        .pending_for_key_prefix(domain.into(), Some('.'))
+                        .await?
+                } else {
+                    vote_queue
+                        .pending_for_key_prefix(
+                            Domain {
+                                name: FQDN::default(),
+                            }
+                            .into(),
+                            None,
+                        )
+                        .await?
+                };
                 #[derive(Serialize)]
                 struct PendingObservation {
                     time: Time,
