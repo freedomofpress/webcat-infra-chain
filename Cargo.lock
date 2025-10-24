@@ -1029,6 +1029,7 @@ dependencies = [
  "prost 0.13.5",
  "sha2 0.10.9",
  "tendermint",
+ "tendermint-proto",
  "tokio",
  "tower",
  "tracing",

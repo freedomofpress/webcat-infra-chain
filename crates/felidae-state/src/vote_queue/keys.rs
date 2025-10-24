@@ -1,6 +1,6 @@
 use super::*;
 
-impl<K, V: DomainType> VoteQueue<K, V>
+impl<S, K, V: DomainType> VoteQueue<'_, S, K, V>
 where
     Report: From<<V as TryFrom<V::Proto>>::Error>,
 {

@@ -4,22 +4,32 @@ use cnidarium::{RootHash, Snapshot, StateDelta, StateRead, StateWrite, Storage};
 use color_eyre::{Report, eyre};
 use felidae_proto::DomainType;
 use futures::{Stream, stream::StreamExt};
+use std::any::Any;
 use std::fmt::{Debug, Display};
 use std::mem;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tendermint::AppHash;
 use tokio::sync::RwLock;
 
-#[derive(Clone)]
+use crate::State;
+
+#[derive(Debug, Clone)]
 pub struct Store {
-    storage: Storage,
-    delta: Arc<RwLock<StateDelta<Snapshot>>>,
+    pub storage: Storage,
+    pub state: Arc<RwLock<State<StateDelta<Snapshot>>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Substore {
     Internal,
     Canonical,
+}
+
+pub struct RootHashes {
+    pub internal: RootHash,
+    pub canonical: RootHash,
+    pub app_hash: AppHash,
 }
 
 impl Display for Substore {
@@ -71,7 +81,9 @@ impl Store {
 
     fn new(storage: Storage) -> Self {
         Self {
-            delta: Arc::new(RwLock::new(StateDelta::new(storage.latest_snapshot()))),
+            state: Arc::new(RwLock::new(State {
+                store: StateDelta::new(storage.latest_snapshot()),
+            })),
             storage,
         }
     }
@@ -86,24 +98,38 @@ impl Store {
         .map_err(|e| eyre::eyre!(e))
     }
 
+    /// Get the 3 root hashes: internal, canonical, and app hash (hash of internal and canonical).
+    pub async fn root_hashes(&self) -> Result<RootHashes, Report> {
+        let internal = self.root_hash(Some(Substore::Internal)).await?;
+        let canonical = self.root_hash(Some(Substore::Canonical)).await?;
+        let app_hash = AppHash::try_from(self.root_hash(None).await?.0.to_vec())?;
+        Ok(RootHashes {
+            internal,
+            canonical,
+            app_hash,
+        })
+    }
+
     /// Commit all pending changes to the underlying storage.
     pub async fn commit(&mut self) -> Result<(), Report> {
-        // Pull out the current delta and replace it with a new, empty one:
-        let delta = mem::replace(
-            &mut *self.delta.write().await,
-            StateDelta::new(self.storage.latest_snapshot()),
+        // Pull out the current state and replace it with a new, empty one:
+        let state = mem::replace(
+            &mut *self.state.write().await,
+            State {
+                store: StateDelta::new(self.storage.latest_snapshot()),
+            },
         );
 
         // Commit the pulled-out delta to storage:
         self.storage
-            .commit(delta)
+            .commit(state.store)
             .await
             .map_err(|e| eyre::eyre!(e))?;
 
-        // Update the delta to use the new latest snapshot:
-        *self.delta.write().await = StateDelta::new(self.storage.latest_snapshot());
+        // Update the state to use the new latest snapshot:
+        self.state.write().await.store = StateDelta::new(self.storage.latest_snapshot());
 
-        // NOTE: without the final step above, the delta would continue to refer to the snapshot
+        // NOTE: without the final step above, the state would continue to refer to the snapshot
         // *before* the commit, which would lead to errors on subsequent reads/writes.
 
         Ok(())
@@ -111,31 +137,30 @@ impl Store {
 
     /// Discard all pending changes.
     pub fn abort(&mut self) {
-        self.delta = Arc::new(RwLock::new(StateDelta::new(self.storage.latest_snapshot())));
+        self.state = Arc::new(RwLock::new(State {
+            store: StateDelta::new(self.storage.latest_snapshot()),
+        }));
     }
 
     /// Create a logical fork of the store.
-    pub async fn fork(&self) -> Self {
-        let fork = self.delta.write().await.fork();
+    pub async fn fork(&mut self) -> Self {
+        let fork = self.state.write().await.store.fork();
         Self {
             storage: self.storage.clone(),
-            delta: Arc::new(RwLock::new(fork)),
+            state: Arc::new(RwLock::new(State { store: fork })),
         }
     }
+}
 
+impl<T> StateReadExt for T where T: StateRead + Send + Sync + 'static {}
+
+pub trait StateReadExt: StateRead + Send + Sync + 'static {
     /// Get a value from the state by key, decoding it into the given domain type.
-    pub async fn get<V: DomainType>(
-        &self,
-        substore: Substore,
-        key: &str,
-    ) -> Result<Option<V>, Report>
+    async fn get<V: DomainType>(&self, substore: Substore, key: &str) -> Result<Option<V>, Report>
     where
         Report: From<<V as TryFrom<V::Proto>>::Error>,
     {
         let bytes = self
-            .delta
-            .read()
-            .await
             .get_raw(&substore.prefix(key))
             .await
             .map_err(|e| eyre::eyre!(e))?;
@@ -147,45 +172,24 @@ impl Store {
         }
     }
 
-    /// Set a value in the state by key, encoding it from the given domain type.
-    pub async fn put<V: DomainType + Debug>(&mut self, substore: Substore, key: &str, value: V)
-    where
-        Report: From<<V as TryFrom<V::Proto>>::Error>,
-    {
-        let bytes = value.encode_to_vec();
-        self.delta
-            .write()
-            .await
-            .put_raw(substore.prefix(key), bytes);
-    }
-
-    /// Delete a value from the state by key.
-    pub async fn delete(&mut self, substore: Substore, key: &str) {
-        self.delta.write().await.delete(substore.prefix(key));
-    }
-
     /// Get a stream over all keys in the state.
-    pub async fn prefix_keys(
+    async fn prefix_keys(
         &self,
         substore: Substore,
         prefix: &str,
     ) -> impl Stream<Item = Result<String, Report>> {
-        self.delta
-            .read()
-            .await
-            .prefix_keys(&substore.prefix(prefix))
-            .map(move |res| match res {
-                Ok(key) => Ok(substore
-                    .unprefix(&key)
-                    .expect("key from wrong substore")
-                    .to_string()),
-                Err(e) => Err(eyre::eyre!(e)),
-            })
+        StateRead::prefix_keys(self, &substore.prefix(prefix)).map(move |res| match res {
+            Ok(key) => Ok(substore
+                .unprefix(&key)
+                .expect("key from wrong substore")
+                .to_string()),
+            Err(e) => Err(eyre::eyre!(e)),
+        })
     }
 
     /// Get a stream over all key-value pairs in the state with the given prefix, decoding the
     /// values into the given domain type.
-    pub async fn prefix<V: DomainType>(
+    async fn prefix<V: DomainType>(
         &self,
         substore: Substore,
         prefix: impl AsRef<str>,
@@ -193,10 +197,7 @@ impl Store {
     where
         Report: From<<V as TryFrom<V::Proto>>::Error>,
     {
-        self.delta
-            .read()
-            .await
-            .prefix_raw(&substore.prefix(prefix.as_ref()))
+        self.prefix_raw(&substore.prefix(prefix.as_ref()))
             .map(move |res| match res {
                 Ok((key, bytes)) => {
                     let v = V::decode(bytes.as_ref())?;
@@ -213,7 +214,7 @@ impl Store {
     }
 
     /// Get a value from the index by key, decoding it into the given domain type.
-    pub async fn index_get<V: DomainType>(
+    async fn index_get<V: DomainType>(
         &self,
         substore: Substore,
         key: &[u8],
@@ -222,9 +223,6 @@ impl Store {
         Report: From<<V as TryFrom<V::Proto>>::Error>,
     {
         let bytes = self
-            .delta
-            .read()
-            .await
             .nonverifiable_get_raw(&substore.prefix_bytes(key))
             .await
             .map_err(|e| eyre::eyre!(e))?;
@@ -236,29 +234,9 @@ impl Store {
         }
     }
 
-    /// Set a value in the index by key, encoding it from the given domain type.
-    pub async fn index_put<V: DomainType>(&mut self, substore: Substore, key: &[u8], value: V)
-    where
-        Report: From<<V as TryFrom<V::Proto>>::Error>,
-    {
-        let bytes = value.encode_to_vec();
-        self.delta
-            .write()
-            .await
-            .nonverifiable_put_raw(substore.prefix_bytes(key), bytes);
-    }
-
-    /// Delete a value from the index by key.
-    pub async fn index_delete(&mut self, substore: Substore, key: &[u8]) {
-        self.delta
-            .write()
-            .await
-            .nonverifiable_delete(substore.prefix_bytes(key));
-    }
-
     /// Get a stream over all keys and values in the index with the given prefix, decoding the
     /// values into the given domain type.
-    pub async fn index_prefix<V: DomainType>(
+    async fn index_prefix<V: DomainType>(
         &self,
         substore: Substore,
         prefix: &[u8],
@@ -266,10 +244,7 @@ impl Store {
     where
         Report: From<<V as TryFrom<V::Proto>>::Error>,
     {
-        self.delta
-            .read()
-            .await
-            .nonverifiable_prefix_raw(&substore.prefix_bytes(prefix))
+        self.nonverifiable_prefix_raw(&substore.prefix_bytes(prefix))
             .map(move |res| match res {
                 Ok((key, bytes)) => {
                     let v = V::decode(bytes.as_ref())?;
@@ -284,5 +259,36 @@ impl Store {
 
                 Err(e) => Err(eyre::eyre!(e)),
             })
+    }
+}
+
+impl<T> StateWriteExt for T where T: StateWrite + Send + Sync + 'static {}
+pub trait StateWriteExt: StateWrite + Send + Sync + 'static {
+    /// Set a value in the state by key, encoding it from the given domain type.
+    async fn put<V: DomainType + Debug>(&mut self, substore: Substore, key: &str, value: V)
+    where
+        Report: From<<V as TryFrom<V::Proto>>::Error>,
+    {
+        let bytes = value.encode_to_vec();
+        self.put_raw(substore.prefix(key), bytes);
+    }
+
+    /// Delete a value from the state by key.
+    async fn delete(&mut self, substore: Substore, key: &str) {
+        StateWrite::delete(self, substore.prefix(key));
+    }
+
+    /// Set a value in the index by key, encoding it from the given domain type.
+    async fn index_put<V: DomainType>(&mut self, substore: Substore, key: &[u8], value: V)
+    where
+        Report: From<<V as TryFrom<V::Proto>>::Error>,
+    {
+        let bytes = value.encode_to_vec();
+        self.nonverifiable_put_raw(substore.prefix_bytes(key), bytes);
+    }
+
+    /// Delete a value from the index by key.
+    async fn index_delete(&mut self, substore: Substore, key: &[u8]) {
+        self.nonverifiable_delete(substore.prefix_bytes(key));
     }
 }

@@ -1,9 +1,8 @@
 #[macro_use]
 extern crate tracing;
 
-use std::{collections::BTreeSet, path::PathBuf, str::FromStr, time::Duration};
+use std::{collections::BTreeSet, str::FromStr, time::Duration};
 
-use cnidarium::RootHash;
 use color_eyre::{
     Report,
     eyre::{OptionExt, bail, eyre},
@@ -14,6 +13,7 @@ use felidae_types::transaction::{
     Quorum, Reconfigure, Timeout, Total, Transaction, VotingConfig,
 };
 use futures::{Stream, StreamExt, TryStreamExt};
+use prost::Message;
 use prost::bytes::Bytes;
 use sha2::{Digest, Sha256};
 use tendermint::{
@@ -29,7 +29,10 @@ use tendermint::{
 
 mod store;
 pub use store::Store;
-use store::Substore::{Canonical, Internal};
+use store::{
+    StateReadExt, StateWriteExt,
+    Substore::{Canonical, Internal},
+};
 
 mod vote_queue;
 use vote_queue::{Vote, VoteQueue};
@@ -37,94 +40,37 @@ use vote_queue::{Vote, VoteQueue};
 /// ABCI service implementation for [`State`].
 mod abci;
 
-#[derive(Clone)]
-pub struct State {
-    store: Store,
+#[derive(Debug, Clone)]
+pub struct State<S> {
+    store: S,
 }
 
-pub struct RootHashes {
-    pub internal: RootHash,
-    pub canonical: RootHash,
-    pub app_hash: AppHash,
-}
-
-impl State {
-    /// Create a new state.
-    pub async fn init(path: PathBuf) -> Result<Self, Report> {
-        Ok(Self {
-            store: Store::init(path).await?,
-        })
-    }
-
-    /// Fork the state to create a new logical branch.
-    pub async fn fork(&self) -> Self {
-        Self {
-            store: self.store.fork().await,
-        }
-    }
-
-    /// Helper function to pad block heights for lexicographic ordering.
-    ///
-    /// Uses 20 digits to accommodate the full u64 range.
-    fn pad_height(height: Height) -> String {
-        format!("{:020}", height.value())
-    }
-
-    /// Get the 3 root hashes: internal, canonical, and app hash (hash of internal and canonical).
-    pub async fn root_hashes(&self) -> Result<RootHashes, Report> {
-        let internal = self.store.root_hash(Some(Internal)).await?;
-        let canonical = self.store.root_hash(Some(Canonical)).await?;
-        let app_hash = AppHash::try_from(self.store.root_hash(None).await?.0.to_vec())?;
-        Ok(RootHashes {
-            internal,
-            canonical,
-            app_hash,
-        })
-    }
-
-    /// Commit all pending changes to the underlying storage.
-    pub async fn commit(&mut self) -> Result<(), Report> {
-        self.store.commit().await?;
-        Ok(())
-    }
-
-    /// Discard all pending changes.
-    pub fn abort(&mut self) {
-        self.store.abort();
-    }
-
+impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     /// Initialize the chain state.
-    #[instrument(skip(
-        self,
-        chain_id,
-        consensus_params,
-        validators,
-        app_state_bytes,
-        initial_height
-    ))]
+    #[instrument(skip(self, request,))]
     pub async fn init_chain(
         &mut self,
-        request::InitChain {
-            time: _,
-            chain_id,
-            consensus_params,
-            validators,
-            app_state_bytes,
-            initial_height,
-        }: request::InitChain,
+        request: request::InitChain,
     ) -> Result<response::InitChain, Report> {
+        // The initial app hash should be the hash of the InitChain request canonicalized as a protobuf:
+        let mut hasher = Sha256::new();
+        hasher.update(
+            tendermint_proto::v0_34::abci::RequestInitChain::from(request.clone()).encode_to_vec(),
+        );
+        let app_hash = AppHash::try_from(hasher.finalize().to_vec())?;
+
         // Ensure that the initial height is 1:
-        if initial_height.value() != 1 {
+        if request.initial_height.value() != 1 {
             bail!("initial height must be 1");
         }
 
         // Set the chain ID in the state:
-        self.set_chain_id(ChainId(chain_id)).await?;
+        self.set_chain_id(ChainId(request.chain_id)).await?;
 
         // TODO: Set the genesis time in the state
 
         // Ensure that the app state is empty:
-        if !app_state_bytes.is_empty() {
+        if !request.app_state_bytes.is_empty() {
             bail!("app state must be empty");
         }
 
@@ -157,15 +103,24 @@ impl State {
         .await?;
 
         // Declare the initial validator set:
-        for validator in validators.iter() {
+        for validator in request.validators.iter() {
             self.declare_validator(validator.clone()).await?;
         }
 
         Ok(response::InitChain {
-            consensus_params: Some(consensus_params),
-            validators,
-            app_hash: self.root_hashes().await?.app_hash,
+            // TODO: permit changing consensus params?
+            consensus_params: Some(request.consensus_params),
+            // TODO: permit declaring validators in initial chain params: reflect them here
+            validators: request.validators,
+            app_hash,
         })
+    }
+
+    /// Helper function to pad block heights for lexicographic ordering.
+    ///
+    /// Uses 20 digits to accommodate the full u64 range.
+    fn pad_height(height: Height) -> String {
+        format!("{:020}", height.value())
     }
 
     /// Begin a block, without committing yet.
@@ -244,14 +199,8 @@ impl State {
         self.record_app_hash(app_hash).await?;
 
         // Timeout expired votes in the vote queues
-        self.admin_voting()
-            .await?
-            .timeout_expired_votes(self)
-            .await?;
-        self.oracle_voting()
-            .await?
-            .timeout_expired_votes(self)
-            .await?;
+        self.admin_voting().await?.timeout_expired_votes().await?;
+        self.oracle_voting().await?.timeout_expired_votes().await?;
 
         Ok(response::BeginBlock { events: vec![] })
     }
@@ -309,12 +258,7 @@ impl State {
         }
 
         // Process ripe pending config changes into current config
-        for (_, new_config) in self
-            .admin_voting()
-            .await?
-            .promote_pending_changes(self)
-            .await?
-        {
+        for (_, new_config) in self.admin_voting().await?.promote_pending_changes().await? {
             // We want to only apply configs with a version greater than the current version, to
             // avoid replay attacks. This can only happen if there are multiple pending config
             // changes: this prevents someone from re-submitting an older but still-pending config
@@ -341,7 +285,7 @@ impl State {
         for (subdomain, hash_observed) in self
             .oracle_voting()
             .await?
-            .promote_pending_changes(self)
+            .promote_pending_changes()
             .await?
         {
             self.update_canonical(subdomain, hash_observed).await?;
@@ -387,7 +331,7 @@ impl State {
         self.check_config(config).await?;
 
         // Ensure that the version is greater than any pending config change:
-        if let Some(pending_config) = self.admin_voting().await?.pending_for_key(self, "").await?
+        if let Some(pending_config) = self.admin_voting().await?.pending_for_key("").await?
             && pending_config.version >= config.version
         {
             bail!(
@@ -400,15 +344,12 @@ impl State {
         // Enqueue the config change in the vote queue for admin reconfigurations
         self.admin_voting()
             .await?
-            .cast(
-                self,
-                Vote {
-                    key: Empty,
-                    party: hex::encode(identity),
-                    time: current_time,
-                    value: config.clone(),
-                },
-            )
+            .cast(Vote {
+                key: Empty,
+                party: hex::encode(identity),
+                time: current_time,
+                value: config.clone(),
+            })
             .await?;
 
         Ok(())
@@ -501,7 +442,7 @@ impl State {
             let pending_change = self
                 .oracle_voting()
                 .await?
-                .pending_for_key(self, &subdomain.to_string())
+                .pending_for_key(&subdomain.to_string())
                 .await?;
             if let Some(HashObserved::NotFound) | None = pending_change {
                 // In this case, we know the subdomain does not exist in pending or canonical state, or
@@ -523,22 +464,22 @@ impl State {
                     let registered_domain_votes = self
                         .oracle_voting()
                         .await?
-                        .votes_for_key(self, &registered_domain.to_string())
+                        .votes_for_key(&registered_domain.to_string())
                         .await?;
                     let subdomain_votes = self
                         .oracle_voting()
                         .await?
-                        .votes_for_key_prefix(self, &format!("{registered_domain}."))
+                        .votes_for_key_prefix(&format!("{registered_domain}."))
                         .await?;
                     let registered_domain_pending = self
                         .oracle_voting()
                         .await?
-                        .pending_for_key(self, &registered_domain.to_string())
+                        .pending_for_key(&registered_domain.to_string())
                         .await?;
                     let subdomain_pending = self
                         .oracle_voting()
                         .await?
-                        .pending_for_key_prefix(self, &format!("{registered_domain}."))
+                        .pending_for_key_prefix(&format!("{registered_domain}."))
                         .await?;
                     let canonical_subdomains =
                         self.canonical_subdomains(registered_domain.clone()).await?;
@@ -570,15 +511,12 @@ impl State {
         // Enqueue the observation in the vote queue for oracle observations
         self.oracle_voting()
             .await?
-            .cast(
-                self,
-                Vote {
-                    key: subdomain.clone(),
-                    party: hex::encode(identity),
-                    time: current_time,
-                    value: hash_observed.clone(),
-                },
-            )
+            .cast(Vote {
+                key: subdomain.clone(),
+                party: hex::encode(identity),
+                time: current_time,
+                value: hash_observed.clone(),
+            })
             .await?;
 
         Ok(())
@@ -777,10 +715,11 @@ impl State {
     /// Get all active validators.
     async fn active_validators(&self) -> Result<Vec<Update>, Report> {
         let mut updates = vec![];
-        let mut stream = self
-            .store
-            .prefix::<Power>(Internal, "current/validators/")
-            .await;
+        let mut stream = Box::pin(
+            self.store
+                .prefix::<Power>(Internal, "current/validators/")
+                .await,
+        );
         while let Some(Ok((key, power))) = stream.next().await {
             let pub_key = hex::decode(key.trim_start_matches("current/validators/"))?;
             if power.value() > 0 {
@@ -913,18 +852,22 @@ impl State {
     }
 
     /// Get the vote queue for oracle observations.
-    async fn oracle_voting(&mut self) -> Result<VoteQueue<Domain, HashObserved>, Report> {
-        Ok(VoteQueue::<Domain, HashObserved>::new(
+    async fn oracle_voting(&mut self) -> Result<VoteQueue<S, Domain, HashObserved>, Report> {
+        let config = self.config().await?.oracles.voting.clone();
+        Ok(VoteQueue::<S, Domain, HashObserved>::new(
+            self,
             "oracle_voting/",
-            self.config().await?.oracles.voting.clone(),
+            config,
         ))
     }
 
     /// Get the vote queue for admin updates.
-    async fn admin_voting(&mut self) -> Result<VoteQueue<Empty, Config>, Report> {
-        Ok(VoteQueue::<Empty, Config>::new(
+    async fn admin_voting(&mut self) -> Result<VoteQueue<S, Empty, Config>, Report> {
+        let config = self.config().await?.admins.voting.clone();
+        Ok(VoteQueue::<S, Empty, Config>::new(
+            self,
             "admin_voting/",
-            self.config().await?.admins.voting.clone(),
+            config,
         ))
     }
 
@@ -948,7 +891,7 @@ impl State {
     pub async fn canonical_strict_subdomains_hashes(
         &self,
         registered_domain: &Domain,
-    ) -> impl Stream<Item = Result<(Domain, [u8; 32]), Report>> + use<'_> {
+    ) -> impl Stream<Item = Result<(Domain, [u8; 32]), Report>> + use<'_, S> {
         let mut prefix = PrefixOrderDomain {
             name: registered_domain.name.clone(),
         }
@@ -1022,7 +965,7 @@ impl State {
         prefix.push('.'); // e.g. ".com.example."
 
         let mut subdomains = Vec::new();
-        let mut stream = self.store.prefix_keys(Canonical, &prefix).await;
+        let mut stream = Box::pin(StateReadExt::prefix_keys(&self.store, Canonical, &prefix).await);
         while let Some(Ok(subdomain)) = stream.next().await {
             let prefix_ordered = PrefixOrderDomain::from_str(&subdomain)?;
             let subdomain = Domain {
@@ -1055,7 +998,7 @@ impl State {
             self.store.put(Canonical, &key, Vec::from(hash)).await;
         } else {
             info!(domain = key, "deleting canonical hash");
-            self.store.delete(Canonical, &key).await;
+            StateWriteExt::delete(&mut self.store, Canonical, &key).await;
         }
         Ok(())
     }

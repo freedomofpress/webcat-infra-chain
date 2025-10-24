@@ -8,7 +8,7 @@ use tendermint::{abci::Code, block::Height, v0_34::abci};
 use tower::{BoxError, Service};
 use tracing::Instrument;
 
-impl Service<tendermint::v0_34::abci::Request> for crate::State {
+impl Service<tendermint::v0_34::abci::Request> for crate::Store {
     type Response = tendermint::v0_34::abci::Response;
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
@@ -21,7 +21,7 @@ impl Service<tendermint::v0_34::abci::Request> for crate::State {
     fn call(&mut self, req: tendermint::v0_34::abci::Request) -> Self::Future {
         debug!(?req);
 
-        let mut state = self.clone();
+        let mut store: crate::Store = self.clone();
 
         Box::pin(async move {
             match req {
@@ -30,9 +30,10 @@ impl Service<tendermint::v0_34::abci::Request> for crate::State {
                 })),
                 abci::Request::Flush => Ok(abci::Response::Flush),
                 abci::Request::Info(_info) => {
+                    let state = store.state.write().await;
                     let last_block_height =
                         state.block_height().await.unwrap_or(Height::from(0u32));
-                    let last_block_app_hash = state
+                    let last_block_app_hash = store
                         .root_hashes()
                         .await
                         .map(|h| h.app_hash)
@@ -47,22 +48,28 @@ impl Service<tendermint::v0_34::abci::Request> for crate::State {
                     }))
                 }
                 abci::Request::InitChain(init_chain) => {
-                    let response = state
+                    let response = store
+                        .state
+                        .write()
+                        .await
                         .init_chain(init_chain)
                         .instrument(info_span!("InitChain"))
                         .await?;
                     Ok(abci::Response::InitChain(response))
                 }
                 abci::Request::BeginBlock(begin_block) => {
-                    let response = state
+                    let response = store
+                        .state
+                        .write()
+                        .await
                         .begin_block(begin_block)
                         .instrument(info_span!("BeginBlock"))
                         .await?;
                     Ok(abci::Response::BeginBlock(response))
                 }
                 abci::Request::CheckTx(check_tx) => {
-                    // Use a forked state for CheckTx, so we don't modify any state until DeliverTx.
-                    let mut state = state.fork().await;
+                    // Fork the state so we can run DeliverTx without affecting the original state.
+                    let store = store.fork().await;
 
                     let reject = |e: String| {
                         Ok(abci::Response::CheckTx(abci::response::CheckTx {
@@ -72,16 +79,16 @@ impl Service<tendermint::v0_34::abci::Request> for crate::State {
                         }))
                     };
 
-                    if let Err(e) = state
+                    if let Err(e) = store
+                        .state
+                        .write()
+                        .await
                         .deliver_tx(&check_tx.tx)
                         .instrument(info_span!("CheckTx"))
                         .await
                     {
                         return reject(e.to_string());
                     }
-
-                    // Discard the forked state after CheckTx (explicitly).
-                    state.abort();
 
                     Ok(abci::Response::CheckTx(abci::response::CheckTx::default()))
                 }
@@ -95,7 +102,10 @@ impl Service<tendermint::v0_34::abci::Request> for crate::State {
                         }))
                     };
 
-                    if let Err(e) = state
+                    if let Err(e) = store
+                        .state
+                        .write()
+                        .await
                         .deliver_tx(&tx_bytes)
                         .instrument(info_span!("DeliverTx"))
                         .await
@@ -108,17 +118,20 @@ impl Service<tendermint::v0_34::abci::Request> for crate::State {
                     ))
                 }
                 abci::Request::EndBlock(end_block) => {
-                    let response = state
+                    let response = store
+                        .state
+                        .write()
+                        .await
                         .end_block(end_block)
                         .instrument(info_span!("EndBlock"))
                         .await?;
                     Ok(abci::Response::EndBlock(response))
                 }
                 abci::Request::Commit => {
-                    state.commit().await?;
+                    store.commit().await?;
 
                     Ok(abci::Response::Commit(abci::response::Commit {
-                        data: state.root_hashes().await?.app_hash.into(),
+                        data: store.root_hashes().await?.app_hash.into(),
                         ..Default::default()
                     }))
                 }

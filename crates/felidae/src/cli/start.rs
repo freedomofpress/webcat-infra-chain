@@ -5,7 +5,7 @@ use color_eyre::{
     Report,
     eyre::{OptionExt, bail},
 };
-use felidae_state::State;
+use felidae_state::Store;
 use felidae_types::transaction::Domain;
 
 use super::Run;
@@ -32,8 +32,8 @@ impl Run for Start {
             .join("storage")
             .to_path_buf();
 
-        // Load up the storage backend:
-        let state = State::init(storage_dir).await?;
+        // Load up the storage/state backend, which implements the ABCI service:
+        let mut state = Store::init(storage_dir).await?;
 
         // The query state is a fork of the main state, so that queries do not interfere with
         // in-progress writes.
@@ -70,9 +70,8 @@ impl Run for Start {
                     query_state.abort();
 
                     // Get a list of canonical subdomains for the given domain:
-                    let domain_hashes = query_state.canonical_subdomains_hashes(domain).await;
-
-                    // TODO: return the stream as a JSON object
+                    let state = query_state.state.read().await;
+                    let domain_hashes = state.canonical_subdomains_hashes(domain).await;
                 }),
             );
 

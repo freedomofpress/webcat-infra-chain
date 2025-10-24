@@ -88,7 +88,8 @@ fn test_index_votes_by_timestamp_key_party_inverse() {
 
 #[test]
 fn test_pending_by_key_timestamp_inverse() {
-    let queue: VoteQueue<Domain, ()> = VoteQueue::new(
+    let queue: VoteQueue<(), Domain, ()> = VoteQueue::new(
+        State { store: () },
         "my_prefix/",
         VotingConfig {
             total: Total(5),
