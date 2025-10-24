@@ -12,7 +12,7 @@ use felidae_types::transaction::{
     HashObserved, Observation, Observe, OnionConfig, Oracle, OracleConfig, PrefixOrderDomain,
     Quorum, Reconfigure, Timeout, Total, Transaction, VotingConfig,
 };
-use futures::{Stream, StreamExt, TryStreamExt};
+use futures::{Stream, StreamExt};
 use prost::Message;
 use prost::bytes::Bytes;
 use sha2::{Digest, Sha256};
@@ -35,7 +35,7 @@ use store::{
 };
 
 mod vote_queue;
-use vote_queue::{Vote, VoteQueue};
+pub use vote_queue::{Vote, VoteQueue};
 
 /// ABCI service implementation for [`State`].
 mod abci;
@@ -43,6 +43,13 @@ mod abci;
 #[derive(Debug, Clone)]
 pub struct State<S> {
     store: S,
+}
+
+impl<S> State<S> {
+    /// Create a new state with the given store.
+    pub fn new(store: S) -> Self {
+        Self { store }
+    }
 }
 
 impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
@@ -288,7 +295,8 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             .promote_pending_changes()
             .await?
         {
-            self.update_canonical(subdomain, hash_observed).await?;
+            self.update_canonical(subdomain.into(), hash_observed)
+                .await?;
         }
 
         Ok(response::EndBlock {
@@ -331,7 +339,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         self.check_config(config).await?;
 
         // Ensure that the version is greater than any pending config change:
-        if let Some(pending_config) = self.admin_voting().await?.pending_for_key("").await?
+        if let Some(pending_config) = self.admin_voting().await?.pending_for_key(Empty).await?
             && pending_config.version >= config.version
         {
             bail!(
@@ -412,6 +420,9 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             );
         }
 
+        // In the voting queue, we need to treat domains as prefix-ordered:
+        let subdomain = PrefixOrderDomain::from(subdomain.clone());
+
         // Ensure that the domain is not equal to the zone, and instead is a strict subdomain of the zone:
         if subdomain.name == zone.name {
             bail!(
@@ -429,20 +440,25 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         }
 
         // Compute the registered domain (the registration zone plus one additional label)
-        let registered_domain: Domain = subdomain
-            .name
-            .hierarchy()
-            .nth(subdomain.name.depth() - zone.name.depth() - 1)
-            .ok_or_eyre("zone depths invalid (should not happen)")?
-            .to_owned()
-            .into();
+        let registered_domain = PrefixOrderDomain::from(Domain::from(
+            subdomain
+                .name
+                .hierarchy()
+                .nth(subdomain.name.depth() - zone.name.depth() - 1)
+                .ok_or_eyre("zone depths invalid (should not happen)")?
+                .to_owned(),
+        ));
 
         // Prevent unenrolling non-existent subdomains or enrolling too many new subdomains:
-        if self.canonical_hash(subdomain.clone()).await?.is_none() {
+        if self
+            .canonical_hash(subdomain.clone().into())
+            .await?
+            .is_none()
+        {
             let pending_change = self
                 .oracle_voting()
                 .await?
-                .pending_for_key(&subdomain.to_string())
+                .pending_for_key(subdomain.clone())
                 .await?;
             if let Some(HashObserved::NotFound) | None = pending_change {
                 // In this case, we know the subdomain does not exist in pending or canonical state, or
@@ -464,25 +480,26 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                     let registered_domain_votes = self
                         .oracle_voting()
                         .await?
-                        .votes_for_key(&registered_domain.to_string())
+                        .votes_for_key(registered_domain.clone())
                         .await?;
                     let subdomain_votes = self
                         .oracle_voting()
                         .await?
-                        .votes_for_key_prefix(&format!("{registered_domain}."))
+                        .votes_for_key_prefix(registered_domain.clone(), Some('.'))
                         .await?;
                     let registered_domain_pending = self
                         .oracle_voting()
                         .await?
-                        .pending_for_key(&registered_domain.to_string())
+                        .pending_for_key(registered_domain.clone())
                         .await?;
                     let subdomain_pending = self
                         .oracle_voting()
                         .await?
-                        .pending_for_key_prefix(&format!("{registered_domain}."))
+                        .pending_for_key_prefix(registered_domain.clone(), Some('.'))
                         .await?;
-                    let canonical_subdomains =
-                        self.canonical_subdomains(registered_domain.clone()).await?;
+                    let canonical_subdomains = self
+                        .canonical_subdomains(registered_domain.clone().into())
+                        .await?;
 
                     // We collect all the places in the pipeline, from voting to pending to canonical:
                     let unique_subdomains = registered_domain_votes
@@ -493,8 +510,8 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                             let registered_domain = registered_domain.clone();
                             move |_| registered_domain
                         }))
-                        .chain(subdomain_pending.into_iter().map(|(k, _)| k))
-                        .chain(canonical_subdomains.into_iter())
+                        .chain(subdomain_pending.into_iter().map(|(_time, k, _v)| k))
+                        .chain(canonical_subdomains.into_iter().map(Into::into))
                         .collect::<BTreeSet<_>>()
                         .len();
 
@@ -539,14 +556,12 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             bail!("chain ID is already set; cannot set it again");
         }
 
-        self.store
-            .put(Internal, "parameters/chain_id", chain_id)
-            .await;
+        self.store.put(Internal, "parameters/chain_id", chain_id);
         Ok(())
     }
 
     /// Get the current config from the state.
-    async fn config(&self) -> Result<Config, Report> {
+    pub async fn config(&self) -> Result<Config, Report> {
         self.store
             .get::<Config>(Internal, "parameters/config")
             .await?
@@ -555,7 +570,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
 
     /// Set the current config in the state.
     async fn set_config(&mut self, config: Config) -> Result<(), Report> {
-        self.store.put(Internal, "parameters/config", config).await;
+        self.store.put(Internal, "parameters/config", config);
         Ok(())
     }
 
@@ -569,9 +584,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
 
     /// Set the current block height in the state.
     async fn set_block_height(&mut self, height: Height) -> Result<(), Report> {
-        self.store
-            .put(Internal, "current/block_height", height)
-            .await;
+        self.store.put(Internal, "current/block_height", height);
         Ok(())
     }
 
@@ -585,7 +598,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
 
     /// Set the current block time in the state.
     async fn set_block_time(&mut self, time: Time) -> Result<(), Report> {
-        self.store.put(Internal, "current/block_time", time).await;
+        self.store.put(Internal, "current/block_time", time);
         self.record_block_time(time).await?;
         Ok(())
     }
@@ -601,26 +614,22 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     /// Record the time of the current block in the state.
     async fn record_block_time(&mut self, time: Time) -> Result<(), Report> {
         let height = self.block_height().await?;
-        self.store
-            .put(
-                Internal,
-                &format!("blocktime/{}", Self::pad_height(height)),
-                time,
-            )
-            .await;
+        self.store.put(
+            Internal,
+            &format!("blocktime/{}", Self::pad_height(height)),
+            time,
+        );
         Ok(())
     }
 
     /// Record the app hash of the previous block in the state.
     async fn record_app_hash(&mut self, app_hash: AppHash) -> Result<(), Report> {
         let height = self.block_height().await?.value() - 1;
-        self.store
-            .put(
-                Internal,
-                &format!("apphash/{}", Self::pad_height(height.try_into()?)),
-                app_hash.clone(),
-            )
-            .await;
+        self.store.put(
+            Internal,
+            &format!("apphash/{}", Self::pad_height(height.try_into()?)),
+            app_hash.clone(),
+        );
         Ok(())
     }
 
@@ -657,16 +666,14 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             );
         }
 
-        self.store
-            .put(
-                Internal,
-                &format!(
-                    "current/validators/{}",
-                    hex::encode(validator.pub_key.to_bytes())
-                ),
-                validator.power,
-            )
-            .await;
+        self.store.put(
+            Internal,
+            &format!(
+                "current/validators/{}",
+                hex::encode(validator.pub_key.to_bytes())
+            ),
+            validator.power,
+        );
 
         Ok(())
     }
@@ -715,11 +722,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     /// Get all active validators.
     async fn active_validators(&self) -> Result<Vec<Update>, Report> {
         let mut updates = vec![];
-        let mut stream = Box::pin(
-            self.store
-                .prefix::<Power>(Internal, "current/validators/")
-                .await,
-        );
+        let mut stream = Box::pin(self.store.prefix::<Power>(Internal, "current/validators/"));
         while let Some(Ok((key, power))) = stream.next().await {
             let pub_key = hex::decode(key.trim_start_matches("current/validators/"))?;
             if power.value() > 0 {
@@ -852,9 +855,11 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     }
 
     /// Get the vote queue for oracle observations.
-    async fn oracle_voting(&mut self) -> Result<VoteQueue<S, Domain, HashObserved>, Report> {
+    pub async fn oracle_voting<'a>(
+        &'a mut self,
+    ) -> Result<VoteQueue<'a, S, PrefixOrderDomain, HashObserved>, Report> {
         let config = self.config().await?.oracles.voting.clone();
-        Ok(VoteQueue::<S, Domain, HashObserved>::new(
+        Ok(VoteQueue::<S, PrefixOrderDomain, HashObserved>::new(
             self,
             "oracle_voting/",
             config,
@@ -862,7 +867,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     }
 
     /// Get the vote queue for admin updates.
-    async fn admin_voting(&mut self) -> Result<VoteQueue<S, Empty, Config>, Report> {
+    pub async fn admin_voting<'a>(&'a mut self) -> Result<VoteQueue<'a, S, Empty, Config>, Report> {
         let config = self.config().await?.admins.voting.clone();
         Ok(VoteQueue::<S, Empty, Config>::new(
             self,
@@ -890,27 +895,24 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     /// not including the registered domain itself.
     pub async fn canonical_strict_subdomains_hashes(
         &self,
-        registered_domain: &Domain,
-    ) -> impl Stream<Item = Result<(Domain, [u8; 32]), Report>> + use<'_, S> {
+        registered_domain: Domain,
+    ) -> impl Stream<Item = Result<(Domain, [u8; 32]), Report>> + 'static {
         let mut prefix = PrefixOrderDomain {
             name: registered_domain.name.clone(),
         }
         .to_string();
         prefix.push('.'); // e.g. ".com.example."
 
-        self.store
-            .prefix::<Bytes>(Canonical, prefix)
-            .await
-            .map(|result| {
-                let (key, bytes) = result?;
-                let prefix_ordered = PrefixOrderDomain::from_str(&key)?;
-                let domain = Domain {
-                    name: prefix_ordered.name,
-                };
-                let hash = <[u8; 32]>::try_from(&bytes[..])
-                    .map_err(|_| eyre!("canonical hash for {} has invalid length", domain))?;
-                Ok((domain, hash))
-            })
+        self.store.prefix::<Bytes>(Canonical, prefix).map(|result| {
+            let (key, bytes) = result?;
+            let prefix_ordered = PrefixOrderDomain::from_str(&key)?;
+            let domain = Domain {
+                name: prefix_ordered.name,
+            };
+            let hash = <[u8; 32]>::try_from(&bytes[..])
+                .map_err(|_| eyre!("canonical hash for {} has invalid length", domain))?;
+            Ok((domain, hash))
+        })
     }
 
     /// Get a stream of the canonical hashes for every subdomain including the registered domain
@@ -918,18 +920,19 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     pub async fn canonical_subdomains_hashes(
         &self,
         registered_domain: Domain,
-    ) -> impl Stream<Item = Result<(Domain, [u8; 32]), Report>> + '_ {
+    ) -> Result<impl Stream<Item = Result<(Domain, [u8; 32]), Report>> + 'static, Report> {
         let subdomains = self
-            .canonical_strict_subdomains_hashes(&registered_domain)
+            .canonical_strict_subdomains_hashes(registered_domain.clone())
             .await;
 
-        let domain_future = self.canonical_hash(registered_domain.clone());
-        let domain = futures::stream::once(domain_future).try_filter_map(move |hash| {
-            let registered_domain = registered_domain.clone();
-            async move { Ok(hash.map(|h| (registered_domain, h))) }
-        });
+        let domain = self.canonical_hash(registered_domain.clone()).await?;
+        let domain = if let Some(domain) = domain {
+            futures::stream::once(async move { Ok((registered_domain, domain)) }).boxed()
+        } else {
+            futures::stream::empty().boxed()
+        };
 
-        domain.chain(subdomains)
+        Ok(domain.chain(subdomains))
     }
 
     /// Returns a count of all subdomains including the registered domain itself in the canonical
@@ -965,7 +968,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         prefix.push('.'); // e.g. ".com.example."
 
         let mut subdomains = Vec::new();
-        let mut stream = Box::pin(StateReadExt::prefix_keys(&self.store, Canonical, &prefix).await);
+        let mut stream = Box::pin(StateReadExt::prefix_keys(&self.store, Canonical, &prefix));
         while let Some(Ok(subdomain)) = stream.next().await {
             let prefix_ordered = PrefixOrderDomain::from_str(&subdomain)?;
             let subdomain = Domain {
@@ -995,10 +998,10 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 hash = hex::encode(hash),
                 "updating canonical hash"
             );
-            self.store.put(Canonical, &key, Vec::from(hash)).await;
+            self.store.put(Canonical, &key, Vec::from(hash));
         } else {
             info!(domain = key, "deleting canonical hash");
-            StateWriteExt::delete(&mut self.store, Canonical, &key).await;
+            StateWriteExt::delete(&mut self.store, Canonical, &key);
         }
         Ok(())
     }

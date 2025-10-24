@@ -217,6 +217,20 @@ pub struct PrefixOrderDomain {
     pub name: fqdn::FQDN,
 }
 
+impl From<Domain> for PrefixOrderDomain {
+    fn from(domain: Domain) -> Self {
+        Self { name: domain.name }
+    }
+}
+
+impl From<PrefixOrderDomain> for Domain {
+    fn from(prefix_order_domain: PrefixOrderDomain) -> Self {
+        Self {
+            name: prefix_order_domain.name,
+        }
+    }
+}
+
 impl Display for PrefixOrderDomain {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut labels: Vec<&str> = self.name.labels().collect();

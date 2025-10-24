@@ -944,6 +944,7 @@ dependencies = [
  "felidae-proto",
  "felidae-state",
  "felidae-types",
+ "fqdn",
  "futures",
  "hex",
  "humantime",
@@ -959,6 +960,7 @@ dependencies = [
  "tokio",
  "tower",
  "tower-abci",
+ "tower-http",
  "tracing",
  "tracing-subscriber",
 ]

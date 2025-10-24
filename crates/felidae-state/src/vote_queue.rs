@@ -63,7 +63,6 @@ where
             .state
             .store
             .index_prefix::<()>(Internal, &self.votes_by_timestamp_all_prefix())
-            .await
             .map(|result| {
                 let (key, ()) = result?;
                 let (time, key, party) = self.parse_index_votes_by_timestamp_key_party(&key)?;
@@ -78,15 +77,12 @@ where
         for (time, key, party) in old_votes {
             info!(key, party, %time, "removing expired vote");
             let delete_key = self.votes_by_key_party_timestamp(&key, &party, time);
-            StateWriteExt::delete(&mut self.state.store, Internal, &delete_key).await;
+            StateWriteExt::delete(&mut self.state.store, Internal, &delete_key);
 
-            self.state
-                .store
-                .index_delete(
-                    Internal,
-                    &self.index_votes_by_timestamp_key_party(time, &key, &party),
-                )
-                .await;
+            self.state.store.index_delete(
+                Internal,
+                &self.index_votes_by_timestamp_key_party(time, &key, &party),
+            )
         }
 
         Ok(())
@@ -103,7 +99,6 @@ where
             .state
             .store
             .index_prefix::<V>(Internal, &self.index_pending_by_timestamp_all_prefix())
-            .await
             .map(|result| {
                 let (key, value) = result?;
                 let (time, key) = self.parse_index_pending_by_timestamp_key(&key)?;
@@ -121,12 +116,11 @@ where
         for (time, key, value) in pending {
             info!(key, ?value, "promoting pending change to canonical state");
             let delete_key = self.pending_by_key_timestamp(&key, time);
-            StateWriteExt::delete(&mut self.state.store, Internal, &delete_key).await;
+            StateWriteExt::delete(&mut self.state.store, Internal, &delete_key);
 
             self.state
                 .store
-                .index_delete(Internal, &self.index_pending_by_timestamp_key(time, &key))
-                .await;
+                .index_delete(Internal, &self.index_pending_by_timestamp_key(time, &key));
             promoted.push((key.try_into()?, value));
         }
 
@@ -154,33 +148,26 @@ where
                 Internal,
                 &self.votes_by_key_party_prefix(&key, &party, true),
             )
-            .await
             .map_ok(|(key, _)| key.to_string())
             .try_collect::<Vec<_>>()
             .await?;
         for key in votes_by_party {
-            StateWriteExt::delete(&mut self.state.store, Internal, &key).await;
+            StateWriteExt::delete(&mut self.state.store, Internal, &key);
         }
 
         // 1. Add to the list of votes by key/party/timestamp
-        self.state
-            .store
-            .put(
-                Internal,
-                &self.votes_by_key_party_timestamp(&key, &party, time),
-                value.clone(),
-            )
-            .await;
+        self.state.store.put(
+            Internal,
+            &self.votes_by_key_party_timestamp(&key, &party, time),
+            value.clone(),
+        );
 
         // 2. Add to the index of votes by timestamp/key/party
-        self.state
-            .store
-            .index_put(
-                Internal,
-                &self.index_votes_by_timestamp_key_party(time, &key, &party),
-                value.clone(),
-            )
-            .await;
+        self.state.store.index_put(
+            Internal,
+            &self.index_votes_by_timestamp_key_party(time, &key, &party),
+            value.clone(),
+        );
 
         // 3. If the votes by key/party/timestamp exceed the quorum, move the change to the pending
         //    queue by key/timestamp and by timestamp/key, deleting all the accumulated votes by
@@ -192,7 +179,6 @@ where
             .state
             .store
             .prefix::<V>(Internal, &self.votes_by_key_prefix(&key, true))
-            .await
             .map(|result| {
                 let (key, value) = result?;
                 let (_key, party, time) = self.parse_votes_by_key_party_timestamp(&key)?;
@@ -229,15 +215,12 @@ where
         // Delete all the votes for this key:
         for (party, time, _) in votes.iter() {
             let delete_key = self.votes_by_key_party_timestamp(&key, party, *time);
-            StateWriteExt::delete(&mut self.state.store, Internal, &delete_key).await;
+            StateWriteExt::delete(&mut self.state.store, Internal, &delete_key);
 
-            self.state
-                .store
-                .index_delete(
-                    Internal,
-                    &self.index_votes_by_timestamp_key_party(*time, &key, party),
-                )
-                .await;
+            self.state.store.index_delete(
+                Internal,
+                &self.index_votes_by_timestamp_key_party(*time, &key, party),
+            );
         }
 
         // Delete any existing pending changes for this key:
@@ -245,7 +228,6 @@ where
             .state
             .store
             .prefix::<V>(Internal, &self.pending_by_key_prefix(&key, true))
-            .await
             .map(|result| {
                 let (key, _value) = result?;
                 let (_key, time) = self.parse_pending_by_key_timestamp(&key)?;
@@ -256,41 +238,34 @@ where
         for time in pending_changes {
             info!(key, %time, "overwriting existing pending change");
             let delete_key = self.pending_by_key_timestamp(&key, time);
-            StateWriteExt::delete(&mut self.state.store, Internal, &delete_key).await;
+            StateWriteExt::delete(&mut self.state.store, Internal, &delete_key);
 
             self.state
                 .store
-                .index_delete(Internal, &self.index_pending_by_timestamp_key(time, &key))
-                .await;
+                .index_delete(Internal, &self.index_pending_by_timestamp_key(time, &key));
         }
 
         // Add the winning value to the pending queue:
-        self.state
-            .store
-            .put(
-                Internal,
-                &self.pending_by_key_timestamp(&key, time),
-                winning_value.clone(),
-            )
-            .await;
-        self.state
-            .store
-            .index_put(
-                Internal,
-                &self.index_pending_by_timestamp_key(time, &key),
-                winning_value.clone(),
-            )
-            .await;
+        self.state.store.put(
+            Internal,
+            &self.pending_by_key_timestamp(&key, time),
+            winning_value.clone(),
+        );
+        self.state.store.index_put(
+            Internal,
+            &self.index_pending_by_timestamp_key(time, &key),
+            winning_value.clone(),
+        );
 
         Ok(())
     }
 
-    pub async fn pending_for_key(&self, key: &str) -> Result<Option<V>, Report> {
+    pub async fn pending_for_key(&self, key: K) -> Result<Option<V>, Report> {
+        let key = String::from(key);
         let pending = self
             .state
             .store
-            .prefix::<V>(Internal, &self.pending_by_key_prefix(key, true))
-            .await
+            .prefix::<V>(Internal, &self.pending_by_key_prefix(&key, true))
             .map_ok(|(_key, value)| value)
             .try_collect::<Vec<_>>()
             .await?;
@@ -304,28 +279,38 @@ where
         }
     }
 
-    pub async fn pending_for_key_prefix(&self, prefix: &str) -> Result<Vec<(K, V)>, Report> {
+    pub async fn pending_for_key_prefix(
+        &self,
+        prefix: K,
+        delimiter: Option<char>,
+    ) -> Result<Vec<(Time, K, V)>, Report> {
+        let mut prefix = String::from(prefix);
+        if let Some(delimiter) = delimiter {
+            prefix.push(delimiter);
+        }
+
         let pending = self
             .state
             .store
-            .prefix::<V>(Internal, &self.pending_by_key_prefix(prefix, false)) // Allow inexact key matches
-            .await
+            .prefix::<V>(Internal, &self.pending_by_key_prefix(&prefix, false)) // Allow inexact key matches
             .map(|result| {
                 let (key, value) = result?;
-                let (key, _time) = self.parse_pending_by_key_timestamp(&key)?;
-                Ok::<_, Report>((key.to_string().try_into()?, value))
+                let (key, time) = self.parse_pending_by_key_timestamp(&key)?;
+                Ok::<_, Report>((time, key.to_string().try_into()?, value))
             })
             .try_collect::<Vec<_>>()
             .await?;
         Ok(pending)
     }
 
-    pub async fn votes_for_key(&self, key: &str) -> Result<Vec<Vote<K, V>>, Report> {
+    pub async fn votes_for_key(&self, key: K) -> Result<Vec<Vote<K, V>>, Report> {
         let votes = self
             .state
             .store
-            .prefix::<V>(Internal, &self.votes_by_key_prefix(key, true))
-            .await
+            .prefix::<V>(
+                Internal,
+                &self.votes_by_key_prefix(&String::from(key), true),
+            )
             .map(|result| {
                 let (key, value) = result?;
                 let (key, party, time) = self.parse_votes_by_key_party_timestamp(&key)?;
@@ -341,12 +326,20 @@ where
         Ok(votes)
     }
 
-    pub async fn votes_for_key_prefix(&self, prefix: &str) -> Result<Vec<Vote<K, V>>, Report> {
+    pub async fn votes_for_key_prefix(
+        &self,
+        prefix: K,
+        delimiter: Option<char>,
+    ) -> Result<Vec<Vote<K, V>>, Report> {
+        let mut prefix = String::from(prefix);
+        if let Some(delimiter) = delimiter {
+            prefix.push(delimiter);
+        }
+
         let votes = self
             .state
             .store
-            .prefix::<V>(Internal, &self.votes_by_key_prefix(prefix, false)) // Allow inexact key matches
-            .await
+            .prefix::<V>(Internal, &self.votes_by_key_prefix(&prefix, false)) // Allow inexact key matches
             .map(|result| {
                 let (key, value) = result?;
                 let (key, party, time) = self.parse_votes_by_key_party_timestamp(&key)?;

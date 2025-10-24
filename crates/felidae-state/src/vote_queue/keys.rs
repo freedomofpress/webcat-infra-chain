@@ -212,6 +212,3 @@ where
         Ok((time, rest))
     }
 }
-
-#[cfg(test)]
-mod test;

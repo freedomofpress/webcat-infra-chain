@@ -32,3 +32,5 @@ json-rpc-types = { workspace = true }
 canonical_json = { workspace = true }
 sha2 = { workspace = true }
 serde_with = { workspace = true }
+fqdn = { workspace = true }
+tower-http = { workspace = true }

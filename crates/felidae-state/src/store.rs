@@ -156,28 +156,34 @@ impl<T> StateReadExt for T where T: StateRead + Send + Sync + 'static {}
 
 pub trait StateReadExt: StateRead + Send + Sync + 'static {
     /// Get a value from the state by key, decoding it into the given domain type.
-    async fn get<V: DomainType>(&self, substore: Substore, key: &str) -> Result<Option<V>, Report>
+    fn get<V: DomainType>(
+        &self,
+        substore: Substore,
+        key: &str,
+    ) -> impl std::future::Future<Output = Result<Option<V>, Report>> + Send
     where
         Report: From<<V as TryFrom<V::Proto>>::Error>,
     {
-        let bytes = self
-            .get_raw(&substore.prefix(key))
-            .await
-            .map_err(|e| eyre::eyre!(e))?;
-        if let Some(bytes) = bytes {
-            let v = V::decode(bytes.as_ref())?;
-            Ok(Some(v))
-        } else {
-            Ok(None)
+        async move {
+            let bytes = self
+                .get_raw(&substore.prefix(key))
+                .await
+                .map_err(|e| eyre::eyre!(e))?;
+            if let Some(bytes) = bytes {
+                let v = V::decode(bytes.as_ref())?;
+                Ok(Some(v))
+            } else {
+                Ok(None)
+            }
         }
     }
 
     /// Get a stream over all keys in the state.
-    async fn prefix_keys(
+    fn prefix_keys(
         &self,
         substore: Substore,
         prefix: &str,
-    ) -> impl Stream<Item = Result<String, Report>> {
+    ) -> impl Stream<Item = Result<String, Report>> + 'static {
         StateRead::prefix_keys(self, &substore.prefix(prefix)).map(move |res| match res {
             Ok(key) => Ok(substore
                 .unprefix(&key)
@@ -189,11 +195,11 @@ pub trait StateReadExt: StateRead + Send + Sync + 'static {
 
     /// Get a stream over all key-value pairs in the state with the given prefix, decoding the
     /// values into the given domain type.
-    async fn prefix<V: DomainType>(
+    fn prefix<V: DomainType>(
         &self,
         substore: Substore,
         prefix: impl AsRef<str>,
-    ) -> impl Stream<Item = Result<(String, V), Report>> + '_
+    ) -> impl Stream<Item = Result<(String, V), Report>> + 'static
     where
         Report: From<<V as TryFrom<V::Proto>>::Error>,
     {
@@ -214,33 +220,35 @@ pub trait StateReadExt: StateRead + Send + Sync + 'static {
     }
 
     /// Get a value from the index by key, decoding it into the given domain type.
-    async fn index_get<V: DomainType>(
+    fn index_get<V: DomainType>(
         &self,
         substore: Substore,
         key: &[u8],
-    ) -> Result<Option<V>, Report>
+    ) -> impl std::future::Future<Output = Result<Option<V>, Report>> + Send
     where
         Report: From<<V as TryFrom<V::Proto>>::Error>,
     {
-        let bytes = self
-            .nonverifiable_get_raw(&substore.prefix_bytes(key))
-            .await
-            .map_err(|e| eyre::eyre!(e))?;
-        if let Some(bytes) = bytes {
-            let v = V::decode(bytes.as_ref())?;
-            Ok(Some(v))
-        } else {
-            Ok(None)
+        async move {
+            let bytes = self
+                .nonverifiable_get_raw(&substore.prefix_bytes(key))
+                .await
+                .map_err(|e| eyre::eyre!(e))?;
+            if let Some(bytes) = bytes {
+                let v = V::decode(bytes.as_ref())?;
+                Ok(Some(v))
+            } else {
+                Ok(None)
+            }
         }
     }
 
     /// Get a stream over all keys and values in the index with the given prefix, decoding the
     /// values into the given domain type.
-    async fn index_prefix<V: DomainType>(
+    fn index_prefix<V: DomainType>(
         &self,
         substore: Substore,
         prefix: &[u8],
-    ) -> impl Stream<Item = Result<(Vec<u8>, V), Report>> + '_
+    ) -> impl Stream<Item = Result<(Vec<u8>, V), Report>> + 'static
     where
         Report: From<<V as TryFrom<V::Proto>>::Error>,
     {
@@ -265,7 +273,7 @@ pub trait StateReadExt: StateRead + Send + Sync + 'static {
 impl<T> StateWriteExt for T where T: StateWrite + Send + Sync + 'static {}
 pub trait StateWriteExt: StateWrite + Send + Sync + 'static {
     /// Set a value in the state by key, encoding it from the given domain type.
-    async fn put<V: DomainType + Debug>(&mut self, substore: Substore, key: &str, value: V)
+    fn put<V: DomainType + Debug>(&mut self, substore: Substore, key: &str, value: V)
     where
         Report: From<<V as TryFrom<V::Proto>>::Error>,
     {
@@ -274,12 +282,12 @@ pub trait StateWriteExt: StateWrite + Send + Sync + 'static {
     }
 
     /// Delete a value from the state by key.
-    async fn delete(&mut self, substore: Substore, key: &str) {
+    fn delete(&mut self, substore: Substore, key: &str) {
         StateWrite::delete(self, substore.prefix(key));
     }
 
     /// Set a value in the index by key, encoding it from the given domain type.
-    async fn index_put<V: DomainType>(&mut self, substore: Substore, key: &[u8], value: V)
+    fn index_put<V: DomainType>(&mut self, substore: Substore, key: &[u8], value: V)
     where
         Report: From<<V as TryFrom<V::Proto>>::Error>,
     {
@@ -288,7 +296,7 @@ pub trait StateWriteExt: StateWrite + Send + Sync + 'static {
     }
 
     /// Delete a value from the index by key.
-    async fn index_delete(&mut self, substore: Substore, key: &[u8]) {
+    fn index_delete(&mut self, substore: Substore, key: &[u8]) {
         self.nonverifiable_delete(substore.prefix_bytes(key));
     }
 }

@@ -6,9 +6,10 @@ use color_eyre::{
     eyre::{OptionExt, bail},
 };
 use felidae_state::Store;
-use felidae_types::transaction::Domain;
 
 use super::Run;
+
+mod query;
 
 #[derive(Parser)]
 pub struct Start {
@@ -33,11 +34,10 @@ impl Run for Start {
             .to_path_buf();
 
         // Load up the storage/state backend, which implements the ABCI service:
-        let mut state = Store::init(storage_dir).await?;
+        let state = Store::init(storage_dir).await?;
 
-        // The query state is a fork of the main state, so that queries do not interfere with
-        // in-progress writes.
-        let mut query_state = state.fork().await;
+        // We use a clone of the committed storage for queries:
+        let storage = state.storage.clone();
 
         // Split the state service into its ABCI components:
         let (consensus, mempool, snapshot, info) = tower_abci::v034::split::service(state, 4);
@@ -58,26 +58,11 @@ impl Run for Start {
                 })
         });
 
-        // TODO: serve snapshot JSON with whole thing at '/' and subdomains at '/example.com'
+        // Start the query server:
         let query = tokio::spawn(async move {
-            use axum::{Router, extract::Path, routing::get};
-
-            let app = Router::new().route(
-                "/",
-                get(|Path(domain): Path<Domain>| async move {
-                    // Although we never write or commit to the query state, aborting it at the
-                    // start of the query state updates it to the latest snapshot:
-                    query_state.abort();
-
-                    // Get a list of canonical subdomains for the given domain:
-                    let state = query_state.state.read().await;
-                    let domain_hashes = state.canonical_subdomains_hashes(domain).await;
-                }),
-            );
-
             let listener =
                 tokio::net::TcpListener::bind((IpAddr::V4(Ipv4Addr::UNSPECIFIED), query)).await?;
-            axum::serve(listener, app).await?;
+            axum::serve(listener, query::app(storage)).await?;
 
             Ok::<_, Report>(())
         });
@@ -85,6 +70,7 @@ impl Run for Start {
         // Wait for everything to exit:
         tokio::select! {
             res = abci => res??,
+            res = query => res??,
         }
 
         Ok(())
