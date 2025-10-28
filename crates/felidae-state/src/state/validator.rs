@@ -17,7 +17,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             .await?;
         if let Some(existing) = existing {
             bail!(
-                "Validator {} already exists with power {}",
+                "validator {} already exists with power {}",
                 hex::encode(validator.pub_key.to_bytes()),
                 existing,
             );
