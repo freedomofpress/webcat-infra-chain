@@ -1,5 +1,6 @@
 use super::*;
 
+/// Helper functions to construct and parse state keys for the vote queue.
 impl<S, K, V: DomainType> VoteQueue<'_, S, K, V>
 where
     Report: From<<V as TryFrom<V::Proto>>::Error>,

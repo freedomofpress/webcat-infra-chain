@@ -1,3 +1,9 @@
+//! Type conversions between Felidae domain types and their protobuf representations.
+//!
+//! Note that domain types *do not contain signatures*; we verify signatures over the protobuf
+//! representation, then pull out the public keys into the domain types. Similarly, when signing,
+//! we convert the domain types into protobuf types and insert signatures into the protobuf.
+
 use felidae_proto::transaction::{self as proto, KeyPair};
 use fqdn::FQDN;
 

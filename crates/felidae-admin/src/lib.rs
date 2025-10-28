@@ -1,3 +1,8 @@
+//! This tiny crate is a utility for creating signed reconfiguration transactions in Felidae.
+//!
+//! It exposes a single function, `reconfigure`, which takes the necessary parameters
+//! and returns a signed transaction as a hex-encoded string, ready to submit to a node.
+
 use std::time::Duration;
 
 pub use felidae_types::{

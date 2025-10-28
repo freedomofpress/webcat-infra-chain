@@ -21,7 +21,7 @@ pub use build::Builder;
 mod authenticated;
 pub use authenticated::AuthenticatedTx;
 
-// Here are all the domain types that can be stored:
+// Here are all the domain types that can be stored in the state, and their mapping to protobuf:
 domain_types!(
     Transaction: proto::Transaction,
     Domain: String,

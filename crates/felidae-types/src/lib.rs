@@ -1,3 +1,5 @@
+//! Domain types used in Felidae's transactions and storage.
+
 use std::any::type_name;
 use std::fmt::Display;
 

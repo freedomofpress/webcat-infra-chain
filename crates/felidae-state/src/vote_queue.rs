@@ -15,6 +15,24 @@ use crate::store::{StateReadExt, StateWriteExt};
 /// Key construction and parsing functions for the vote queue.
 mod keys;
 
+/// A vote queue is a *view* on the underlying state which manages a voting process for changes to
+/// other parts of the state.
+///
+/// Voting proceeds as follows:
+///
+/// 1. Authorized parties cast votes to update a given key to a given value, timestamped by time of
+///    submission of the vote.
+/// 2. Votes accumulate in an unordered collection until either a) a quorum of votes for the same
+///    value is reached, or b) each vote times out.
+/// 3. If a quorum is reached, the winning value is placed in a pending queue for a configured delay
+///    period, after which it is promoted to the canonical state (i.e., applied). The vote queue
+///    does not manage the application to the canonical state; it merely provides the pending
+///    changes to be applied.
+/// 4. If a new value for the same key reaches a quorum while a pending change is waiting to be
+///    applied, the new value overwrites the existing pending change, and the delay timer resets.
+///
+/// This process is used for both canonical domain enrollment changes (authorized by oracle votes)
+/// and changes to the chain's configuration (authorized by admin votes).
 pub struct VoteQueue<'a, S, K, V> {
     state: &'a mut State<S>,
     internal_state_prefix: &'static str,
@@ -55,6 +73,7 @@ where
         }
     }
 
+    /// Run this every block to remove expired votes.
     #[instrument(skip(self), fields(queue = self.internal_state_prefix))]
     pub async fn timeout_expired_votes(&mut self) -> Result<(), Report> {
         // Remove any votes older than now - config.vote_timeout
@@ -88,6 +107,9 @@ where
         Ok(())
     }
 
+    /// Run this every block to promote pending changes whose delay has expired.
+    ///
+    /// Make sure to actually apply the returned changes to the canonical state!
     #[instrument(skip(self), fields(queue = self.internal_state_prefix))]
     pub async fn promote_pending_changes(&mut self) -> Result<Vec<(K, V)>, Report> {
         // Promote any pending changes older than now - config.delay to the canonical state by
@@ -127,6 +149,7 @@ where
         Ok(promoted)
     }
 
+    /// Cast a vote to change the given key to the given value.
     #[instrument(skip(self, party, time, key, value), fields(queue = self.internal_state_prefix))]
     pub async fn cast(
         &mut self,
@@ -260,6 +283,7 @@ where
         Ok(())
     }
 
+    /// Get the pending change for the given key, if it exists.
     pub async fn pending_for_key(&self, key: K) -> Result<Option<V>, Report> {
         let key = String::from(key);
         let pending = self
@@ -279,6 +303,11 @@ where
         }
     }
 
+    /// Get the pending change for the given key or any keys with the given prefix, delimited by the
+    /// given character.
+    ///
+    /// For example, with a delimiter of '.', a prefix of "com" would match "com.example" and
+    /// "com.test", but not "comexample".
     pub async fn pending_for_key_prefix(
         &self,
         prefix: K,
@@ -303,6 +332,7 @@ where
         Ok(pending)
     }
 
+    /// Get all currently active votes for the given key.
     pub async fn votes_for_key(&self, key: K) -> Result<Vec<Vote<K, V>>, Report> {
         let votes = self
             .state
@@ -326,6 +356,11 @@ where
         Ok(votes)
     }
 
+    /// Get all currently active votes for keys with the given prefix, delimited by the given
+    /// character.
+    ///
+    /// For example, with a delimiter of '.', a prefix of "com" would match "com.example"
+    /// and "com.test", but not "comexample".
     pub async fn votes_for_key_prefix(
         &self,
         prefix: K,

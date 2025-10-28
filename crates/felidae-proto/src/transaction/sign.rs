@@ -1,3 +1,7 @@
+//! We use NIST P-256 ECDSA signatures over SHA-256 hashes for transaction signing throughout
+//! Felidae, as this is widely supported by a variety of environments including web browsers and
+//! hardware security modules.
+
 use std::{any::Any, collections::HashMap};
 
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};

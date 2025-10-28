@@ -1,3 +1,12 @@
+//! This tiny crate is a utility for creating signed witness transactions in Felidae.
+//!
+//! It exposes a single function, `witness`, which takes the necessary parameters
+//! and returns a signed transaction as a hex-encoded string, ready to submit to a node.
+//!
+//! It can be compiled to WebAssembly for use in web browsers or other WASM environments, as well as
+//! used in native Rust code. Due to the cross-compilation requirements, it has a slightly more
+//! stringly-typed interface than otherwise one might prefer.
+
 use serde::{Deserialize, Serialize};
 
 use sha2::Digest;

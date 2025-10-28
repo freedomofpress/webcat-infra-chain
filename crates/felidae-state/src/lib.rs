@@ -1,3 +1,8 @@
+//! All of the on-chain logic for the Felidae state machine.
+//
+// This crate goes all the way from the ABCI interface down to the storage layer, defining the core
+// state machine logic for the chain.
+
 #[macro_use]
 extern crate tracing;
 
@@ -43,6 +48,11 @@ pub use vote_queue::{Vote, VoteQueue};
 /// ABCI service implementation for [`State`].
 mod abci;
 
+/// A wrapper around a storage backend that provides domain-specific methods for accessing and
+/// modifying the state.
+///
+/// Always prefer to use `State` over directly using the storage backend, as `State` provides
+/// higher-level abstractions.
 #[derive(Debug, Clone)]
 pub struct State<S> {
     store: S,
@@ -124,13 +134,6 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             validators: request.validators,
             app_hash,
         })
-    }
-
-    /// Helper function to pad block heights for lexicographic ordering.
-    ///
-    /// Uses 20 digits to accommodate the full u64 range.
-    fn pad_height(height: Height) -> String {
-        format!("{:020}", height.value())
     }
 
     /// Begin a block, without committing yet.
@@ -1014,5 +1017,12 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             StateWriteExt::delete(&mut self.store, Canonical, &key);
         }
         Ok(())
+    }
+
+    /// Helper function to pad block heights for lexicographic ordering.
+    ///
+    /// Uses 20 digits to accommodate the full u64 range.
+    fn pad_height(height: Height) -> String {
+        format!("{:020}", height.value())
     }
 }

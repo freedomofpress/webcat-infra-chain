@@ -1,3 +1,29 @@
+//! We use protobuf as a canonical encoding for transactions and other data structures.
+//!
+//! This crate contains the protobuf definitions (as generated Rust code) as well as the
+//! [`DomainType`] trait for converting between domain types and their protobuf representations. The
+//! domain types themselves are defined in the `felidae-types` crate.
+//!
+//! # Signing and Verifying
+//!
+//! All signing and verification occurs on the protobuf representation of transactions. The domain
+//! types do not contain signatures; instead, signatures are added to and verified from the protobuf
+//! types. Furthermore, all signatures are over the protobuf encoding of the entire transaction with
+//! signatures removed. This prevents malleability attacks by construction.
+//!
+//! In order to facilitate this, the protobuf types have methods for signing and verifying
+//! transactions, as well as for serializing and deserializing them to and from both protobuf binary
+//! format and JSON format. The domain types have convenience methods that delegate to the protobuf
+//! methods for signing and verifying.
+//!
+//! As an end-user of this system, all you need to do is to add a
+//! `felidae_proto::transaction::Signature` wherever you need a signature in any new protobuf
+//! message, and then whenever you use `sign_to_proto`, `sign_to_json`, `authenticate_from_proto`,
+//! or `authenticate_from_json`, the signatures will be handled automatically, since transaction
+//! signing traverses the entire structure of the protobuf type looking for
+//! `felidae_proto::transaction::Signature` to sign. You will of course need to provide a `Signer`
+//! implementation that knows how to sign for the relevant public keys.
+
 pub mod transaction {
     include!(concat!(env!("OUT_DIR"), "/felidae.transaction.rs"));
 

@@ -1,18 +1,26 @@
+//! A generic traversal trait permitting a type to be visited recursively by reference or by mutable
+//! reference.
+//!
+//! This is used internally in Felidae to permit signatures to bind the entire outer transaction.
+
 use prost::bytes::Bytes;
 use std::any::Any;
 
+/// A trait for types that can be visited recursively.
 pub trait Traverse: Sized + 'static {
+    /// Traverse the type by reference, calling the given function on each visited node.
     fn traverse(&self, f: &mut impl FnMut(&dyn Any)) {
         f(self as &dyn Any);
     }
 
+    /// Traverse the type by mutable reference, calling the given function on each visited node.
     fn traverse_mut(&mut self, f: &mut impl FnMut(&mut dyn Any)) {
         f(self as &mut dyn Any);
     }
 }
 
+/// Implement Traverse for a reference type.
 macro_rules! references {
-    // Allow for defining reference types like Box, Arc, etc.
     ($($t:tt),*) => {
         $(
             impl<T: Traverse> Traverse for $t<T> {
@@ -30,6 +38,7 @@ macro_rules! references {
     };
 }
 
+/// Implement Traverse for a type that can be iterated over.
 macro_rules! collections {
     ($($t:tt),*) => {
         $(
@@ -52,6 +61,7 @@ macro_rules! collections {
     };
 }
 
+/// Implement Traverse for a type that contains nothing traversable within.
 macro_rules! primitives {
     ($($t:ty),*) => {
         $(
@@ -59,6 +69,9 @@ macro_rules! primitives {
         )*
     };
 }
+
+// Implement Traverse for reference types, collections, and primitive types of relevance to
+// generated protobuf code. Add more `std` types here as needed:
 
 references! { Box }
 collections! { Option, Vec }

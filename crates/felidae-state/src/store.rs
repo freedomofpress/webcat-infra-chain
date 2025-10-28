@@ -14,18 +14,30 @@ use tokio::sync::RwLock;
 
 use crate::State;
 
+/// The mutable state backend for the Felidae node.
 #[derive(Debug, Clone)]
 pub struct Store {
+    /// The underlying storage backend.
+    ///
+    /// If you just want to read from storage without pending changes, use
+    /// `store.storage.latest_snapshot()`, which implements `StateRead`.
     pub storage: Storage,
+    /// The in-memory mutable state, yet to be applied to the storage.
     pub state: Arc<RwLock<State<StateDelta<Snapshot>>>>,
 }
 
+/// We have 2 substores: internal and canonical. When accessing state data, you must specify which
+/// substore you want to access.
+///
+/// The internal substore holds all data, including ephemeral and intermediate state. The canonical
+/// substore holds only the finalized, current mapping of domains to enrollment hashes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Substore {
     Internal,
     Canonical,
 }
 
+/// The 3 root hashes: internal, canonical, and app hash (equal to the hash of the main state).
 pub struct RootHashes {
     pub internal: RootHash,
     pub canonical: RootHash,
@@ -143,6 +155,9 @@ impl Store {
     }
 
     /// Create a logical fork of the store.
+    ///
+    /// Changes made to the fork will not affect the original store. Changes made to the original store
+    /// after the fork is created will not be visible in the fork until the fork is aborted.
     pub async fn fork(&mut self) -> Self {
         let fork = self.state.write().await.store.fork();
         Self {
@@ -154,6 +169,8 @@ impl Store {
 
 impl<T> StateReadExt for T where T: StateRead + Send + Sync + 'static {}
 
+/// Extension trait adding *typed* access methods to any `StateRead` implementation, using our
+/// domain types.
 pub trait StateReadExt: StateRead + Send + Sync + 'static {
     /// Get a value from the state by key, decoding it into the given domain type.
     fn get<V: DomainType>(
@@ -271,6 +288,9 @@ pub trait StateReadExt: StateRead + Send + Sync + 'static {
 }
 
 impl<T> StateWriteExt for T where T: StateWrite + Send + Sync + 'static {}
+
+/// Extension trait adding *typed* access methods to any `StateWrite` implementation, using our
+/// domain types.
 pub trait StateWriteExt: StateWrite + Send + Sync + 'static {
     /// Set a value in the state by key, encoding it from the given domain type.
     fn put<V: DomainType + Debug>(&mut self, substore: Substore, key: &str, value: V)

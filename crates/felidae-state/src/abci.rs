@@ -8,6 +8,12 @@ use tendermint::{abci::Code, block::Height, v0_34::abci};
 use tower::{BoxError, Service};
 use tracing::Instrument;
 
+/// This is where we translate ABCI requests into calls into our Store implementation.
+///
+/// It is relatively straightforward, mapping each ABCI request to the corresponding method on the
+/// Store's State. The *MOST IMPORTANT THING* to note is that CheckTx *must not* modify the state;
+/// instead, it should fork the state and apply the transaction to the forked state only, discarding
+/// any ephemeral changes afterwards.
 impl Service<tendermint::v0_34::abci::Request> for crate::Store {
     type Response = tendermint::v0_34::abci::Response;
     type Error = BoxError;

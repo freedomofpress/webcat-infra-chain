@@ -1,3 +1,7 @@
+//! A derive macro for the `Traverse` trait.
+
+// This file was co-authored with Claude.
+
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, Data, DeriveInput, Fields, Index};
