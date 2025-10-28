@@ -74,7 +74,8 @@ impl Service<tendermint::v0_34::abci::Request> for crate::Store {
                     Ok(abci::Response::BeginBlock(response))
                 }
                 abci::Request::CheckTx(check_tx) => {
-                    // Fork the state so we can run DeliverTx without affecting the original state.
+                    // !!! EXTREMELY IMPORTANT !!!
+                    // Fork the state so we can run DeliverTx without affecting the original state:
                     let store = store.fork().await;
 
                     let reject = |e: String| {
