@@ -1,5 +1,10 @@
 use super::*;
 
+// The canonical state maps each domain or subdomain to its most recently oracle-observed hash.
+//
+// This state is stored in prefix order, e.g. ".com.example" instead of "example.com", to allow
+// prefix searches for subdomains.
+
 impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     /// Get the canonical hash for a given subdomain, if it exists.
     pub async fn canonical_hash(&self, subdomain: Domain) -> Result<Option<[u8; 32]>, Report> {
