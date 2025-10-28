@@ -4,17 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-felidae-proto = { path = "../felidae-proto" }
 felidae-types = { path = "../felidae-types" }
 felidae-state = { path = "../felidae-state" }
 felidae-admin = { path = "../felidae-admin" }
 felidae-oracle = { path = "../felidae-oracle" }
-prost = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 tower-abci = { workspace = true }
-tower = { workspace = true }
 tendermint = { workspace = true }
 color-eyre = { workspace = true }
 tracing = { workspace = true }
@@ -24,13 +21,8 @@ directories = { workspace = true }
 axum = { workspace = true }
 reqwest = { workspace = true }
 hex = { workspace = true }
-parking_lot = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
 humantime = { workspace = true }
-json-rpc-types = { workspace = true }
-canonical_json = { workspace = true }
-sha2 = { workspace = true }
 serde_with = { workspace = true }
 fqdn = { workspace = true }
-tower-http = { workspace = true }

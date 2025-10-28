@@ -5,13 +5,10 @@ edition = "2024"
 
 [dependencies]
 felidae-types = { path = "../felidae-types" }
-prost = { workspace = true }
 thiserror = { workspace = true }
 fqdn = { workspace = true }
 hex = { workspace = true }
 wasm-bindgen = { workspace = true }
-js-sys = { workspace = true }
-web-sys = { workspace = true }
 getrandom = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }

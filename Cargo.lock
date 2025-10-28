@@ -934,33 +934,25 @@ name = "felidae"
 version = "0.1.0"
 dependencies = [
  "axum",
- "canonical_json",
  "clap",
  "cnidarium",
  "color-eyre",
  "directories",
  "felidae-admin",
  "felidae-oracle",
- "felidae-proto",
  "felidae-state",
  "felidae-types",
  "fqdn",
  "futures",
  "hex",
  "humantime",
- "json-rpc-types",
- "parking_lot",
- "prost 0.13.5",
  "reqwest",
  "serde",
  "serde_json",
  "serde_with",
- "sha2 0.10.9",
  "tendermint",
  "tokio",
- "tower",
  "tower-abci",
- "tower-http",
  "tracing",
  "tracing-subscriber",
 ]
@@ -984,14 +976,11 @@ dependencies = [
  "fqdn",
  "getrandom 0.2.16",
  "hex",
- "js-sys",
- "prost 0.13.5",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.16",
  "wasm-bindgen",
- "web-sys",
 ]
 
 [[package]]
@@ -1001,14 +990,12 @@ dependencies = [
  "bytes",
  "color-eyre",
  "ecdsa",
- "elliptic-curve",
  "felidae-traverse",
  "felidae-traverse-derive",
  "p256",
  "pkcs8",
  "prost 0.13.5",
  "prost-build",
- "prost-types",
  "rand_core",
  "serde",
  "serde_json",
@@ -1062,7 +1049,6 @@ dependencies = [
  "hex",
  "humantime-serde",
  "insta",
- "parking_lot",
  "prost 0.13.5",
  "serde",
  "serde_json",
@@ -2115,16 +2101,6 @@ checksum = "ec48937a97411dcb524a265206ccd4c90bb711fca92b2792c407f268825b9305"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "json-rpc-types"
-version = "1.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39b0afa580009398a55539cbd8f7cebe94c1a12033cf3025d7d6a95c4bdef9b9"
-dependencies = [
- "serde",
- "str-buf",
 ]
 
 [[package]]
@@ -3418,15 +3394,6 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
-
-[[package]]
-name = "str-buf"
-version = "3.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ceb97b7225c713c2fd4db0153cb6b3cab244eb37900c3f634ed4d43310d8c34"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "strsim"
