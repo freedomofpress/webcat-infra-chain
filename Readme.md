@@ -30,6 +30,10 @@ itself. The mechanism for triggering an oracle observation of a domain is extern
 itself and oracles are separate entities which may be hosted on different infrastructure than chain
 nodes. This canonical state is internally stored by domain or subdomain in prefix-order, i.e.
 `.com.example` instead of `example.com`, to facilitate efficient prefix lookups of all subdomains.
+An API server for querying this state and other internal states of interest is hosted by the
+`felidae` binary: go to `/snapshot` for the current full snapshot, or (for example) to
+`/snapshot/example.com` for a filtered view showing the snapshot only for `example.com` and all its
+subdomains. Other endpoints are described where declared in `crates/felidae/src/cli/start/query.rs`.
 
 When a domain owner wishes to enroll or unenroll their domain in the WEBCAT chain, they must
 interact with a *frontend* (not yet built) which will communicate with all known and reachable
