@@ -41,6 +41,7 @@ pub struct VoteQueue<'a, S, K, V> {
     _value: std::marker::PhantomData<fn(&V)>,
 }
 
+#[derive(Clone)]
 pub struct Vote<K, V> {
     pub party: String,
     pub time: Time,
@@ -388,5 +389,114 @@ where
             .try_collect::<Vec<_>>()
             .await?;
         Ok(votes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::Store;
+    use felidae_types::transaction::{ChainId, Delay, Quorum, Timeout, Total};
+    use std::time::Duration;
+    use tempfile::TempDir;
+
+    use proptest::prelude::*;
+
+    /// Helper function to set up a test state with block height and time configured
+    async fn setup_test_state() -> (Store, Time) {
+        let temp_dir = TempDir::new().expect("failed to create temp dir");
+        let store = Store::init(temp_dir.path().to_path_buf())
+            .await
+            .expect("failed to create store");
+
+        let mut state_guard = store.state.write().await;
+
+        // Set block height first (required before setting block time)
+        use tendermint::block::Height;
+        state_guard
+            .set_block_height(Height::from(1u32))
+            .await
+            .expect("failed to set block height");
+
+        // Set block time so timeout_expired_votes and promote_pending_changes work
+        // Note: vote times are truncated to seconds when stored, so we truncate here too
+        let block_time =
+            Time::from_unix_timestamp(Time::now().unix_timestamp(), 0).expect("valid timestamp");
+        state_guard
+            .set_block_time(block_time)
+            .await
+            .expect("failed to set block time");
+
+        drop(state_guard); // Release the lock
+
+        (store, block_time)
+    }
+
+    #[test]
+    fn proptest_single_vote_cast_and_retrieval_below_quorum() {
+        let mut config = proptest::test_runner::Config::default();
+        config.cases = 100; // Limit to 100 test cases
+        proptest!(config, |(
+            total in 1u64..=100u64,
+            quorum in 1u64..=100u64,
+            key in "[a-zA-Z0-9_]+",
+            value in "[a-zA-Z0-9_]+",
+            party in "[a-zA-Z0-9_]+",
+        )| {
+            // Ensure quorum < total and quorum > 1 (so single vote doesn't reach quorum)
+            let total = total.max(3); // Need at least 3 for quorum < total and quorum > 1
+            let quorum = quorum.min(total.saturating_sub(1)).max(2); // quorum must be at least 2
+
+            let rt = tokio::runtime::Runtime::new().expect("runtime");
+            rt.block_on(async {
+                let (store, block_time) = setup_test_state().await;
+                let mut state_guard = store.state.write().await;
+
+                let config = VotingConfig {
+                    total: Total(total),
+                    quorum: Quorum(quorum),
+                    timeout: Timeout(Duration::from_secs(3600)),
+                    delay: Delay(Duration::from_secs(86400)),
+                };
+
+                let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", config);
+
+                let vote = Vote {
+                    party: party.clone(),
+                    time: block_time,
+                    key: ChainId(key.clone()),
+                    value: ChainId(value.clone()),
+                };
+
+                vote_queue
+                    .cast(vote.clone())
+                    .await
+                    .map_err(|e| proptest::test_runner::TestCaseError::fail(format!("cast failed: {e}")))?;
+
+                // Property: After casting a vote, it should be retrievable
+                let votes = vote_queue
+                    .votes_for_key(ChainId(key.clone()))
+                    .await
+                    .map_err(|e| proptest::test_runner::TestCaseError::fail(format!("get votes failed: {e}")))?;
+
+                prop_assert_eq!(votes.len(), 1, "should have exactly one vote");
+                prop_assert_eq!(votes[0].party.clone(), party.clone());
+                prop_assert_eq!(votes[0].key.clone(), ChainId(key.clone()));
+                prop_assert_eq!(votes[0].value.clone(), ChainId(value.clone()));
+                prop_assert_eq!(votes[0].time, block_time);
+
+                // Property: Vote should also be retrievable via prefix query
+                let votes_by_prefix = vote_queue
+                    .votes_for_key_prefix(ChainId(key.clone()), None)
+                    .await
+                    .map_err(|e| proptest::test_runner::TestCaseError::fail(format!("get votes by prefix failed: {e}")))?;
+
+                prop_assert_eq!(votes_by_prefix.len(), 1, "should find vote via key prefix");
+                prop_assert_eq!(votes_by_prefix[0].party.clone(), party.clone());
+                prop_assert_eq!(votes_by_prefix[0].value.clone(), ChainId(value.clone()));
+
+                Ok(())
+            })?;
+        });
     }
 }
