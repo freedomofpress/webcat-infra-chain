@@ -350,3 +350,136 @@ fn proptest_multiple_values_competing() {
         })?;
     });
 }
+
+#[test]
+fn proptest_quorum_with_vote_replacement() {
+    let config = proptest::test_runner::Config {
+        cases: 100, // Limit to 100 test cases
+        ..Default::default()
+    };
+    proptest!(config, |(
+        total in 3u64..=100u64,
+        quorum in 3u64..=100u64,
+        key in "[a-zA-Z0-9_]+",
+        value_a in "[a-zA-Z0-9_]+",
+        value_b in "[a-zA-Z0-9_]+",
+    )| {
+        if value_a == value_b {
+            return Ok(());
+        }
+
+        let quorum = quorum.min(total).max(3);
+        let votes_needed = quorum + 1;
+        if votes_needed > total {
+            return Ok(());
+        }
+
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        rt.block_on(async {
+            let (store, block_time) = setup_test_state().await;
+            let mut state_guard = store.state.write().await;
+
+            let config = VotingConfig {
+                total: Total(total),
+                quorum: Quorum(quorum),
+                timeout: Timeout(Duration::from_secs(3600)),
+                delay: Delay(Duration::from_secs(86400)),
+            };
+
+            let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", config);
+
+            let mut party_counter = 0u64;
+            let mut next_party = || {
+                let name = format!("party_{}", party_counter);
+                party_counter += 1;
+                name
+            };
+
+        // We cast quorum - 1 votes for value A
+        let mut parties_a = Vec::new();
+        for i in 0..(quorum - 1) {
+                let vote_time = Time::from_unix_timestamp(
+                    block_time.unix_timestamp() + i as i64,
+                    0,
+                ).expect("valid timestamp");
+
+                let party = next_party();
+                let vote = Vote {
+                    party: party.clone(),
+                    time: vote_time,
+                    key: ChainId(key.clone()),
+                    value: ChainId(value_a.clone()),
+                };
+
+                vote_queue
+                    .cast(vote)
+                    .await
+                    .map_err(|e| proptest::test_runner::TestCaseError::fail(format!("cast vote A failed: {e}")))?;
+
+                parties_a.push(party);
+            }
+
+            // The first party replaces value A with value B (so now there are quorum - 2 votes for value A)
+            let replacement_party = parties_a[0].clone();
+            let replacement_time = Time::from_unix_timestamp(
+                block_time.unix_timestamp() + (quorum - 1) as i64,
+                0,
+            ).expect("valid timestamp");
+            let replacement_vote = Vote {
+                party: replacement_party.clone(),
+                time: replacement_time,
+                key: ChainId(key.clone()),
+                value: ChainId(value_b.clone()),
+            };
+            vote_queue
+                .cast(replacement_vote)
+                .await
+                .map_err(|e| proptest::test_runner::TestCaseError::fail(format!("cast replacement vote failed: {e}")))?;
+
+            // Then we cast 2 more votes for value A, to reach quorum.
+            for offset in 0..2 {
+                let final_party = next_party();
+                let final_time = Time::from_unix_timestamp(
+                    block_time.unix_timestamp() + (quorum + offset) as i64,
+                    0,
+                ).expect("valid timestamp");
+                let final_vote = Vote {
+                    party: final_party.clone(),
+                    time: final_time,
+                    key: ChainId(key.clone()),
+                    value: ChainId(value_a.clone()),
+                };
+                vote_queue
+                    .cast(final_vote)
+                    .await
+                    .map_err(|e| proptest::test_runner::TestCaseError::fail(format!("cast additional vote failed: {e}")))?;
+            }
+
+            let pending = vote_queue
+                .pending_for_key(ChainId(key.clone()))
+                .await
+                .map_err(|e| proptest::test_runner::TestCaseError::fail(format!("get pending failed: {e}")))?;
+            prop_assert!(
+                pending.is_some(),
+                "value should be pending after quorum is reached"
+            );
+            prop_assert_eq!(
+                pending.unwrap(),
+                ChainId(value_a.clone()),
+                "pending value should be the one that maintained quorum"
+            );
+
+            let votes = vote_queue
+                .votes_for_key(ChainId(key.clone()))
+                .await
+                .map_err(|e| proptest::test_runner::TestCaseError::fail(format!("get votes failed: {e}")))?;
+            prop_assert_eq!(
+                votes.len(),
+                0,
+                "all votes should be cleared once quorum is reached"
+            );
+
+            Ok(())
+        })?;
+    });
+}
