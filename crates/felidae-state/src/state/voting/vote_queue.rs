@@ -15,6 +15,9 @@ use crate::store::{StateReadExt, StateWriteExt};
 /// Key construction and parsing functions for the vote queue.
 mod keys;
 
+#[cfg(test)]
+mod tests;
+
 /// A vote queue is a *view* on the underlying state which manages a voting process for changes to
 /// other parts of the state.
 ///
@@ -41,6 +44,7 @@ pub struct VoteQueue<'a, S, K, V> {
     _value: std::marker::PhantomData<fn(&V)>,
 }
 
+#[derive(Clone)]
 pub struct Vote<K, V> {
     pub party: String,
     pub time: Time,
