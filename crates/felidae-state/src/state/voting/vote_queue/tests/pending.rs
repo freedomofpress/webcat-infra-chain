@@ -1,0 +1,111 @@
+use super::super::*;
+use super::common::setup_test_state;
+use felidae_types::transaction::{ChainId, Delay, Quorum, Timeout, Total};
+use std::time::Duration;
+
+#[test]
+fn test_pending_change_promotion() {
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(async {
+        let (store, initial_block_time) = setup_test_state().await;
+        let mut state_guard = store.state.write().await;
+
+        let delay = Duration::from_secs(86400); // We set 1 day
+        let config = VotingConfig {
+            total: Total(10),
+            quorum: Quorum(3),
+            timeout: Timeout(Duration::from_secs(3600)),
+            delay: Delay(delay),
+        };
+
+        let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", config);
+
+        // Cast quorum votes to create a pending change
+        // Use a timestamp that's old enough (e.g., 2 days ago, as long as its greater than the delay we are good)
+        let old_timestamp = initial_block_time.unix_timestamp() - (2 * 86400);
+        let pending_time = Time::from_unix_timestamp(old_timestamp, 0).expect("valid timestamp");
+
+        let key = ChainId("test_key".to_string());
+        let value = ChainId("test_value".to_string());
+
+        // Cast exactly quorum votes for the same key and value
+        // Track the last vote time - this is what will be used as the pending change timestamp
+        let mut last_vote_time = pending_time;
+        for i in 0..3 {
+            let vote_time = Time::from_unix_timestamp(pending_time.unix_timestamp() + i as i64, 0)
+                .expect("valid timestamp");
+            last_vote_time = vote_time;
+
+            let vote = Vote {
+                party: format!("party_{}", i),
+                time: vote_time,
+                key: key.clone(),
+                value: value.clone(),
+            };
+
+            vote_queue.cast(vote).await.expect("cast vote failed");
+        }
+
+        // Verify pending change exists
+        let pending = vote_queue
+            .pending_for_key(key.clone())
+            .await
+            .expect("get pending failed");
+        assert!(
+            pending.is_some(),
+            "should have pending change after quorum reached"
+        );
+        assert_eq!(
+            pending.unwrap(),
+            value.clone(),
+            "pending value should match the voted value"
+        );
+
+        // Advance block time past the delay
+        // The pending change was created with the timestamp of the last vote (last_vote_time),
+        // so we need block_time > last_vote_time + delay
+        let new_block_time = Time::from_unix_timestamp(
+            last_vote_time.unix_timestamp() + delay.as_secs() as i64 + 1,
+            0,
+        )
+        .expect("valid timestamp");
+
+        state_guard
+            .set_block_time(new_block_time)
+            .await
+            .expect("failed to set block time");
+
+        // Recreate vote_queue (the previous one was dropped) to call promote_pending_changes()
+        let config2 = VotingConfig {
+            total: Total(10),
+            quorum: Quorum(3),
+            timeout: Timeout(Duration::from_secs(3600)),
+            delay: Delay(delay),
+        };
+        let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
+            VoteQueue::new(&mut *state_guard, "test_queue", config2);
+        let promoted = vote_queue
+            .promote_pending_changes()
+            .await
+            .expect("promote_pending_changes failed");
+
+        // Verify it's returned
+        assert_eq!(
+            promoted.len(),
+            1,
+            "should return exactly one promoted change"
+        );
+        assert_eq!(promoted[0].0, key.clone(), "promoted key should match");
+        assert_eq!(promoted[0].1, value.clone(), "promoted value should match");
+
+        // Verify it's removed from pending queue
+        let pending_after = vote_queue
+            .pending_for_key(key.clone())
+            .await
+            .expect("get pending failed");
+        assert!(
+            pending_after.is_none(),
+            "pending change should be removed after promotion"
+        );
+    });
+}
