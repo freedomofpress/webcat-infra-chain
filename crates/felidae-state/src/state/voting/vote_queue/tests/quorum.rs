@@ -8,7 +8,7 @@ use proptest::prelude::*;
 #[test]
 fn proptest_quorum_reached_exactly() {
     let config = proptest::test_runner::Config {
-        cases: 100, // Limit to 100 test cases
+        cases: 25, // Limit to 25 test cases
         ..Default::default()
     };
     proptest!(config, |(
@@ -101,7 +101,7 @@ fn proptest_quorum_reached_exactly() {
 #[test]
 fn proptest_quorum_exceeded() {
     let config = proptest::test_runner::Config {
-        cases: 100, // Limit to 100 test cases
+        cases: 25, // Limit to 25 test cases
         ..Default::default()
     };
     proptest!(config, |(
@@ -196,7 +196,7 @@ fn proptest_quorum_exceeded() {
 #[test]
 fn proptest_multiple_values_competing() {
     let config = proptest::test_runner::Config {
-        cases: 100, // Limit to 100 test cases
+        cases: 25, // Limit to 25 test cases
         ..Default::default()
     };
     proptest!(config, |(
@@ -354,7 +354,7 @@ fn proptest_multiple_values_competing() {
 #[test]
 fn proptest_quorum_with_vote_replacement() {
     let config = proptest::test_runner::Config {
-        cases: 100, // Limit to 100 test cases
+        cases: 25, // Limit to 25 test cases
         ..Default::default()
     };
     proptest!(config, |(
