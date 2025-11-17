@@ -11,9 +11,10 @@ async fn test_vote_expiration_removes_votes_and_indexes() {
     let mut state_guard = store.state.write().await;
 
     let timeout = Duration::from_secs(3600);
+    // Use quorum equal to total so that the test votes never reach quorum (and thus remain in the vote queue).
     let make_config = || VotingConfig {
         total: Total(10),
-        quorum: Quorum(2),
+        quorum: Quorum(10),
         timeout: Timeout(timeout),
         delay: Delay(Duration::from_secs(86400)),
     };
