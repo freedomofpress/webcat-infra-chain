@@ -250,20 +250,37 @@ where
             );
         }
 
-        // Delete any existing pending changes for this key:
+        // Check for existing pending changes for this key:
         let pending_changes = self
             .state
             .store
             .prefix::<V>(Internal, &self.pending_by_key_prefix(&key, true))
             .map(|result| {
-                let (key, _value) = result?;
+                let (key, value) = result?;
                 let (_key, time) = self.parse_pending_by_key_timestamp(&key)?;
-                Ok::<_, Report>(time)
+                Ok::<_, Report>((time, value))
             })
             .try_collect::<Vec<_>>()
             .await?;
-        for time in pending_changes {
-            info!(key, %time, "overwriting existing pending change");
+
+        // If there's an existing pending change with the same value, drop the new entry
+        // to prevent resetting the timer (which would allow an attacker to prevent enrollment)
+        for (_time, existing_value) in &pending_changes {
+            if *existing_value == *winning_value {
+                info!(
+                    key,
+                    ?winning_value,
+                    "dropping new pending change with same value as existing; timer not reset"
+                );
+                // Votes have already been deleted above, so we just return early
+                // without creating a new pending entry
+                return Ok(());
+            }
+        }
+
+        // Delete any existing pending changes for this key (they have different values):
+        for (time, _existing_value) in pending_changes {
+            info!(key, %time, "overwriting existing pending change with different value");
             let delete_key = self.pending_by_key_timestamp(&key, time);
             StateWriteExt::delete(&mut self.state.store, Internal, &delete_key);
 
