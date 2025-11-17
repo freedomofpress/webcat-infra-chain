@@ -178,3 +178,95 @@ async fn test_vote_expiration_boundary_behavior() {
         );
     }
 }
+
+#[ignore]
+// Ignored this test because it currently fails, see: https://github.com/freedomofpress/webcat-infra-chain/issues/27
+#[tokio::test]
+async fn test_delay_boundary_behavior() {
+    let (store, initial_block_time) = setup_test_state().await;
+    let mut state_guard = store.state.write().await;
+
+    let delay = Duration::from_secs(86400);
+    let make_config = || VotingConfig {
+        total: Total(10),
+        quorum: Quorum(3),
+        timeout: Timeout(Duration::from_secs(3600)),
+        delay: Delay(delay),
+    };
+
+    let key = ChainId("key_delay_boundary".to_string());
+    let value = ChainId("value_delay_boundary".to_string());
+
+    {
+        let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
+            VoteQueue::new(&mut *state_guard, "test_queue", make_config());
+
+        // Create a pending change exactly at the delay boundary.
+        // The pending change timestamp is set to the vote that triggers quorum (the last vote).
+        // We want the last vote to be exactly `delay` seconds before the current block time.
+        let boundary_time = Time::from_unix_timestamp(
+            initial_block_time.unix_timestamp() - delay.as_secs() as i64,
+            0,
+        )
+        .expect("valid boundary timestamp");
+
+        // Cast quorum votes, with the last vote (i=2) at the boundary time
+        for i in 0..3 {
+            let vote_time = if i == 2 {
+                boundary_time // Last vote at boundary
+            } else {
+                Time::from_unix_timestamp(boundary_time.unix_timestamp() - 10 + i as i64, 0)
+                    .expect("valid timestamp")
+            };
+            vote_queue
+                .cast(Vote {
+                    party: format!("party_{i}"),
+                    time: vote_time,
+                    key: key.clone(),
+                    value: value.clone(),
+                })
+                .await
+                .expect("cast vote");
+        }
+
+        // Verify pending change exists
+        let pending = vote_queue
+            .pending_for_key(key.clone())
+            .await
+            .expect("get pending should succeed");
+        assert!(
+            pending.is_some(),
+            "should have pending change after quorum reached"
+        );
+    }
+
+    // Set current block time to initial_block_time (same as setup), so the pending change is exactly delay seconds old.
+    {
+        let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
+            VoteQueue::new(&mut *state_guard, "test_queue", make_config());
+
+        let promoted = vote_queue
+            .promote_pending_changes()
+            .await
+            .expect("promote_pending_changes should succeed");
+
+        // The pending change at the boundary should be promoted once the delay has elapsed
+        assert_eq!(
+            promoted.len(),
+            1,
+            "pending change at the delay boundary should be promoted when delay has elapsed"
+        );
+        assert_eq!(promoted[0].0, key.clone(), "promoted key should match");
+        assert_eq!(promoted[0].1, value.clone(), "promoted value should match");
+
+        // Verify it's removed from the pending queue
+        let pending = vote_queue
+            .pending_for_key(key.clone())
+            .await
+            .expect("get pending after boundary check should succeed");
+        assert!(
+            pending.is_none(),
+            "boundary pending change should be removed after promotion"
+        );
+    }
+}
