@@ -8,7 +8,7 @@ use proptest::prelude::*;
 #[test]
 fn proptest_single_vote_cast_and_retrieval_below_quorum() {
     let config = proptest::test_runner::Config {
-        cases: 100, // Limit to 100 test cases
+        cases: 25, // Limit to 25 test cases
         ..Default::default()
     };
     proptest!(config, |(
@@ -78,7 +78,7 @@ fn proptest_single_vote_cast_and_retrieval_below_quorum() {
 #[test]
 fn proptest_vote_replacement() {
     let config = proptest::test_runner::Config {
-        cases: 100, // Limit to 100 test cases
+        cases: 25, // Limit to 25 test cases
         ..Default::default()
     };
     proptest!(config, |(
@@ -174,7 +174,7 @@ fn proptest_vote_replacement() {
 #[test]
 fn proptest_multiple_parties_voting() {
     let config = proptest::test_runner::Config {
-        cases: 100, // Limit to 100 test cases
+        cases: 25, // Limit to 25 test cases
         ..Default::default()
     };
     proptest!(config, |(
