@@ -94,3 +94,87 @@ async fn test_vote_expiration_removes_votes_and_indexes() {
         "expired votes should be removed from the timestamp index"
     );
 }
+
+#[ignore]
+// Ignored this test because it currently fails, see: https://github.com/freedomofpress/webcat-infra-chain/issues/27
+#[tokio::test]
+async fn test_vote_expiration_boundary_behavior() {
+    let (store, initial_block_time) = setup_test_state().await;
+    let mut state_guard = store.state.write().await;
+
+    let timeout = Duration::from_secs(3600);
+    let make_config = || VotingConfig {
+        total: Total(10),
+        quorum: Quorum(10), // Prevent promotion
+        timeout: Timeout(timeout),
+        delay: Delay(Duration::from_secs(86400)),
+    };
+
+    let key = ChainId("key_boundary".to_string());
+    let value_old = ChainId("value_old".to_string());
+    let value_new = ChainId("value_new".to_string());
+
+    {
+        let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
+            VoteQueue::new(&mut *state_guard, "test_queue", make_config());
+
+        // Vote exactly at the timeout boundary.
+        let boundary_time = Time::from_unix_timestamp(
+            initial_block_time.unix_timestamp() - timeout.as_secs() as i64,
+            0,
+        )
+        .expect("valid boundary timestamp");
+        vote_queue
+            .cast(Vote {
+                party: "boundary_party".to_string(),
+                time: boundary_time,
+                key: key.clone(),
+                value: value_old.clone(),
+            })
+            .await
+            .expect("cast boundary vote");
+
+        // Slightly newer vote that should remain after timeout.
+        let newer_time = Time::from_unix_timestamp(
+            initial_block_time.unix_timestamp() - timeout.as_secs() as i64 + 10,
+            0,
+        )
+        .expect("valid newer timestamp");
+        vote_queue
+            .cast(Vote {
+                party: "newer_party".to_string(),
+                time: newer_time,
+                key: key.clone(),
+                value: value_new.clone(),
+            })
+            .await
+            .expect("cast newer vote");
+    }
+
+    // Set current block time to initial_block_time (same as setup), so the boundary vote is exactly timeout seconds old.
+    {
+        let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
+            VoteQueue::new(&mut *state_guard, "test_queue", make_config());
+
+        vote_queue
+            .timeout_expired_votes()
+            .await
+            .expect("timeout_expired_votes should succeed");
+
+        let votes = vote_queue
+            .votes_for_key(key.clone())
+            .await
+            .expect("get votes after boundary check");
+
+        assert_eq!(
+            votes.len(),
+            1,
+            "only the newer vote should remain when at the timeout boundary"
+        );
+        assert_eq!(
+            votes[0].value.clone(),
+            value_new,
+            "newer vote should be retained"
+        );
+    }
+}
