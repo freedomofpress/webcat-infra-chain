@@ -262,6 +262,155 @@ async fn test_pending_change_overwriting() {
 }
 
 #[tokio::test]
+async fn test_pending_change_same_value_no_reset() {
+    let (store, initial_block_time) = setup_test_state().await;
+    let mut state_guard = store.state.write().await;
+
+    let delay = Duration::from_secs(86400); // 1 day delay
+    let key = ChainId("test_key_same_value".to_string());
+    let value = ChainId("value_same".to_string());
+
+    let old_timestamp = initial_block_time.unix_timestamp() - (2 * 86400);
+    let base_time_initial =
+        Time::from_unix_timestamp(old_timestamp, 0).expect("valid timestamp for initial pending");
+    let mut last_vote_time_initial = base_time_initial;
+
+    // Create initial pending change
+    {
+        let config = VotingConfig {
+            total: Total(10),
+            quorum: Quorum(3),
+            timeout: Timeout(Duration::from_secs(3600)),
+            delay: Delay(delay),
+        };
+        let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
+            VoteQueue::new(&mut *state_guard, "test_queue", config);
+
+        for i in 0..3 {
+            let vote_time =
+                Time::from_unix_timestamp(base_time_initial.unix_timestamp() + i as i64, 0)
+                    .unwrap();
+            last_vote_time_initial = vote_time;
+            let vote = Vote {
+                party: format!("party_initial_{}", i),
+                time: vote_time,
+                key: key.clone(),
+                value: value.clone(),
+            };
+
+            vote_queue
+                .cast(vote)
+                .await
+                .expect("cast initial vote failed");
+        }
+
+        let pending_initial = vote_queue
+            .pending_for_key(key.clone())
+            .await
+            .expect("get pending failed");
+        assert_eq!(
+            pending_initial,
+            Some(value.clone()),
+            "initial pending should be set"
+        );
+    }
+
+    // Advance block time so the initial pending would be promotable if timer wasn't reset
+    let block_time_near_promotion = Time::from_unix_timestamp(
+        last_vote_time_initial.unix_timestamp() + delay.as_secs() as i64 - 10,
+        0,
+    )
+    .expect("valid timestamp near promotion");
+    state_guard
+        .set_block_time(block_time_near_promotion)
+        .await
+        .expect("failed to set block time near promotion");
+
+    // Cast quorum votes for the SAME value, which should NOT reset the timer
+    let base_time_second =
+        Time::from_unix_timestamp(last_vote_time_initial.unix_timestamp() + 100, 0).unwrap();
+    let mut last_vote_time_second = base_time_second;
+
+    {
+        let config_second = VotingConfig {
+            total: Total(10),
+            quorum: Quorum(3),
+            timeout: Timeout(Duration::from_secs(3600)),
+            delay: Delay(delay),
+        };
+        let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
+            VoteQueue::new(&mut *state_guard, "test_queue", config_second);
+
+        for i in 0..3 {
+            let vote_time =
+                Time::from_unix_timestamp(base_time_second.unix_timestamp() + i as i64, 0).unwrap();
+            last_vote_time_second = vote_time;
+            let vote = Vote {
+                party: format!("party_second_{}", i),
+                time: vote_time,
+                key: key.clone(),
+                value: value.clone(), // Same value
+            };
+
+            vote_queue
+                .cast(vote)
+                .await
+                .expect("cast second vote failed");
+        }
+
+        // Verify the pending change still exists with the same value
+        let pending_after = vote_queue
+            .pending_for_key(key.clone())
+            .await
+            .expect("get pending failed after same-value quorum");
+        assert_eq!(
+            pending_after,
+            Some(value.clone()),
+            "pending change should still exist with same value"
+        );
+    }
+
+    // Verify the timer was NOT reset: the pending change should still be promotable
+    // based on the original timestamp, not the new one
+    let block_time_after_original_delay = Time::from_unix_timestamp(
+        last_vote_time_initial.unix_timestamp() + delay.as_secs() as i64 + 1,
+        0,
+    )
+    .expect("valid timestamp after original delay");
+    // This should be BEFORE the second delay would expire
+    assert!(
+        block_time_after_original_delay.unix_timestamp()
+            < last_vote_time_second.unix_timestamp() + delay.as_secs() as i64,
+        "original delay should expire before second delay would"
+    );
+
+    state_guard
+        .set_block_time(block_time_after_original_delay)
+        .await
+        .expect("failed to set block time after original delay");
+
+    {
+        let config_promote = VotingConfig {
+            total: Total(10),
+            quorum: Quorum(3),
+            timeout: Timeout(Duration::from_secs(3600)),
+            delay: Delay(delay),
+        };
+        let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
+            VoteQueue::new(&mut *state_guard, "test_queue", config_promote);
+        let promoted = vote_queue
+            .promote_pending_changes()
+            .await
+            .expect("promote pending should succeed");
+        assert_eq!(
+            promoted,
+            vec![(key.clone(), value.clone())],
+            "should promote based on original timestamp, not reset timer"
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_multiple_pending_changes_partial_promotion() {
     let (store, initial_block_time) = setup_test_state().await;
     let mut state_guard = store.state.write().await;
