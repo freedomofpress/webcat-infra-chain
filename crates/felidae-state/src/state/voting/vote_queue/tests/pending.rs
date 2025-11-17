@@ -266,3 +266,155 @@ fn test_pending_change_overwriting() {
         }
     });
 }
+
+#[test]
+fn test_multiple_pending_changes_partial_promotion() {
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(async {
+        let (store, initial_block_time) = setup_test_state().await;
+        let mut state_guard = store.state.write().await;
+
+        let delay = Duration::from_secs(86400);
+        let key_a = ChainId("key_a".to_string());
+        let key_b = ChainId("key_b".to_string());
+        let value_a = ChainId("value_a".to_string());
+        let value_b = ChainId("value_b".to_string());
+
+        let old_timestamp = initial_block_time.unix_timestamp() - (3 * 86400);
+        let base_time_a =
+            Time::from_unix_timestamp(old_timestamp, 0).expect("valid timestamp for key A");
+        let base_time_b = Time::from_unix_timestamp(old_timestamp + 2 * 86400, 0)
+            .expect("valid timestamp for key B");
+        let mut last_vote_time_a = base_time_a;
+        let mut last_vote_time_b = base_time_b;
+
+        let make_config = || VotingConfig {
+            total: Total(10),
+            quorum: Quorum(3),
+            timeout: Timeout(Duration::from_secs(3600)),
+            delay: Delay(delay),
+        };
+        {
+            let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", make_config());
+
+            for i in 0..3 {
+                let vote_time =
+                    Time::from_unix_timestamp(base_time_a.unix_timestamp() + i as i64, 0)
+                        .expect("valid timestamp");
+                last_vote_time_a = vote_time;
+                vote_queue
+                    .cast(Vote {
+                        party: format!("party_a_{i}"),
+                        time: vote_time,
+                        key: key_a.clone(),
+                        value: value_a.clone(),
+                    })
+                    .await
+                    .expect("cast vote for key A");
+            }
+
+            for i in 0..3 {
+                let vote_time =
+                    Time::from_unix_timestamp(base_time_b.unix_timestamp() + i as i64, 0)
+                        .expect("valid timestamp");
+                last_vote_time_b = vote_time;
+                vote_queue
+                    .cast(Vote {
+                        party: format!("party_b_{i}"),
+                        time: vote_time,
+                        key: key_b.clone(),
+                        value: value_b.clone(),
+                    })
+                    .await
+                    .expect("cast vote for key B");
+            }
+
+            for (key, expected) in [
+                (key_a.clone(), value_a.clone()),
+                (key_b.clone(), value_b.clone()),
+            ] {
+                let pending = vote_queue
+                    .pending_for_key(key.clone())
+                    .await
+                    .expect("get pending failed");
+                assert_eq!(
+                    pending,
+                    Some(expected),
+                    "pending value should exist for {key:?}"
+                );
+            }
+        }
+
+        // Advance block time so only key A should be promotable.
+        let block_time_after_a = Time::from_unix_timestamp(
+            last_vote_time_a.unix_timestamp() + delay.as_secs() as i64 + 1,
+            0,
+        )
+        .expect("valid timestamp after key A");
+        assert!(
+            block_time_after_a.unix_timestamp()
+                < last_vote_time_b.unix_timestamp() + delay.as_secs() as i64,
+            "key B should still be waiting"
+        );
+        state_guard
+            .set_block_time(block_time_after_a)
+            .await
+            .expect("failed to set block time after key A");
+
+        {
+            let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", make_config());
+            let promoted = vote_queue
+                .promote_pending_changes()
+                .await
+                .expect("promote pending (first)");
+            assert_eq!(
+                promoted,
+                vec![(key_a.clone(), value_a.clone())],
+                "only key A should have promoted"
+            );
+
+            let pending_a = vote_queue
+                .pending_for_key(key_a.clone())
+                .await
+                .expect("get pending A failed");
+            assert!(
+                pending_a.is_none(),
+                "key A pending should be cleared after promotion"
+            );
+
+            let pending_b = vote_queue
+                .pending_for_key(key_b.clone())
+                .await
+                .expect("get pending B failed");
+            assert_eq!(
+                pending_b,
+                Some(value_b.clone()),
+                "key B pending should remain"
+            );
+        }
+
+        // Now advance block time so key B becomes promotable.
+        let block_time_after_b = Time::from_unix_timestamp(
+            last_vote_time_b.unix_timestamp() + delay.as_secs() as i64 + 1,
+            0,
+        )
+        .expect("valid timestamp after key B");
+        state_guard
+            .set_block_time(block_time_after_b)
+            .await
+            .expect("failed to set block time after key B");
+
+        {
+            let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", make_config());
+            let promoted = vote_queue
+                .promote_pending_changes()
+                .await
+                .expect("promote pending (second)");
+            assert_eq!(
+                promoted,
+                vec![(key_b.clone(), value_b.clone())],
+                "key B should promote after delay"
+            );
+        }
+    });
+}
