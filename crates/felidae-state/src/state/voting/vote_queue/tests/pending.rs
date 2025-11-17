@@ -418,3 +418,143 @@ fn test_multiple_pending_changes_partial_promotion() {
         }
     });
 }
+
+#[test]
+fn test_pending_for_key_none() {
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(async {
+        let (store, _) = setup_test_state().await;
+        let mut state_guard = store.state.write().await;
+
+        let config = VotingConfig {
+            total: Total(10),
+            quorum: Quorum(3),
+            timeout: Timeout(Duration::from_secs(3600)),
+            delay: Delay(Duration::from_secs(86400)),
+        };
+
+        let vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
+            VoteQueue::new(&mut *state_guard, "test_queue", config);
+        let pending = vote_queue
+            .pending_for_key(ChainId("key_query_none".to_string()))
+            .await
+            .expect("pending_for_key with no entries should succeed");
+        assert!(
+            pending.is_none(),
+            "should return None when no pending change exists"
+        );
+    });
+}
+
+#[test]
+fn test_pending_for_key_single_entry() {
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(async {
+        let (store, initial_block_time) = setup_test_state().await;
+        let mut state_guard = store.state.write().await;
+
+        let config = VotingConfig {
+            total: Total(10),
+            quorum: Quorum(3),
+            timeout: Timeout(Duration::from_secs(3600)),
+            delay: Delay(Duration::from_secs(86400)),
+        };
+
+        let key = ChainId("key_query_single".to_string());
+        let value = ChainId("value_query_single".to_string());
+
+        let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
+            VoteQueue::new(&mut *state_guard, "test_queue", config);
+        for i in 0..3 {
+            let vote_time =
+                Time::from_unix_timestamp(initial_block_time.unix_timestamp() + i as i64, 0)
+                    .expect("valid timestamp");
+            vote_queue
+                .cast(Vote {
+                    party: format!("party_{i}"),
+                    time: vote_time,
+                    key: key.clone(),
+                    value: value.clone(),
+                })
+                .await
+                .expect("cast vote");
+        }
+
+        let pending = vote_queue
+            .pending_for_key(key)
+            .await
+            .expect("pending_for_key with single entry should succeed");
+        assert_eq!(
+            pending,
+            Some(value),
+            "pending change should return the stored value"
+        );
+    });
+}
+
+#[test]
+fn test_pending_for_key_multiple_entries_error() {
+    use crate::store::Substore::Internal;
+
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(async {
+        let (store, initial_block_time) = setup_test_state().await;
+        let mut state_guard = store.state.write().await;
+
+        let make_config = || VotingConfig {
+            total: Total(10),
+            quorum: Quorum(3),
+            timeout: Timeout(Duration::from_secs(3600)),
+            delay: Delay(Duration::from_secs(86400)),
+        };
+
+        let key = ChainId("key_query_duplicate".to_string());
+        let value = ChainId("value_query_duplicate".to_string());
+
+        let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
+            VoteQueue::new(&mut *state_guard, "test_queue", make_config());
+        let mut last_vote_time = initial_block_time;
+        for i in 0..3 {
+            let vote_time =
+                Time::from_unix_timestamp(initial_block_time.unix_timestamp() + i as i64, 0)
+                    .expect("valid timestamp");
+            last_vote_time = vote_time;
+            vote_queue
+                .cast(Vote {
+                    party: format!("party_{i}"),
+                    time: vote_time,
+                    key: key.clone(),
+                    value: value.clone(),
+                })
+                .await
+                .expect("cast vote");
+        }
+
+        // Manually insert a duplicate pending entry for the same key to trigger the error path.
+        let duplicate_time = Time::from_unix_timestamp(last_vote_time.unix_timestamp() + 10, 0)
+            .expect("valid duplicate timestamp");
+        let key_str: String = key.clone().into();
+
+        let pending_key = format!(
+            "test_queue/pending_by_key/{}/{}",
+            key_str,
+            duplicate_time.to_rfc3339()
+        );
+        state_guard.store.put(Internal, &pending_key, value.clone());
+
+        let mut index_key = b"test_queue/pending_by_timestamp/".to_vec();
+        index_key.extend_from_slice(&duplicate_time.unix_timestamp().to_be_bytes());
+        index_key.push(b'/');
+        index_key.extend_from_slice(key_str.as_bytes());
+        state_guard
+            .store
+            .index_put(Internal, &index_key, value.clone());
+
+        let vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
+            VoteQueue::new(&mut *state_guard, "test_queue", make_config());
+        let err = vote_queue
+            .pending_for_key(key)
+            .await
+            .expect_err("should error when multiple pending changes exist");
+    });
+}
