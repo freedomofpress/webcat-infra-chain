@@ -87,6 +87,111 @@ Finally, to reset the chain state by blowing away both CometBFT and Felidae's st
 just reset
 ```
 
+Note that the application's genesis file, which contains the initial configuration of the starting state of the chain, is located in `~/.cometbft/config/genesis.json`.
+
+> **Tip:** For more verbose logging, run commands with `RUST_LOG=info` (or `RUST_LOG=debug` for even more detail).
+
+## Setting Up Admin and Oracle
+
+### 1. Generate Configuration Template
+
+```bash
+cargo run --bin felidae admin template > config.json
+```
+
+This generates a configuration template (see the `Config` proto) that you'll edit to add your own keys as an admin and oracle.
+
+### 2. Generate Your Admin and Oracle Keypairs
+
+```bash
+cargo run --bin felidae admin init
+```
+
+This creates your admin keypair. To view your admin public key:
+
+```bash
+cargo run --bin felidae admin identity
+```
+
+Similarly for oracle:
+
+
+```bash
+cargo run --bin felidae oracle init
+```
+
+To view your oracle public key:
+
+```bash
+cargo run --bin felidae oracle identity
+```
+
+### 3. Configure `config.json`
+
+Add your public keys (from step 2) to the `authorized` lists for both admins and oracles in `config.json`.
+
+For a single-validator testing setup, configure the following:
+
+**Example chain configuration:**
+```json
+{
+  "version": 1,
+  "admins": {
+    "voting": {
+      "total": 1,
+      "quorum": 1,
+      "timeout": "1day",
+      "delay": "0s"
+    },
+    "authorized": ["YOUR_ADMIN_KEY_HERE"]
+  },
+  "oracles": {
+    "enabled": true,
+    "voting": {
+      "total": 1,
+      "quorum": 1,
+      "timeout": "5m",
+      "delay": "30s"
+    },
+    "max_enrolled_subdomains": 5,
+    "observation_timeout": "5m",
+    "authorized": ["YOUR_ORACLE_KEY_HERE"]
+  },
+  "onion": {
+    "enabled": false
+  }
+```
+
+**Important:** Increment the `version` number in the config file.
+
+### 4. Submit Configuration to Chain
+
+```bash
+cargo run --bin felidae admin config config.json --chain <CHAIN_ID>
+```
+
+Replace `<CHAIN_ID>` with the chain ID from `~/.cometbft/config/genesis.json`.
+
+Once the chain accepts this transaction, you'll be configured as both admin and oracle. Verify the current configuration:
+
+```bash
+curl http://localhost/config
+```
+
+### 5. Post an Oracle Observation
+
+You can now submit oracle observations. For example:
+
+```bash
+cargo run --bin felidae oracle observe --domain element.nym.re. --zone nym.re.
+```
+
+After the observation reaches quorum and the delay period expires, the observed hash will be visible in the snapshot:
+
+```bash
+curl http://localhost/snapshot
+```
+
 ## Example Scenario
 
 ### Nodes
