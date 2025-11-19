@@ -154,20 +154,15 @@ impl Run for Observe {
             response: R,
         }
 
-        // Pull the app hash and block height from the node, with expected format:
-        // {"jsonrpc":"2.0","id":-1,"result":{"response":{"data":"felidae","version":"0.1.0","last_block_height":"91","last_block_app_hash":"9aQxnXPb8V0SFV/u0xrPAH3XhMEALBt72QU6G8wilQk="}}}
+        // Get the latest block height from abci_info:
         #[serde_as]
         #[derive(Deserialize)]
         struct LastBlock {
             #[serde_as(as = "DisplayFromStr")]
             last_block_height: u64,
-            #[serde_as(as = "Base64")]
-            last_block_app_hash: Vec<u8>,
         }
-        let LastBlock {
-            last_block_height,
-            last_block_app_hash,
-        } = client
+
+        let latest_height = client
             .get(self.node.join("/abci_info")?)
             .send()
             .await?
@@ -175,12 +170,55 @@ impl Run for Observe {
             .json::<Result<Response<LastBlock>>>()
             .await?
             .result
-            .response;
-        let last_block_app_hash = hex::encode(last_block_app_hash);
+            .response
+            .last_block_height;
+
+        // Get the previous block (height - 1) to get its finalized app_hash.
+        // The app_hash of a block is only known in the block that succeeds it,
+        // so we need to use the previous block's information.
+        let previous_height = if latest_height > 0 {
+            latest_height - 1
+        } else {
+            return Err(color_eyre::eyre::eyre!(
+                "cannot get previous block: chain is at height 0"
+            ));
+        };
+
+        #[serde_as]
+        #[derive(Deserialize)]
+        struct BlockHeader {
+            #[serde_as(as = "DisplayFromStr")]
+            height: u64,
+            #[serde_as(as = "Base64")]
+            app_hash: Vec<u8>,
+        }
+        #[derive(Deserialize)]
+        struct Block {
+            header: BlockHeader,
+        }
+        #[derive(Deserialize)]
+        struct BlockResult {
+            block: Block,
+        }
+
+        let BlockResult { block } = client
+            .get(self.node.join("/block")?)
+            .query(&[("height", previous_height.to_string())])
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<Result<BlockResult>>()
+            .await?
+            .result;
+
+        let last_block_height = block.header.height;
+        let last_block_app_hash = hex::encode(block.header.app_hash);
 
         info!(
             last_block_height,
-            last_block_app_hash, "fetched last block info"
+            last_block_app_hash,
+            previous_height = previous_height,
+            "fetched previous block info"
         );
 
         // If the chain ID was not specified, pull it from the node:
@@ -219,11 +257,6 @@ impl Run for Observe {
             self.zone.to_string(),
             enrollment_string.unwrap_or_default(),
         )?;
-
-        // Wait for 5 seconds to let the block stamp get finalized:
-        // TODO: instead, get the blockstamp of the *previous* block!
-        info!("waiting 5 seconds to allow blockstamp to finalize...");
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
         // Submit the transaction to the node:
         let result = client
