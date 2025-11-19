@@ -33,11 +33,15 @@ impl Run for Admin {
 }
 
 #[derive(clap::Args)]
-pub struct Init {}
+pub struct Init {
+    /// Home directory for storing admin keys (defaults to platform-specific directory).
+    #[clap(long)]
+    pub homedir: Option<std::path::PathBuf>,
+}
 
 impl Run for Init {
     async fn run(self) -> Result<(), color_eyre::Report> {
-        let keypath = keypath().await?;
+        let keypath = keypath(self.homedir.as_deref()).await?;
         if keypath.exists() {
             return Err(color_eyre::eyre::eyre!(
                 "admin keypair already exists at: {}",
@@ -54,11 +58,15 @@ impl Run for Init {
 }
 
 #[derive(clap::Args)]
-pub struct Identity {}
+pub struct Identity {
+    /// Home directory for storing admin keys (defaults to platform-specific directory).
+    #[clap(long)]
+    pub homedir: Option<std::path::PathBuf>,
+}
 
 impl Run for Identity {
     async fn run(self) -> Result<(), color_eyre::Report> {
-        let keypair = keypair().await?;
+        let keypair = keypair(self.homedir.as_deref()).await?;
         let public_key = keypair.public_key();
         println!("{}", hex::encode(public_key));
 
@@ -79,12 +87,15 @@ pub struct Config {
     /// Timeout duration for the reconfiguration to be valid.
     #[clap(long, short = 't', default_value = "10s")]
     pub signature_timeout: humantime::Duration,
+    /// Home directory for storing admin keys (defaults to platform-specific directory).
+    #[clap(long)]
+    pub homedir: Option<std::path::PathBuf>,
 }
 
 impl Run for Config {
     async fn run(self) -> Result<(), color_eyre::Report> {
         // Load the admin keypair:
-        let keypair = keypair().await?;
+        let keypair = keypair(self.homedir.as_deref()).await?;
 
         // Read and parse the configuration file:
         let config_bytes = tokio::fs::read(&self.path).await.map_err(|_| {
@@ -137,19 +148,23 @@ impl Run for Template {
     }
 }
 
-async fn keypath() -> color_eyre::Result<std::path::PathBuf> {
-    let directories = directories::ProjectDirs::from("press", "freedom", "felidae-admin")
-        .ok_or_eyre("could not determine internal storage directory")?;
+async fn keypath(homedir: Option<&std::path::Path>) -> color_eyre::Result<std::path::PathBuf> {
+    let admin_dir = if let Some(homedir) = homedir {
+        homedir.to_path_buf()
+    } else {
+        let directories = directories::ProjectDirs::from("press", "freedom", "felidae-admin")
+            .ok_or_eyre("could not determine internal storage directory")?;
+        directories.data_local_dir().to_path_buf()
+    };
 
-    let admin_dir = directories.data_local_dir();
-    tokio::fs::create_dir_all(admin_dir).await?;
+    tokio::fs::create_dir_all(&admin_dir).await?;
 
     let keypath = admin_dir.join("admin_key.pkcs8.hex");
     Ok(keypath)
 }
 
-async fn keypair() -> color_eyre::Result<KeyPair> {
-    let keypath = keypath().await?;
+async fn keypair(homedir: Option<&std::path::Path>) -> color_eyre::Result<KeyPair> {
+    let keypath = keypath(homedir).await?;
     let keyhex = tokio::fs::read_to_string(&keypath).await.map_err(|_| {
         color_eyre::eyre::eyre!("could not read admin keypair at: {}", keypath.display())
     })?;

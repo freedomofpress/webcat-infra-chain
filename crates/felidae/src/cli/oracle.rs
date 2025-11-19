@@ -33,11 +33,15 @@ impl Run for Oracle {
 }
 
 #[derive(clap::Args)]
-pub struct Init {}
+pub struct Init {
+    /// Home directory for storing oracle keys (defaults to platform-specific directory).
+    #[clap(long)]
+    pub homedir: Option<std::path::PathBuf>,
+}
 
 impl Run for Init {
     async fn run(self) -> Result<(), color_eyre::Report> {
-        let keypath = keypath().await?;
+        let keypath = keypath(self.homedir.as_deref()).await?;
         if keypath.exists() {
             return Err(color_eyre::eyre::eyre!(
                 "oracle keypair already exists at: {}",
@@ -54,11 +58,15 @@ impl Run for Init {
 }
 
 #[derive(clap::Args)]
-pub struct Identity {}
+pub struct Identity {
+    /// Home directory for storing oracle keys (defaults to platform-specific directory).
+    #[clap(long)]
+    pub homedir: Option<std::path::PathBuf>,
+}
 
 impl Run for Identity {
     async fn run(self) -> Result<(), color_eyre::Report> {
-        let keypair = keypair().await?;
+        let keypair = keypair(self.homedir.as_deref()).await?;
         let public_key = keypair.public_key();
         println!("{}", hex::encode(public_key));
 
@@ -80,6 +88,9 @@ pub struct Observe {
     /// Chain ID of the target chain (pulls from the node if not specified).
     #[clap(long, short)]
     pub chain: Option<String>,
+    /// Home directory for storing oracle keys (defaults to platform-specific directory).
+    #[clap(long)]
+    pub homedir: Option<std::path::PathBuf>,
 }
 
 impl Run for Observe {
@@ -88,8 +99,8 @@ impl Run for Observe {
         // node, instead of using an actual Tendermint client library or even a JSON-RPC library.
         // This works, but it would be better to have a more robust implementation.
 
-        // Load the admin keypair:
-        let keypair = keypair().await?;
+        // Load the oracle keypair:
+        let keypair = keypair(self.homedir.as_deref()).await?;
 
         // We reuse this client:
         let client = reqwest::Client::new();
@@ -230,19 +241,23 @@ impl Run for Observe {
     }
 }
 
-async fn keypath() -> color_eyre::Result<std::path::PathBuf> {
-    let directories = directories::ProjectDirs::from("press", "freedom", "felidae-oracle")
-        .ok_or_eyre("could not determine internal storage directory")?;
+async fn keypath(homedir: Option<&std::path::Path>) -> color_eyre::Result<std::path::PathBuf> {
+    let oracle_dir = if let Some(homedir) = homedir {
+        homedir.to_path_buf()
+    } else {
+        let directories = directories::ProjectDirs::from("press", "freedom", "felidae-oracle")
+            .ok_or_eyre("could not determine internal storage directory")?;
+        directories.data_local_dir().to_path_buf()
+    };
 
-    let oracle_dir = directories.data_local_dir();
-    tokio::fs::create_dir_all(oracle_dir).await?;
+    tokio::fs::create_dir_all(&oracle_dir).await?;
 
     let keypath = oracle_dir.join("oracle_key.pkcs8.hex");
     Ok(keypath)
 }
 
-async fn keypair() -> color_eyre::Result<KeyPair> {
-    let keypath = keypath().await?;
+async fn keypair(homedir: Option<&std::path::Path>) -> color_eyre::Result<KeyPair> {
+    let keypath = keypath(homedir).await?;
     let keyhex = tokio::fs::read_to_string(&keypath).await.map_err(|_| {
         color_eyre::eyre::eyre!("could not read oracle keypair at: {}", keypath.display())
     })?;
