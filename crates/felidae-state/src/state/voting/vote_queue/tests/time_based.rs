@@ -95,8 +95,6 @@ async fn test_vote_expiration_removes_votes_and_indexes() {
     );
 }
 
-#[ignore]
-// Ignored this test because it currently fails, see: https://github.com/freedomofpress/webcat-infra-chain/issues/27
 #[tokio::test]
 async fn test_vote_expiration_boundary_behavior() {
     let (store, initial_block_time) = setup_test_state().await;
@@ -179,8 +177,6 @@ async fn test_vote_expiration_boundary_behavior() {
     }
 }
 
-#[ignore]
-// Ignored this test because it currently fails, see: https://github.com/freedomofpress/webcat-infra-chain/issues/27
 #[tokio::test]
 async fn test_delay_boundary_behavior() {
     let (store, initial_block_time) = setup_test_state().await;
