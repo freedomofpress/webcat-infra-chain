@@ -2,8 +2,9 @@ use color_eyre::eyre::OptionExt;
 use felidae_types::{FQDN, KeyPair};
 use reqwest::StatusCode;
 use reqwest::Url;
-use serde::Deserialize;
-use serde_with::{DisplayFromStr, base64::Base64, serde_as};
+use tendermint::block::Height;
+use tendermint_rpc::HttpClient;
+use tendermint_rpc::client::Client;
 
 use super::Run;
 
@@ -95,18 +96,20 @@ pub struct Observe {
 
 impl Run for Observe {
     async fn run(self) -> Result<(), color_eyre::Report> {
-        // TODO: This implementation is made of ad-hoc bits to parse the necessary data from the
-        // node, instead of using an actual Tendermint client library or even a JSON-RPC library.
-        // This works, but it would be better to have a more robust implementation.
-
         // Load the oracle keypair:
         let keypair = keypair(self.homedir.as_deref()).await?;
 
-        // We reuse this client:
-        let client = reqwest::Client::new();
+        // Create a Tendermint RPC client:
+        let rpc_url = tendermint_rpc::Url::try_from(self.node.clone())
+            .map_err(|e| color_eyre::eyre::eyre!("invalid RPC URL: {}", e))?;
+        let rpc_client = HttpClient::new(rpc_url)
+            .map_err(|e| color_eyre::eyre::eyre!("failed to create RPC client: {}", e))?;
+
+        // We need reqwest for the enrollment endpoint:
+        let http_client = reqwest::Client::new();
 
         // Fetch the hash from the well-known endpoint of the domain/zone:
-        let enrollment_string = match client
+        let enrollment_string = match http_client
             .get(format!(
                 "https://{}/.well-known/webcat/enrollment.json",
                 self.domain.to_string().trim_matches('.')
@@ -145,79 +148,32 @@ impl Run for Observe {
             info!(domain = %self.domain, "no enrollment found");
         }
 
-        #[derive(Deserialize)]
-        pub struct Result<R> {
-            result: R,
-        }
-        #[derive(Deserialize)]
-        struct Response<R> {
-            response: R,
-        }
-
         // Get the latest block height from abci_info:
-        #[serde_as]
-        #[derive(Deserialize)]
-        struct LastBlock {
-            #[serde_as(as = "DisplayFromStr")]
-            last_block_height: u64,
-        }
-
-        let latest_height = client
-            .get(self.node.join("/abci_info")?)
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<Result<Response<LastBlock>>>()
-            .await?
-            .result
-            .response
-            .last_block_height;
+        let abci_info = rpc_client.abci_info().await?;
+        let latest_height = abci_info.last_block_height.value();
 
         // Get the previous block (height - 1) to get its finalized app_hash.
         // The app_hash of a block is only known in the block that succeeds it,
         // so we need to use the previous block's information.
         let previous_height = if latest_height > 0 {
-            latest_height - 1
+            Height::try_from(latest_height - 1)
+                .map_err(|e| color_eyre::eyre::eyre!("invalid height: {}", e))?
         } else {
             return Err(color_eyre::eyre::eyre!(
                 "cannot get previous block: chain is at height 0"
             ));
         };
 
-        #[serde_as]
-        #[derive(Deserialize)]
-        struct BlockHeader {
-            #[serde_as(as = "DisplayFromStr")]
-            height: u64,
-            #[serde_as(as = "Base64")]
-            app_hash: Vec<u8>,
-        }
-        #[derive(Deserialize)]
-        struct Block {
-            header: BlockHeader,
-        }
-        #[derive(Deserialize)]
-        struct BlockResult {
-            block: Block,
-        }
-
-        let BlockResult { block } = client
-            .get(self.node.join("/block")?)
-            .query(&[("height", previous_height.to_string())])
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<Result<BlockResult>>()
-            .await?
-            .result;
-
-        let last_block_height = block.header.height;
-        let last_block_app_hash = hex::encode(block.header.app_hash);
+        // Fetch the previous block to get its finalized app_hash:
+        let block_result = rpc_client.block(previous_height).await?;
+        let block = block_result.block;
+        let last_block_height = block.header.height.value();
+        let last_block_app_hash = hex::encode(block.header.app_hash.as_bytes());
 
         info!(
             last_block_height,
             last_block_app_hash,
-            previous_height = previous_height,
+            previous_height = previous_height.value(),
             "fetched previous block info"
         );
 
@@ -225,24 +181,8 @@ impl Run for Observe {
         let chain_id = if let Some(chain_id) = self.chain {
             chain_id
         } else {
-            #[derive(Deserialize)]
-            struct Genesis {
-                genesis: GenesisContents,
-            }
-            #[derive(Deserialize)]
-            struct GenesisContents {
-                chain_id: String,
-            }
-            let chain_id = client
-                .get(self.node.join("/genesis")?)
-                .send()
-                .await?
-                .error_for_status()?
-                .json::<Result<Genesis>>()
-                .await?
-                .result
-                .genesis
-                .chain_id;
+            let genesis: tendermint::Genesis<serde_json::Value> = rpc_client.genesis().await?;
+            let chain_id = genesis.chain_id.to_string();
             info!(chain_id = %chain_id, "fetched chain ID from node");
             chain_id
         };
@@ -259,16 +199,16 @@ impl Run for Observe {
         )?;
 
         // Submit the transaction to the node:
-        let result = client
-            .get(self.node.join("/broadcast_tx_sync")?)
-            .query(&[("tx", format!("0x{}", tx))])
-            .send()
-            .await?
-            .error_for_status()?
-            .text()
-            .await?;
+        let tx_bytes = hex::decode(&tx)
+            .map_err(|e| color_eyre::eyre::eyre!("failed to decode transaction hex: {}", e))?;
+        let broadcast_result = rpc_client.broadcast_tx_sync(tx_bytes).await?;
 
-        info!(tx = %tx, result = %result, "submitted transaction");
+        info!(
+            tx = %tx,
+            code = ?broadcast_result.code,
+            hash = %hex::encode(broadcast_result.hash.as_bytes()),
+            "submitted transaction"
+        );
 
         Ok(())
     }
