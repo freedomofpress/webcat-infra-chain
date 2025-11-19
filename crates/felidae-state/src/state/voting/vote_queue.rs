@@ -92,7 +92,7 @@ where
                 Ok::<_, Report>((time, key.to_string(), party.to_string()))
             })
             .try_take_while(|(time, _key, _party)| {
-                let filter = now.duration_since(*time).unwrap_or_default() > self.config.timeout.0;
+                let filter = now.duration_since(*time).unwrap_or_default() >= self.config.timeout.0;
                 async move { Ok(filter) }
             })
             .try_collect::<Vec<_>>()
@@ -131,7 +131,7 @@ where
                 Ok::<_, Report>((time, key.to_string(), value))
             })
             .try_take_while(|(time, _key, _value)| {
-                let filter = now.duration_since(*time).unwrap_or_default() > self.config.delay.0;
+                let filter = now.duration_since(*time).unwrap_or_default() >= self.config.delay.0;
                 async move { Ok(filter) }
             })
             .try_collect::<Vec<_>>()
