@@ -18,6 +18,7 @@ futures = "0.3"
 tower = "0.5"
 tower-abci = "0.19.1"
 tendermint = "0.40"
+tendermint-rpc = { version = "0.40", features = ["http-client"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tokio = { version = "1", features = ["full"] }
