@@ -10,6 +10,7 @@ members = [
     "crates/felidae-state",
     "crates/felidae-oracle",
     "crates/felidae-admin",
+    "crates/felidae-publish",
 ]
 
 [workspace.dependencies]
