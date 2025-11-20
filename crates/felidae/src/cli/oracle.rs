@@ -2,7 +2,6 @@ use color_eyre::eyre::OptionExt;
 use felidae_types::{FQDN, KeyPair};
 use reqwest::StatusCode;
 use reqwest::Url;
-use tendermint::block::Height;
 use tendermint_rpc::HttpClient;
 use tendermint_rpc::client::Client;
 
@@ -148,44 +147,36 @@ impl Run for Observe {
             info!(domain = %self.domain, "no enrollment found");
         }
 
-        // Get the latest block height from abci_info:
-        let abci_info = rpc_client.abci_info().await?;
-        let latest_height = abci_info.last_block_height.value();
+        // Get the latest block. The app_hash in the latest block's header is the
+        // app_hash of the previous block (the last finalized block).
+        let block_result = rpc_client.latest_block().await?;
+        let block = block_result.block;
+        let latest_height = block.header.height.value();
+        let last_block_app_hash = hex::encode(block.header.app_hash.as_bytes());
 
-        // Get the previous block (height - 1) to get its finalized app_hash.
-        // The app_hash of a block is only known in the block that succeeds it,
-        // so we need to use the previous block's information.
-        let previous_height = if latest_height > 0 {
-            Height::try_from(latest_height - 1)
-                .map_err(|e| color_eyre::eyre::eyre!("invalid height: {}", e))?
+        // The app_hash is from the previous block, so we need to use height - 1:
+        let last_block_height = if latest_height > 0 {
+            latest_height - 1
         } else {
             return Err(color_eyre::eyre::eyre!(
                 "cannot get previous block: chain is at height 0"
             ));
         };
 
-        // Fetch the previous block to get its finalized app_hash:
-        let block_result = rpc_client.block(previous_height).await?;
-        let block = block_result.block;
-        let last_block_height = block.header.height.value();
-        let last_block_app_hash = hex::encode(block.header.app_hash.as_bytes());
-
-        info!(
-            last_block_height,
-            last_block_app_hash,
-            previous_height = previous_height.value(),
-            "fetched previous block info"
-        );
-
-        // If the chain ID was not specified, pull it from the node:
+        // Get the chain ID from the block header:
         let chain_id = if let Some(chain_id) = self.chain {
             chain_id
         } else {
-            let genesis: tendermint::Genesis<serde_json::Value> = rpc_client.genesis().await?;
-            let chain_id = genesis.chain_id.to_string();
-            info!(chain_id = %chain_id, "fetched chain ID from node");
-            chain_id
+            block.header.chain_id.to_string()
         };
+
+        info!(
+            last_block_app_hash,
+            last_block_height,
+            latest_height,
+            chain_id = %chain_id,
+            "fetched latest block info"
+        );
 
         // Create the witnessing transaction:
         let tx = felidae_oracle::witness(
