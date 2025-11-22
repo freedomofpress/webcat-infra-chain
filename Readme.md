@@ -128,7 +128,7 @@ cargo run --bin felidae oracle identity
 
 ### 3. Configure `config.json`
 
-Add your public keys (from step 2) to the `authorized` lists for both admins and oracles in `config.json`.
+Add your public keys (from step 2) to the `authorized` lists for both admins and oracles in `config.json`. For oracles, you'll need to provide both the `identity` (public key) and `endpoint` (domain or IP address) for each oracle.
 
 For a single-validator testing setup, configure the following:
 
@@ -155,12 +155,23 @@ For a single-validator testing setup, configure the following:
     },
     "max_enrolled_subdomains": 5,
     "observation_timeout": "5m",
-    "authorized": ["YOUR_ORACLE_KEY_HERE"]
+    "authorized": [
+      {
+        "identity": "YOUR_ORACLE_KEY_HERE",
+        "endpoint": "127.0.0.1"
+      }
+    ]
   },
   "onion": {
     "enabled": false
   }
 ```
+
+**Note:** Each oracle in the `authorized` array must have:
+- `identity`: The hex-encoded public key of the oracle (required)
+- `endpoint`: The endpoint (domain name or IP address) for the oracle (optional, defaults to `"127.0.0.1"` if omitted)
+
+The endpoint is used by frontends to know where to submit enrollment requests to the oracle set.
 
 **Important:** Increment the `version` number in the config file.
 
