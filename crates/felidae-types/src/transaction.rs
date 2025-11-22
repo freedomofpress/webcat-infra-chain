@@ -100,7 +100,10 @@ impl Config {
                     timeout: Timeout(Duration::from_secs(24 * 60 * 60)),
                     delay: Delay(Duration::from_secs(0)),
                 },
-                authorized: vec![],
+                // Placeholder entry
+                authorized: vec![Admin {
+                    identity: Bytes::from(vec![0u8; 64]),
+                }],
             },
             oracles: OracleConfig {
                 enabled: false,
@@ -112,7 +115,11 @@ impl Config {
                 },
                 max_enrolled_subdomains: 1,
                 observation_timeout: Duration::from_secs(5 * 60),
-                authorized: vec![],
+                // Placeholder entry so it's easier to fill out
+                authorized: vec![Oracle {
+                    identity: Bytes::from(vec![0u8; 64]),
+                    endpoint: "127.0.0.1".to_string(),
+                }],
             },
             onion: OnionConfig { enabled: false },
         }
