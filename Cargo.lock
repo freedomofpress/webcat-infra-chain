@@ -1022,6 +1022,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "felidae-publish"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "color-eyre",
+ "reqwest 0.12.24",
+ "serde",
+ "serde_json",
+ "tendermint",
+ "tendermint-rpc",
+ "tokio",
+]
+
+[[package]]
 name = "felidae-state"
 version = "0.1.0"
 dependencies = [
