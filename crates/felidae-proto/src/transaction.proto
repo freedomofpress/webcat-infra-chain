@@ -34,6 +34,11 @@ message Config {
 }
 
 message Oracle {
+    OracleIdentity public_key = 1;
+    string endpoint = 2;
+}
+
+message OracleIdentity {
     bytes public_key = 1;
 }
 

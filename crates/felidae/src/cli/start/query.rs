@@ -244,6 +244,41 @@ pub fn app(storage: Storage) -> Router {
         }
     };
 
+    let oracles = {
+        let storage = storage.clone();
+        move || async move {
+            let state = State::new(StateDelta::new(storage.latest_snapshot()));
+            match state.config().await {
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    [("Content-Type", "text/plain")],
+                    Body::from(e.to_string()),
+                ),
+                Ok(config) => {
+                    #[derive(Serialize)]
+                    struct OracleInfo {
+                        identity: String,
+                        endpoint: String,
+                    }
+                    let oracles: Vec<OracleInfo> = config
+                        .oracles
+                        .authorized
+                        .into_iter()
+                        .map(|oracle| OracleInfo {
+                            identity: hex::encode(oracle.identity),
+                            endpoint: oracle.endpoint,
+                        })
+                        .collect();
+                    (
+                        StatusCode::OK,
+                        [("Content-Type", "application/json")],
+                        Body::from(serde_json::to_string_pretty(&oracles).unwrap()),
+                    )
+                }
+            }
+        }
+    };
+
     let snapshot = || {
         let storage = storage.clone();
         move |domain| async move {
@@ -293,6 +328,7 @@ pub fn app(storage: Storage) -> Router {
 
     Router::new()
         .route("/config", get(move || async { config().await }))
+        .route("/oracles", get(move || async { oracles().await }))
         .route("/admin/votes", get(move || async { admin_votes().await }))
         .route(
             "/admin/pending",

@@ -222,7 +222,7 @@ impl TryFrom<proto::action::Observe> for Observe {
 
         let oracle = signature
             .map(Unsigned::try_from)
-            .ok_or_else(|| crate::ParseError::new::<Oracle>("missing".to_string()))??
+            .ok_or_else(|| crate::ParseError::new::<OracleIdentity>("missing".to_string()))??
             .try_into()?;
 
         let observation = observation
@@ -596,18 +596,17 @@ impl TryFrom<proto::Oracle> for Oracle {
     type Error = crate::ParseError;
 
     fn try_from(value: proto::Oracle) -> Result<Self, Self::Error> {
+        let public_key = value
+            .public_key
+            .ok_or_else(|| crate::ParseError::new::<OracleIdentity>("missing".to_string()))?
+            .public_key;
         Ok(Oracle {
-            identity: value.public_key,
-        })
-    }
-}
-
-impl TryFrom<Unsigned> for Oracle {
-    type Error = crate::ParseError;
-
-    fn try_from(value: Unsigned) -> Result<Self, Self::Error> {
-        Ok(Oracle {
-            identity: value.public_key,
+            identity: public_key,
+            endpoint: if value.endpoint.is_empty() {
+                "127.0.0.1".to_string()
+            } else {
+                value.endpoint
+            },
         })
     }
 }
@@ -615,8 +614,45 @@ impl TryFrom<Unsigned> for Oracle {
 impl From<Oracle> for proto::Oracle {
     fn from(oracle: Oracle) -> Self {
         proto::Oracle {
+            public_key: Some(proto::OracleIdentity {
+                public_key: oracle.identity,
+            }),
+            endpoint: oracle.endpoint,
+        }
+    }
+}
+
+impl From<OracleIdentity> for proto::OracleIdentity {
+    fn from(oracle: OracleIdentity) -> Self {
+        proto::OracleIdentity {
             public_key: oracle.identity,
         }
+    }
+}
+
+impl TryFrom<proto::OracleIdentity> for OracleIdentity {
+    type Error = crate::ParseError;
+
+    fn try_from(value: proto::OracleIdentity) -> Result<Self, Self::Error> {
+        Ok(OracleIdentity {
+            identity: value.public_key,
+        })
+    }
+}
+
+impl TryFrom<Unsigned> for OracleIdentity {
+    type Error = crate::ParseError;
+
+    fn try_from(value: Unsigned) -> Result<Self, Self::Error> {
+        Ok(OracleIdentity {
+            identity: value.public_key,
+        })
+    }
+}
+
+impl From<OracleIdentity> for proto::Signature {
+    fn from(oracle: OracleIdentity) -> Self {
+        proto::Signature::unsigned(oracle.identity)
     }
 }
 

@@ -62,6 +62,26 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             bail!("max_enrolled_subdomains cannot decrease");
         }
 
+        // Validate that no admin has an all-zero identity (placeholder entry):
+        for (i, admin) in admins.iter().enumerate() {
+            if Self::is_all_zeros(&admin.identity) {
+                bail!(
+                    "admin at index {} has an all-zero identity (placeholder not replaced)",
+                    i
+                );
+            }
+        }
+
+        // Validate that no oracle has an all-zero identity (placeholder entry):
+        for (i, oracle) in oracles.iter().enumerate() {
+            if Self::is_all_zeros(&oracle.identity) {
+                bail!(
+                    "oracle at index {} has an all-zero identity (placeholder not replaced)",
+                    i
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -101,5 +121,10 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         }
 
         Ok(())
+    }
+
+    /// Check if a byte slice is all zeros (used to detect placeholder keys).
+    fn is_all_zeros(bytes: &[u8]) -> bool {
+        bytes.iter().all(|&b| b == 0)
     }
 }

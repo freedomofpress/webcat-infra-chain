@@ -37,6 +37,7 @@ domain_types!(
     Admin: proto::Admin,
     OracleConfig: proto::config::OracleConfig,
     Oracle: proto::Oracle,
+    OracleIdentity: proto::OracleIdentity,
     OnionConfig: proto::config::OnionConfig,
     VotingConfig: proto::config::VotingConfig,
     Observe: proto::action::Observe,
@@ -99,7 +100,10 @@ impl Config {
                     timeout: Timeout(Duration::from_secs(24 * 60 * 60)),
                     delay: Delay(Duration::from_secs(0)),
                 },
-                authorized: vec![],
+                // Placeholder entry
+                authorized: vec![Admin {
+                    identity: Bytes::from(vec![0u8; 64]),
+                }],
             },
             oracles: OracleConfig {
                 enabled: false,
@@ -111,7 +115,11 @@ impl Config {
                 },
                 max_enrolled_subdomains: 1,
                 observation_timeout: Duration::from_secs(5 * 60),
-                authorized: vec![],
+                // Placeholder entry so it's easier to fill out
+                authorized: vec![Oracle {
+                    identity: Bytes::from(vec![0u8; 64]),
+                    endpoint: "127.0.0.1".to_string(),
+                }],
             },
             onion: OnionConfig { enabled: false },
         }
@@ -145,8 +153,23 @@ pub struct OracleConfig {
 
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
 pub struct Oracle {
+    #[serde_as(as = "Hex")]
+    pub identity: Bytes,
+    /// Endpoint (domain name or IP address) for the oracle.
+    #[serde(default = "default_oracle_endpoint")]
+    pub endpoint: String,
+}
+
+fn default_oracle_endpoint() -> String {
+    "127.0.0.1".to_string()
+}
+
+/// Transparent wrapper for the oracle's public key.
+#[serde_as]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct OracleIdentity {
     #[serde_as(as = "Hex")]
     pub identity: Bytes,
 }
@@ -189,7 +212,7 @@ pub struct Delay(#[serde(with = "humantime_serde")] pub Duration);
 pub struct Observe {
     #[serde(flatten)]
     pub observation: Observation,
-    pub oracle: Oracle,
+    pub oracle: OracleIdentity,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -368,7 +391,7 @@ mod tests {
     #[test]
     fn test_observe_serialization() {
         let observe = Observe {
-            oracle: Oracle {
+            oracle: OracleIdentity {
                 identity: Bytes::from_static(&[0u8; 64]),
             },
             observation: Observation {
@@ -407,6 +430,7 @@ mod tests {
                 enabled: true,
                 authorized: vec![Oracle {
                     identity: Bytes::from_static(&[1u8; 64]),
+                    endpoint: "127.0.0.1".to_string(),
                 }],
                 voting: VotingConfig {
                     total: Total(5),
@@ -449,6 +473,7 @@ mod tests {
                         enabled: true,
                         authorized: vec![Oracle {
                             identity: Bytes::from_static(&[1u8; 64]),
+                            endpoint: "127.0.0.1".to_string(),
                         }],
                         voting: VotingConfig {
                             total: Total(5),
