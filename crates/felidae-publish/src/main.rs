@@ -18,6 +18,10 @@ struct Args {
     #[arg(default_value = "http://localhost:26657")]
     node: String,
 
+    /// ABCI query server URL (e.g., http://localhost:80)
+    #[arg(long, default_value = "http://localhost:80")]
+    query_url: String,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -28,6 +32,8 @@ enum Command {
     Print,
     /// Verify the LightBlock and print the apphash
     Verify,
+    /// Get canonical leaves from the query server
+    Leaves,
 }
 
 // LightBlock structure: signed_header + validator_set
@@ -68,6 +74,36 @@ async fn main() -> Result<()> {
             let apphash = light_block.signed_header.header.app_hash;
             println!("LightBlock verified successfully!");
             println!("AppHash: {}", hex::encode(apphash.as_bytes()));
+        }
+        Command::Leaves => {
+            let query_url = Url::parse(&args.query_url)
+                .map_err(|e| color_eyre::eyre::eyre!("invalid query URL: {}", e))?;
+            let leaves_url = query_url
+                .join("/canonical/leaves")
+                .map_err(|e| color_eyre::eyre::eyre!("failed to construct leaves URL: {}", e))?;
+
+            let response = reqwest::Client::new()
+                .get(leaves_url)
+                .send()
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("failed to fetch canonical leaves: {}", e))?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                return Err(color_eyre::eyre::eyre!(
+                    "query server returned error {}: {}",
+                    status,
+                    text
+                ));
+            }
+
+            let leaves: serde_json::Value = response
+                .json()
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("failed to parse response: {}", e))?;
+
+            println!("{}", serde_json::to_string_pretty(&leaves)?);
         }
     }
 
