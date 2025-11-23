@@ -30,11 +30,19 @@ struct Args {
 #[derive(clap::Subcommand)]
 enum Command {
     /// Print the latest LightBlock as JSON
-    Print,
+    Print {
+        /// Block height to fetch (if not provided, uses latest)
+        #[arg(long)]
+        height: Option<u64>,
+    },
     /// Verify the LightBlock and print the apphash
-    Verify,
-    /// Reconstruct the JMT from canonical leaves, verify the merkle proof up
-    /// to the `LightBlock`, and print the root hash
+    Verify {
+        /// Block height to fetch (if not provided, uses latest)
+        #[arg(long)]
+        height: Option<u64>,
+    },
+    /// Reconstruct the JMT from latest canonical leaves, verify the merkle proof up
+    /// to the corresponding `LightBlock`, and print the root hash
     Reconstruct,
 }
 
@@ -61,12 +69,20 @@ async fn main() -> Result<()> {
         .map_err(|e| color_eyre::eyre::eyre!("failed to create RPC client: {}", e))?;
 
     match args.command {
-        Command::Print => {
-            let (light_block, _) = fetch_light_block(&client).await?;
+        Command::Print { height } => {
+            let (light_block, _) = if let Some(h) = height {
+                fetch_light_block_at_height(&client, h).await?
+            } else {
+                fetch_light_block(&client).await?
+            };
             println!("{}", serde_json::to_string_pretty(&light_block)?);
         }
-        Command::Verify => {
-            let (light_block, status) = fetch_light_block(&client).await?;
+        Command::Verify { height } => {
+            let (light_block, status) = if let Some(h) = height {
+                fetch_light_block_at_height(&client, h).await?
+            } else {
+                fetch_light_block(&client).await?
+            };
             let chain_id = status.node_info.network.to_string();
             verify_light_block(
                 &light_block.signed_header,
@@ -137,6 +153,111 @@ async fn main() -> Result<()> {
             let leaves = response_data.leaves;
 
             println!("Block height: {}", block_height);
+
+            // In CometBFT, the app_hash in block header at height N is the state root after processing block N-1.
+            // The proof's app_hash is from block N (the current state).
+            // So we need to fetch the light block at height N+1 to get the app_hash that corresponds to block N's state.
+            let (light_block, status) = fetch_light_block_at_height(&client, block_height).await?;
+            let chain_id = status.node_info.network.to_string();
+            verify_light_block(
+                &light_block.signed_header,
+                &light_block.validator_set,
+                &chain_id,
+            )?;
+
+            // Fetch the next block to get the app_hash that corresponds to block N's state
+            let latest_height = status.sync_info.latest_block_height.value();
+            let next_block_height = block_height + 1;
+
+            // If block N is the latest block, wait for block N+1 to be committed
+            if block_height >= latest_height {
+                eprintln!(
+                    "Block {} is the latest block. Waiting for block {} to be committed...",
+                    block_height, next_block_height
+                );
+
+                // Poll for the next block
+                let mut attempts = 0;
+                let max_attempts = 60; // Wait up to a minute
+                loop {
+                    match fetch_light_block_at_height(&client, next_block_height).await {
+                        Ok((next_light_block, _)) => {
+                            // Block N+1 is now available
+                            let app_hash = next_light_block.signed_header.header.app_hash;
+                            let app_hash_bytes = app_hash.as_bytes();
+                            let proof_app_hash_bytes = hex::decode(&response_data.proof.app_hash)
+                                .map_err(|e| {
+                                color_eyre::eyre::eyre!(
+                                    "failed to decode app_hash from proof: {}",
+                                    e
+                                )
+                            })?;
+
+                            eprintln!(
+                                "Light block app_hash (hex) from height {}: {}",
+                                next_block_height,
+                                hex::encode(app_hash_bytes)
+                            );
+                            eprintln!(
+                                "Proof app_hash (hex) from block {}: {}",
+                                block_height, response_data.proof.app_hash
+                            );
+
+                            if app_hash_bytes != proof_app_hash_bytes.as_slice() {
+                                return Err(color_eyre::eyre::eyre!(
+                                    "app hash mismatch: light block (height {}) {} != proof (block {}) {}",
+                                    next_block_height,
+                                    hex::encode(app_hash_bytes),
+                                    block_height,
+                                    response_data.proof.app_hash
+                                ));
+                            }
+                            break;
+                        }
+                        Err(_) => {
+                            attempts += 1;
+                            if attempts >= max_attempts {
+                                return Err(color_eyre::eyre::eyre!(
+                                    "timeout waiting for block {} to be committed (waited {} attempts)",
+                                    next_block_height,
+                                    attempts
+                                ));
+                            }
+                            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+                        }
+                    }
+                }
+            } else {
+                // Block N+1 already exists, fetch it directly
+                let (next_light_block, _) =
+                    fetch_light_block_at_height(&client, next_block_height).await?;
+                let app_hash = next_light_block.signed_header.header.app_hash;
+                let app_hash_bytes = app_hash.as_bytes();
+                let proof_app_hash_bytes =
+                    hex::decode(&response_data.proof.app_hash).map_err(|e| {
+                        color_eyre::eyre::eyre!("failed to decode app_hash from proof: {}", e)
+                    })?;
+
+                eprintln!(
+                    "Light block app_hash (hex) from height {}: {}",
+                    next_block_height,
+                    hex::encode(app_hash_bytes)
+                );
+                eprintln!(
+                    "Proof app_hash (hex) from block {}: {}",
+                    block_height, response_data.proof.app_hash
+                );
+
+                if app_hash_bytes != proof_app_hash_bytes.as_slice() {
+                    return Err(color_eyre::eyre::eyre!(
+                        "app hash mismatch: light block (height {}) {} != proof (block {}) {}",
+                        next_block_height,
+                        hex::encode(app_hash_bytes),
+                        block_height,
+                        response_data.proof.app_hash
+                    ));
+                }
+            }
 
             // Create a temporary storage to reconstruct the tree
             let temp_dir =
@@ -327,14 +448,28 @@ async fn fetch_light_block(
     // Get the latest height from status
     let status = client.status().await?;
     let latest_height = status.sync_info.latest_block_height;
+    fetch_light_block_at_height(client, latest_height.value()).await
+}
 
-    // Fetch the latest commit (signed header)
-    let commit_result = client.commit(latest_height).await?;
+/// Fetch a light block at a specific height
+async fn fetch_light_block_at_height(
+    client: &HttpClient,
+    height: u64,
+) -> Result<(LightBlock, tendermint_rpc::endpoint::status::Response)> {
+    use tendermint::block::Height;
+    use tendermint_rpc::Paging;
+
+    let height =
+        Height::try_from(height).map_err(|e| color_eyre::eyre::eyre!("invalid height: {}", e))?;
+
+    // Get status for chain ID
+    let status = client.status().await?;
+
+    // Fetch the commit (signed header) for the specified height
+    let commit_result = client.commit(height).await?;
     let signed_header = commit_result.signed_header;
-    let height = signed_header.header.height;
 
     // Fetch validators for the same height
-    use tendermint_rpc::Paging;
     let validators_result = client.validators(height, Paging::All).await?;
     let all_validators = validators_result.validators;
 
