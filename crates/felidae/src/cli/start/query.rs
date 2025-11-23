@@ -286,36 +286,105 @@ pub fn app(storage: Storage) -> Router {
         move || async move {
             let snapshot = storage.latest_snapshot();
             let get_leaves = async move {
-                // Get and print the canonical root hash and app hash for debugging
                 let canonical_root_hash = snapshot
                     .prefix_root_hash("canonical")
                     .await
                     .map_err(|e| eyre!("failed to get canonical root hash: {}", e))?;
+                let internal_root_hash = snapshot
+                    .prefix_root_hash("internal")
+                    .await
+                    .map_err(|e| eyre!("failed to get internal root hash: {}", e))?;
                 let app_hash = snapshot
                     .root_hash()
                     .await
                     .map_err(|e| eyre!("failed to get app hash: {}", e))?;
                 debug!(
                     canonical_root_hash = hex::encode(canonical_root_hash.0.as_slice()),
+                    internal_root_hash = hex::encode(internal_root_hash.0.as_slice()),
                     app_hash = hex::encode(app_hash.0.as_slice()),
-                    "canonical leaves endpoint: canonical root hash and app hash"
+                    "canonical leaves endpoint: canonical root hash, internal root hash, and app hash"
                 );
 
                 let mut leaves = Vec::new();
                 // Use "canonical/" as the prefix to get all keys from canonical substore
                 let canonical_prefix = "canonical/";
                 let mut stream = Box::pin(StateRead::prefix_raw(&snapshot, canonical_prefix));
+                let mut representative_key: Option<String> = None;
                 while let Some(result) = stream.next().await {
                     let (key, value_bytes) = result.map_err(|e| eyre!("{}", e))?;
                     // we're intentionally keeping the full key including the "canonical/" prefix so the client can
                     // reconstruct the tree exactly
                     let value_hex = hex::encode(&value_bytes);
+                    // Use the last key as the representative key for the proof
+                    representative_key = Some(key.clone());
                     leaves.push(serde_json::json!({
                         "key": key,
                         "value": value_hex,
                     }));
                 }
-                Ok::<_, Report>(leaves)
+
+                // Get a Merkle proof for the last key from the canonical substore
+                // This proof will show the path from that key up to the app_hash
+                let merkle_proof_info = if let Some(rep_key) = representative_key.clone() {
+                    match snapshot.get_with_proof(rep_key.as_bytes().to_vec()).await {
+                        Ok((value_opt, proof)) => {
+                            // The proof is an ibc_types_core_commitment::proof::MerkleProof
+                            // According to cnidarium's get_with_proof, this proof contains:
+                            // 1. Proof from key to canonical_root_hash
+                            // 2. Proof from canonical_root_hash to app_hash
+                            //
+                            // Serialize each CommitmentProof in the proofs vector using prost
+                            let proof_bytes_vec: Vec<String> = proof
+                                .proofs
+                                .iter()
+                                .map(|p| {
+                                    let mut encoded = Vec::new();
+                                    prost::Message::encode(p, &mut encoded)
+                                        .map_err(|e| eyre!("failed to encode proof: {}", e))?;
+                                    Ok::<String, Report>(hex::encode(&encoded))
+                                })
+                                .collect::<Result<Vec<String>, Report>>()?;
+
+                            debug!(
+                                proof_key = rep_key,
+                                has_value = value_opt.is_some(),
+                                num_proofs = proof.proofs.len(),
+                                "Merkle proof generated for canonical key - includes proof from canonical_root_hash to app_hash"
+                            );
+
+                            Some(serde_json::json!({
+                                "representative_key": rep_key,
+                                "proof_bytes": proof_bytes_vec,
+                            }))
+                        }
+                        Err(e) => {
+                            debug!("Failed to get proof: {}", e);
+                            None
+                        }
+                    }
+                } else {
+                    debug!("No canonical keys found, cannot generate proof");
+                    None
+                };
+
+                // Construct the proof structure
+                let mut proof = serde_json::json!({
+                    "canonical_root_hash": hex::encode(canonical_root_hash.0.as_slice()),
+                    "app_hash": hex::encode(app_hash.0.as_slice()),
+                });
+
+                // Add the Merkle proof if available
+                // This proof contains the path from canonical_root_hash to app_hash
+                if let Some(merkle_proof_info) = merkle_proof_info {
+                    proof["merkle_proof"] = merkle_proof_info;
+                }
+
+                let response = serde_json::json!({
+                    "leaves": leaves,
+                    "proof": proof,
+                });
+
+                Ok::<_, Report>(response)
             };
 
             match get_leaves.await {

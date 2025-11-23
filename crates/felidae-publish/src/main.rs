@@ -106,10 +106,32 @@ async fn main() -> Result<()> {
                 value: String, // hex-encoded
             }
 
-            let leaves: Vec<Leaf> = response
+            #[derive(Deserialize)]
+            struct MerkleProofInfo {
+                representative_key: String,
+                proof_bytes: Vec<String>, // Array of hex-encoded proof bytes
+            }
+
+            #[derive(Deserialize)]
+            struct Proof {
+                canonical_root_hash: String,
+                app_hash: String,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                merkle_proof: Option<MerkleProofInfo>,
+            }
+
+            #[derive(Deserialize)]
+            struct CanonicalLeavesResponse {
+                leaves: Vec<Leaf>,
+                proof: Proof,
+            }
+
+            let response_data: CanonicalLeavesResponse = response
                 .json()
                 .await
                 .map_err(|e| color_eyre::eyre::eyre!("failed to parse response: {}", e))?;
+
+            let leaves = response_data.leaves;
 
             // Create a temporary storage to reconstruct the tree
             let temp_dir =
@@ -135,11 +157,154 @@ async fn main() -> Result<()> {
 
             // Get the canonical root hash
             let root_hash = store.root_hash(Some(Substore::Canonical)).await?;
+            let reconstructed_canonical_root_hash = hex::encode(root_hash.0.as_slice());
             println!("JMT reconstructed successfully!");
-            println!(
-                "Canonical root hash: {}",
-                hex::encode(root_hash.0.as_slice())
-            );
+            println!("Canonical root hash: {}", reconstructed_canonical_root_hash);
+
+            // Verify the canonical root hash matches (necessary but not sufficient)
+            let expected_canonical_root_hash = &response_data.proof.canonical_root_hash;
+            if reconstructed_canonical_root_hash != *expected_canonical_root_hash {
+                return Err(color_eyre::eyre::eyre!(
+                    "canonical root hash mismatch: reconstructed {} != expected {}",
+                    reconstructed_canonical_root_hash,
+                    expected_canonical_root_hash
+                ));
+            }
+
+            let app_hash_bytes: Vec<u8> = hex::decode(&response_data.proof.app_hash)
+                .map_err(|e| color_eyre::eyre::eyre!("failed to decode app_hash: {}", e))?;
+
+            // If we have a Merkle proof, use it to verify canonical_root_hash is in app_hash
+            if let Some(merkle_proof_info) = &response_data.proof.merkle_proof {
+                println!("Verifying canonical root hash is included in AppHash...");
+                use ibc_proto::ics23::CommitmentProof as ProtoCommitmentProof;
+                use ibc_types_core_commitment::MerkleProof;
+                use ibc_types_core_commitment::{MerklePath, MerkleRoot};
+                use prost::Message;
+
+                // Decode the proof bytes
+                let proofs: Vec<ibc_proto::ics23::CommitmentProof> = merkle_proof_info
+                    .proof_bytes
+                    .iter()
+                    .map(|proof_hex| {
+                        let proof_bytes = hex::decode(proof_hex).map_err(|e| {
+                            color_eyre::eyre::eyre!("failed to decode proof hex: {}", e)
+                        })?;
+                        ProtoCommitmentProof::decode(proof_bytes.as_slice()).map_err(|e| {
+                            color_eyre::eyre::eyre!("failed to decode CommitmentProof: {}", e)
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                let merkle_proof = MerkleProof { proofs };
+
+                // The proof has 2 parts:
+                // 1. Proof from key to canonical_root_hash (within canonical substore)
+                // 2. Proof from canonical_root_hash to app_hash (substore root to app root)
+                //
+                // We need to verify the full proof to ensure canonical_root_hash is in app_hash.
+                // The second proof should contain all necessary sibling hashes (including internal_root_hash)
+                // without requiring us to load the full internal substore.
+                if merkle_proof.proofs.len() >= 2 {
+                    // Use the actual JMT proof spec from cnidarium/jmt
+                    // This is the correct spec that matches how JMT generates proofs
+                    use cnidarium::ics23_spec;
+                    use ibc_proto::ics23::ProofSpec as ProtoProofSpec;
+
+                    // Get the actual JMT proof spec (returns ics23::ProofSpec)
+                    let jmt_spec_ics23 = ics23_spec();
+
+                    // Convert from ics23::ProofSpec to ibc_proto::ics23::ProofSpec
+                    let jmt_spec = ProtoProofSpec {
+                        leaf_spec: jmt_spec_ics23
+                            .leaf_spec
+                            .map(|leaf| ibc_proto::ics23::LeafOp {
+                                hash: leaf.hash,
+                                prehash_key: leaf.prehash_key,
+                                prehash_value: leaf.prehash_value,
+                                length: leaf.length,
+                                prefix: leaf.prefix,
+                            }),
+                        inner_spec: jmt_spec_ics23.inner_spec.map(|inner| {
+                            ibc_proto::ics23::InnerSpec {
+                                hash: inner.hash,
+                                child_order: inner.child_order,
+                                min_prefix_length: inner.min_prefix_length,
+                                max_prefix_length: inner.max_prefix_length,
+                                child_size: inner.child_size,
+                                empty_child: inner.empty_child,
+                            }
+                        }),
+                        max_depth: jmt_spec_ics23.max_depth,
+                        min_depth: jmt_spec_ics23.min_depth,
+                        prehash_key_before_comparison: jmt_spec_ics23.prehash_key_before_comparison,
+                    };
+
+                    // Get the representative key and value for the first proof
+                    let proof_key = merkle_proof_info.representative_key.as_bytes().to_vec();
+                    let proof_value = leaves
+                        .iter()
+                        .find(|leaf| leaf.key == merkle_proof_info.representative_key)
+                        .map(|leaf| hex::decode(&leaf.value).unwrap_or_default())
+                        .ok_or_else(|| {
+                            color_eyre::eyre::eyre!(
+                                "representative key {} not found in leaves",
+                                merkle_proof_info.representative_key
+                            )
+                        })?;
+
+                    // Extract the key within the canonical substore (without "canonical/" prefix)
+                    let canonical_key = proof_key.strip_prefix(b"canonical/").ok_or_else(|| {
+                        color_eyre::eyre::eyre!(
+                            "representative key {} doesn't start with 'canonical/'",
+                            merkle_proof_info.representative_key
+                        )
+                    })?;
+
+                    // Construct the MerklePath for the full proof
+                    // Keys are from root to leaf: ["canonical", "<key-within-canonical>"]
+                    let merkle_path = MerklePath {
+                        key_path: vec![
+                            "canonical".to_string(),
+                            String::from_utf8_lossy(canonical_key).to_string(),
+                        ],
+                    };
+
+                    let merkle_root = MerkleRoot {
+                        hash: app_hash_bytes.clone(),
+                    };
+
+                    // Verify the full proof - this proves:
+                    // 1. The key/value is in canonical_root_hash
+                    // 2. canonical_root_hash is in app_hash
+                    merkle_proof
+                        .verify_membership(
+                            &[jmt_spec.clone(), jmt_spec],
+                            merkle_root,
+                            merkle_path,
+                            proof_value,
+                            0,
+                        )
+                        .map_err(|e| {
+                            color_eyre::eyre::eyre!(
+                                "Failed to verify Merkle proof (canonical_root_hash in AppHash): {}",
+                                e
+                            )
+                        })?;
+
+                    println!("Verified that canonical_root_hash is included in AppHash!");
+                } else {
+                    return Err(color_eyre::eyre::eyre!(
+                        "Merkle proof should have at least 2 parts, got {}",
+                        merkle_proof.proofs.len()
+                    ));
+                }
+            } else {
+                // No Merkle proof available - we can't verify without it
+                eprintln!(
+                    "No Merkle proof available - cannot verify canonical_root_hash inclusion in AppHash"
+                );
+            }
 
             // Clean up temporary directory (but a Clever Client might leave this around such that Later (TM) they
             // can do incremental updates)
