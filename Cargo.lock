@@ -1041,6 +1041,7 @@ dependencies = [
  "directories",
  "felidae-admin",
  "felidae-oracle",
+ "felidae-proto",
  "felidae-state",
  "felidae-types",
  "fqdn",

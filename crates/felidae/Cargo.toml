@@ -8,6 +8,7 @@ felidae-types = { path = "../felidae-types" }
 felidae-state = { path = "../felidae-state" }
 felidae-admin = { path = "../felidae-admin" }
 felidae-oracle = { path = "../felidae-oracle" }
+felidae-proto = { path = "../felidae-proto" }
 futures = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }

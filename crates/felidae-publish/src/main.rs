@@ -33,7 +33,8 @@ enum Command {
     Print,
     /// Verify the LightBlock and print the apphash
     Verify,
-    /// Reconstruct the JMT from canonical leaves and print the root hash
+    /// Reconstruct the JMT from canonical leaves, verify the merkle proof up
+    /// to the `LightBlock`, and print the root hash
     Reconstruct,
 }
 
@@ -122,6 +123,7 @@ async fn main() -> Result<()> {
 
             #[derive(Deserialize)]
             struct CanonicalLeavesResponse {
+                block_height: u64,
                 leaves: Vec<Leaf>,
                 proof: Proof,
             }
@@ -131,7 +133,10 @@ async fn main() -> Result<()> {
                 .await
                 .map_err(|e| color_eyre::eyre::eyre!("failed to parse response: {}", e))?;
 
+            let block_height = response_data.block_height;
             let leaves = response_data.leaves;
+
+            println!("Block height: {}", block_height);
 
             // Create a temporary storage to reconstruct the tree
             let temp_dir =

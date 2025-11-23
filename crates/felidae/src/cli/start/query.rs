@@ -3,8 +3,8 @@ use axum::{Router, extract::Path, routing::get};
 use cnidarium::{StateDelta, StateRead, Storage};
 use color_eyre::{Report, eyre::eyre};
 use felidae_admin::HashObserved;
-use felidae_state::State;
 use felidae_state::Vote;
+use felidae_state::{State, Substore};
 use felidae_types::transaction::{Config, Domain, Empty};
 use fqdn::FQDN;
 use futures::StreamExt;
@@ -286,6 +286,16 @@ pub fn app(storage: Storage) -> Router {
         move || async move {
             let snapshot = storage.latest_snapshot();
             let get_leaves = async move {
+                use felidae_proto::DomainType;
+                use tendermint::block::Height;
+                let block_height_bytes = snapshot
+                    .get_raw(&Substore::Internal.prefix("current/block_height"))
+                    .await
+                    .map_err(|e| eyre!("failed to get block height: {}", e))?
+                    .ok_or_else(|| eyre!("block height not found in state"))?;
+                let block_height = Height::decode(block_height_bytes.as_ref())
+                    .map_err(|e| eyre!("failed to decode block height: {}", e))?;
+
                 let canonical_root_hash = snapshot
                     .prefix_root_hash("canonical")
                     .await
@@ -380,6 +390,7 @@ pub fn app(storage: Storage) -> Router {
                 }
 
                 let response = serde_json::json!({
+                    "block_height": block_height.value(),
                     "leaves": leaves,
                     "proof": proof,
                 });
