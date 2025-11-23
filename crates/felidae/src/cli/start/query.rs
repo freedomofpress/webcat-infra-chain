@@ -286,14 +286,19 @@ pub fn app(storage: Storage) -> Router {
         move || async move {
             let snapshot = storage.latest_snapshot();
             let get_leaves = async move {
-                // Get and print the canonical root hash for debugging
-                let root_hash = snapshot
+                // Get and print the canonical root hash and app hash for debugging
+                let canonical_root_hash = snapshot
                     .prefix_root_hash("canonical")
                     .await
                     .map_err(|e| eyre!("failed to get canonical root hash: {}", e))?;
+                let app_hash = snapshot
+                    .root_hash()
+                    .await
+                    .map_err(|e| eyre!("failed to get app hash: {}", e))?;
                 debug!(
-                    canonical_root_hash = hex::encode(root_hash.0.as_slice()),
-                    "canonical leaves endpoint: canonical root hash"
+                    canonical_root_hash = hex::encode(canonical_root_hash.0.as_slice()),
+                    app_hash = hex::encode(app_hash.0.as_slice()),
+                    "canonical leaves endpoint: canonical root hash and app hash"
                 );
 
                 let mut leaves = Vec::new();
