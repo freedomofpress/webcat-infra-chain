@@ -24,7 +24,7 @@ struct Args {
 
 #[derive(clap::Subcommand)]
 enum Command {
-    /// Print the latest LightBlockas JSON
+    /// Print the latest LightBlock as JSON
     Print,
     /// Verify the LightBlock and print the apphash
     Verify,

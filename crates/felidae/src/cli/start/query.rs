@@ -1,9 +1,10 @@
 use axum::body::Body;
 use axum::{Router, extract::Path, routing::get};
-use cnidarium::{StateDelta, Storage};
-use color_eyre::Report;
+use cnidarium::{StateDelta, StateRead, Storage};
+use color_eyre::{Report, eyre::eyre};
 use felidae_admin::HashObserved;
-use felidae_state::{State, Vote};
+use felidae_state::State;
+use felidae_state::Vote;
 use felidae_types::transaction::{Config, Domain, Empty};
 use fqdn::FQDN;
 use futures::StreamExt;
@@ -279,6 +280,43 @@ pub fn app(storage: Storage) -> Router {
         }
     };
 
+    let canonical_leaves = {
+        let storage = storage.clone();
+        move || async move {
+            let snapshot = storage.latest_snapshot();
+            let get_leaves = async move {
+                let mut leaves = Vec::new();
+                // Use "canonical/" as the prefix to get all keys from canonical substore
+                let canonical_prefix = "canonical/";
+                let mut stream = Box::pin(StateRead::prefix_raw(&snapshot, canonical_prefix));
+                while let Some(result) = stream.next().await {
+                    let (key, value_bytes) = result.map_err(|e| eyre!("{}", e))?;
+                    // we're intentionally keeping the full key including the "canonical/" prefix so the client can
+                    // reconstruct the tree exactly
+                    let value_hex = hex::encode(&value_bytes);
+                    leaves.push(serde_json::json!({
+                        "key": key,
+                        "value": value_hex,
+                    }));
+                }
+                Ok::<_, Report>(leaves)
+            };
+
+            match get_leaves.await {
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    [("Content-Type", "text/plain")],
+                    Body::from(e.to_string()),
+                ),
+                Ok(leaves) => (
+                    StatusCode::OK,
+                    [("Content-Type", "application/json")],
+                    Body::from(serde_json::to_string_pretty(&leaves).unwrap()),
+                ),
+            }
+        }
+    };
+
     let snapshot = || {
         let storage = storage.clone();
         move |domain| async move {
@@ -329,6 +367,10 @@ pub fn app(storage: Storage) -> Router {
     Router::new()
         .route("/config", get(move || async { config().await }))
         .route("/oracles", get(move || async { oracles().await }))
+        .route(
+            "/canonical/leaves",
+            get(move || async { canonical_leaves().await }),
+        )
         .route("/admin/votes", get(move || async { admin_votes().await }))
         .route(
             "/admin/pending",
