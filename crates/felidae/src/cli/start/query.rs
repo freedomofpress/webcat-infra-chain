@@ -11,6 +11,7 @@ use futures::StreamExt;
 use reqwest::StatusCode;
 use serde::Serialize;
 use tendermint::Time;
+use tracing::debug;
 
 pub fn app(storage: Storage) -> Router {
     let config = {
@@ -285,6 +286,16 @@ pub fn app(storage: Storage) -> Router {
         move || async move {
             let snapshot = storage.latest_snapshot();
             let get_leaves = async move {
+                // Get and print the canonical root hash for debugging
+                let root_hash = snapshot
+                    .prefix_root_hash("canonical")
+                    .await
+                    .map_err(|e| eyre!("failed to get canonical root hash: {}", e))?;
+                debug!(
+                    canonical_root_hash = hex::encode(root_hash.0.as_slice()),
+                    "canonical leaves endpoint: canonical root hash"
+                );
+
                 let mut leaves = Vec::new();
                 // Use "canonical/" as the prefix to get all keys from canonical substore
                 let canonical_prefix = "canonical/";

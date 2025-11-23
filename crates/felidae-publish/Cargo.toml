@@ -17,4 +17,5 @@ serde_json = { workspace = true }
 color-eyre = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 hex = { workspace = true }
+felidae-state = { path = "../felidae-state" }
 

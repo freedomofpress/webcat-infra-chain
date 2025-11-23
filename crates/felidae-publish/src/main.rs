@@ -1,7 +1,8 @@
 use clap::Parser;
 use color_eyre::Result;
+use felidae_state::{Store, Substore};
 use reqwest::Url;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tendermint::block::signed_header::SignedHeader;
 use tendermint::crypto::default::signature::Verifier;
 use tendermint::crypto::signature::Verifier as VerifierTrait;
@@ -32,8 +33,8 @@ enum Command {
     Print,
     /// Verify the LightBlock and print the apphash
     Verify,
-    /// Get canonical leaves from the query server
-    Leaves,
+    /// Reconstruct the JMT from canonical leaves and print the root hash
+    Reconstruct,
 }
 
 // LightBlock structure: signed_header + validator_set
@@ -75,7 +76,8 @@ async fn main() -> Result<()> {
             println!("LightBlock verified successfully!");
             println!("AppHash: {}", hex::encode(apphash.as_bytes()));
         }
-        Command::Leaves => {
+        Command::Reconstruct => {
+            // First, get the leaves from the query server
             let query_url = Url::parse(&args.query_url)
                 .map_err(|e| color_eyre::eyre::eyre!("invalid query URL: {}", e))?;
             let leaves_url = query_url
@@ -98,12 +100,50 @@ async fn main() -> Result<()> {
                 ));
             }
 
-            let leaves: serde_json::Value = response
+            #[derive(Deserialize)]
+            struct Leaf {
+                key: String,
+                value: String, // hex-encoded
+            }
+
+            let leaves: Vec<Leaf> = response
                 .json()
                 .await
                 .map_err(|e| color_eyre::eyre::eyre!("failed to parse response: {}", e))?;
 
-            println!("{}", serde_json::to_string_pretty(&leaves)?);
+            // Create a temporary storage to reconstruct the tree
+            let temp_dir =
+                std::env::temp_dir().join(format!("felidae-reconstruct-{}", std::process::id()));
+            let mut store = Store::init(temp_dir.clone()).await?;
+
+            // Insert all leaves into the canonical substore
+            // The keys already include "canonical/" prefix, so we can use them directly with put_raw
+            for leaf in &leaves {
+                let value_bytes = hex::decode(&leaf.value).map_err(|e| {
+                    color_eyre::eyre::eyre!(
+                        "failed to decode hex value for key {}: {}",
+                        leaf.key,
+                        e
+                    )
+                })?;
+                // put_raw expects the full prefixed key (which already includes "canonical/")
+                store.put_raw(&leaf.key, value_bytes).await;
+            }
+
+            // Commit to get the root hash
+            store.commit().await?;
+
+            // Get the canonical root hash
+            let root_hash = store.root_hash(Some(Substore::Canonical)).await?;
+            println!("JMT reconstructed successfully!");
+            println!(
+                "Canonical root hash: {}",
+                hex::encode(root_hash.0.as_slice())
+            );
+
+            // Clean up temporary directory (but a Clever Client might leave this around such that Later (TM) they
+            // can do incremental updates)
+            let _ = std::fs::remove_dir_all(&temp_dir);
         }
     }
 
