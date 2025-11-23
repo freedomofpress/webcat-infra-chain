@@ -5,7 +5,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     #[instrument(skip(self, observe), fields(domain = %observe.observation.domain, zone = %observe.observation.zone))]
     pub(crate) async fn observe(&mut self, observe: &Observe) -> Result<(), Report> {
         let Observe {
-            oracle: oracle @ Oracle { identity },
+            oracle: oracle @ OracleIdentity { identity },
             observation:
                 Observation {
                     domain: subdomain,
@@ -25,7 +25,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             .oracles
             .authorized
             .iter()
-            .any(|o| o == oracle)
+            .any(|o| o.identity == oracle.identity)
         {
             bail!("not a current oracle: {}", hex::encode(identity));
         }

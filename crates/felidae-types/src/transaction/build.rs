@@ -2,7 +2,7 @@ use prost::bytes::Bytes;
 use tendermint::Time;
 
 use crate::transaction::{
-    Action, Admin, ChainId, Config, Observation, Observe, Oracle, Reconfigure, Transaction,
+    Action, Admin, ChainId, Config, Observation, Observe, OracleIdentity, Reconfigure, Transaction,
 };
 
 pub struct Builder {
@@ -42,7 +42,7 @@ impl Builder {
 
     pub fn observe(self, oracle: impl Into<Bytes>, observation: Observation) -> Self {
         self.action(Action::Observe(Observe {
-            oracle: Oracle {
+            oracle: OracleIdentity {
                 identity: oracle.into(),
             },
             observation,

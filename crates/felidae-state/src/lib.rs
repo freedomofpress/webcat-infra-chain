@@ -16,7 +16,7 @@ use felidae_types::{
     FQDN,
     transaction::{
         Action, Admin, AdminConfig, AuthenticatedTx, Blockstamp, ChainId, Config, Delay, Domain,
-        Empty, HashObserved, Observation, Observe, OnionConfig, Oracle, OracleConfig,
+        Empty, HashObserved, Observation, Observe, OnionConfig, OracleConfig, OracleIdentity,
         PrefixOrderDomain, Quorum, Reconfigure, Timeout, Total, Transaction, VotingConfig,
     },
 };
