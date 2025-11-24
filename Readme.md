@@ -6,6 +6,8 @@ system, reducing censorship risks and avoiding single points of trust or failure
 cheaper to run, as distributing trust makes high availability, backups, and redundancy of individual
 nodes less critical.
 
+For sequence diagrams of the enrollment flow and oracle/validator communication, see [here](docs/seq_diag.md).
+
 ### Key entities and behaviors
 
 The chain consists of a number of *nodes*, each of whom may or may not be a consensus validator.
