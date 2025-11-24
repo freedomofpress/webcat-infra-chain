@@ -24,38 +24,52 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
 
         // TODO: Set the genesis time in the state
 
-        // Ensure that the app state is empty:
-        if !request.app_state_bytes.is_empty() {
-            bail!("app state must be empty");
-        }
+        // Load the initial config from the genesis file, or use a default if not provided:
+        let config = if request.app_state_bytes.is_empty() {
+            // Default config when no genesis config is provided:
+            Config {
+                version: 0,
+                admins: AdminConfig {
+                    authorized: vec![], // Default admin set: the first reconfig will set this
+                    voting: VotingConfig {
+                        total: Total(0),   // No admins required to initially reconfigure
+                        quorum: Quorum(0), // No quorum required to initially reconfigure
+                        timeout: Timeout(Duration::from_secs(0)), // No follow-up voting for initial reconfig
+                        delay: Delay(Duration::from_secs(0)),     // No delay for initial reconfig
+                    },
+                },
+                oracles: OracleConfig {
+                    enabled: false,     // Oracles disabled initially
+                    authorized: vec![], // No oracles initially
+                    voting: VotingConfig {
+                        total: Total(0),                                    // No oracles initially
+                        quorum: Quorum(0),                                  // No voting initially
+                        timeout: Timeout(Duration::from_secs(0)),           // No voting initially
+                        delay: Delay(Duration::from_secs(i64::MAX as u64)), // No voting initially
+                    },
+                    max_enrolled_subdomains: 0, // No subdomains initially
+                    observation_timeout: Duration::from_secs(i64::MAX as u64), // No observations initially
+                },
+                onion: OnionConfig { enabled: false },
+            }
+        } else {
+            // Parse the JSON from app_state_bytes and extract the config:
+            // The genesis file has app_state as JSON, which gets serialized to bytes
+            let app_state: serde_json::Value = serde_json::from_slice(&request.app_state_bytes)
+                .map_err(|e| eyre!("failed to parse app_state as JSON: {}", e))?;
+
+            // Extract the config key from app_state
+            let config_value = app_state
+                .get("config")
+                .ok_or_eyre("app_state must contain a 'config' key")?;
+
+            // Deserialize the config from JSON
+            serde_json::from_value(config_value.clone())
+                .map_err(|e| eyre!("failed to deserialize config from app_state.config: {}", e))?
+        };
 
         // Set the initial config in the state:
-        self.set_config(Config {
-            version: 0,
-            admins: AdminConfig {
-                authorized: vec![], // Default admin set: the first reconfig will set this
-                voting: VotingConfig {
-                    total: Total(0),   // No admins required to initially reconfigure
-                    quorum: Quorum(0), // No quorum required to initially reconfigure
-                    timeout: Timeout(Duration::from_secs(0)), // No follow-up voting for initial reconfig
-                    delay: Delay(Duration::from_secs(0)),     // No delay for initial reconfig
-                },
-            },
-            oracles: OracleConfig {
-                enabled: false,     // Oracles disabled initially
-                authorized: vec![], // No oracles initially
-                voting: VotingConfig {
-                    total: Total(0),                                    // No oracles initially
-                    quorum: Quorum(0),                                  // No voting initially
-                    timeout: Timeout(Duration::from_secs(0)),           // No voting initially
-                    delay: Delay(Duration::from_secs(i64::MAX as u64)), // No voting initially
-                },
-                max_enrolled_subdomains: 0, // No subdomains initially
-                observation_timeout: Duration::from_secs(i64::MAX as u64), // No observations initially
-            },
-            onion: OnionConfig { enabled: false },
-        })
-        .await?;
+        self.set_config(config).await?;
 
         // Declare the initial validator set:
         for validator in request.validators.iter() {
