@@ -127,7 +127,6 @@ To view your oracle public key:
 ```bash
 cargo run --bin felidae oracle identity
 ```
-
 ### 3. Configure `config.json`
 
 Add your public keys (from step 2) to the `authorized` lists for both admins and oracles in `config.json`. For oracles, you'll need to provide both the `identity` (public key) and `endpoint` (domain or IP address) for each oracle.
@@ -175,7 +174,36 @@ For a single-validator testing setup, configure the following:
 
 The endpoint is used by frontends to know where to submit enrollment requests to the oracle set.
 
-**Important:** Increment the `version` number in the config file.
+**Important:** You must increment the `version` number in the config file unless you add the config to the genesis file.
+
+**Note:** You can now skip steps 3-4 by adding the initial chain config in the genesis file by adding an `app_state` key with the `config`, e.g.:
+
+```
+{
+  "genesis_time": "2025-09-13T23:47:47.144389Z",
+  "chain_id": "my-webcat-testchain",
+  "initial_height": 0,
+  "app_state": {
+    "config": {
+      "version": 0,
+      "admins": {
+        "authorized": [...],
+        "voting": { ... }
+      },
+      "oracles": {
+        "enabled": true,
+        "authorized": [...],
+        "voting": { ... },
+        "max_enrolled_subdomains": 5,
+        "observation_timeout": "5m"
+      },
+      "onion": {
+        "enabled": false
+      }
+    }
+  }
+}
+```
 
 ### 4. Submit Configuration to Chain
 
