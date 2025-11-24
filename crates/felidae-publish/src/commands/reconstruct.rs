@@ -1,5 +1,11 @@
+use cnidarium::ics23_spec;
 use color_eyre::Result;
 use felidae_state::{Store, Substore};
+use ibc_proto::ics23::CommitmentProof as ProtoCommitmentProof;
+use ibc_proto::ics23::ProofSpec as ProtoProofSpec;
+use ibc_types_core_commitment::MerkleProof;
+use ibc_types_core_commitment::{MerklePath, MerkleRoot};
+use prost::Message;
 use reqwest::Url;
 use serde::Deserialize;
 use tendermint_rpc::HttpClient;
@@ -206,10 +212,6 @@ pub async fn reconstruct(client: &HttpClient, query_url: &str) -> Result<()> {
     // If we have a Merkle proof, use it to verify canonical_root_hash is in app_hash
     if let Some(merkle_proof_info) = &response_data.proof.merkle_proof {
         println!("Verifying canonical root hash is included in AppHash...");
-        use ibc_proto::ics23::CommitmentProof as ProtoCommitmentProof;
-        use ibc_types_core_commitment::MerkleProof;
-        use ibc_types_core_commitment::{MerklePath, MerkleRoot};
-        use prost::Message;
 
         // Decode the proof bytes
         let proofs: Vec<ibc_proto::ics23::CommitmentProof> = merkle_proof_info
@@ -229,19 +231,13 @@ pub async fn reconstruct(client: &HttpClient, query_url: &str) -> Result<()> {
         // 1. Proof from key to canonical_root_hash (within canonical substore)
         // 2. Proof from canonical_root_hash to app_hash (substore root to app root)
         //
-        // We need to verify the full proof to ensure canonical_root_hash is in app_hash.
-        // The second proof should contain all necessary sibling hashes (including internal_root_hash)
-        // without requiring us to load the full internal substore.
+        // See in crate `cnidarium` `Snapshot::get_with_proof` where this happens.
         if merkle_proof.proofs.len() >= 2 {
-            // Use the actual JMT proof spec from cnidarium/jmt
-            // This is the correct spec that matches how JMT generates proofs
-            use cnidarium::ics23_spec;
-            use ibc_proto::ics23::ProofSpec as ProtoProofSpec;
-
             // Get the actual JMT proof spec (returns ics23::ProofSpec)
             let jmt_spec_ics23 = ics23_spec();
 
-            // Convert from ics23::ProofSpec to ibc_proto::ics23::ProofSpec
+            // Convert from ics23::ProofSpec to `ibc_proto::ics23::ProofSpec`
+            // which is what `MerkleProof::verify_membership` expects
             let jmt_spec = ProtoProofSpec {
                 leaf_spec: jmt_spec_ics23
                     .leaf_spec
@@ -321,16 +317,21 @@ pub async fn reconstruct(client: &HttpClient, query_url: &str) -> Result<()> {
 
             println!("Verified that canonical_root_hash is included in AppHash!");
         } else {
+            // We need to bail here because this likely means the second part of the proof
+            // which proves `canonical_root_hash` is in `app_hash` is missing, and that's
+            // the one we care about (we already checked the root of the canonical substore
+            // matches what we got from the query server).
             return Err(color_eyre::eyre::eyre!(
                 "Merkle proof should have at least 2 parts, got {}",
                 merkle_proof.proofs.len()
             ));
         }
     } else {
-        // No Merkle proof available - we can't verify without it
-        eprintln!(
+        // No Merkle proof available - we can't verify without it and shouldn't blindly trust
+        // what we get from the server, so we need to error out.
+        return Err(color_eyre::eyre::eyre!(
             "No Merkle proof available - cannot verify canonical_root_hash inclusion in AppHash"
-        );
+        ));
     }
 
     // Clean up temporary directory (but a Clever Client might leave this around such that Later (TM) they
