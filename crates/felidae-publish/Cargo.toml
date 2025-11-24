@@ -1,0 +1,25 @@
+[package]
+name = "felidae-publish"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "felidae-publish"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+tendermint = { workspace = true }
+tendermint-rpc = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+color-eyre = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+hex = { workspace = true }
+felidae-state = { path = "../felidae-state" }
+prost = { workspace = true }
+ibc-types-core-commitment = "0.16"
+ics23 = "0.10"
+ibc-proto = "0.49"
+cnidarium = { workspace = true }

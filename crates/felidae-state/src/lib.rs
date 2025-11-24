@@ -36,11 +36,11 @@ use tendermint::{
 };
 
 mod store;
-pub use store::Store;
 use store::{
     StateReadExt, StateWriteExt,
     Substore::{Canonical, Internal},
 };
+pub use store::{Store, Substore};
 
 pub use state::Vote;
 

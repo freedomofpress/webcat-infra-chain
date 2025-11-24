@@ -165,6 +165,16 @@ impl Store {
             state: Arc::new(RwLock::new(State { store: fork })),
         }
     }
+
+    /// Put raw bytes into the state using a prefixed key (e.g., "canonical/key").
+    /// This is useful for reconstructing state from exported leaves.
+    pub async fn put_raw(&mut self, prefixed_key: &str, value: Vec<u8>) {
+        self.state
+            .write()
+            .await
+            .store
+            .put_raw(prefixed_key.to_string(), value);
+    }
 }
 
 impl<T> StateReadExt for T where T: StateRead + Send + Sync + 'static {}
