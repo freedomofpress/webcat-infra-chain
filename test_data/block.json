@@ -1,0 +1,71 @@
+{
+  "signed_header": {
+    "header": {
+      "version": {
+        "block": "11",
+        "app": "0"
+      },
+      "chain_id": "test-chain-hGjZNv",
+      "height": "679",
+      "time": "2025-11-24T14:24:23.800904Z",
+      "last_block_id": {
+        "hash": "93D5D680A7D3CC428CAF63FACEFD1EF3FB1A9A87F0FE5EFDA37EF86492B24B7E",
+        "parts": {
+          "total": 1,
+          "hash": "8CF71A125787844E4F656F276232EA5B2948A545A802A0B61FA6C6195420C379"
+        }
+      },
+      "last_commit_hash": "425B68574A14FCC607E72E2C2AECB84D9DCA73555F6580C10247EBDE96C1DF0B",
+      "data_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+      "validators_hash": "04C72627103FD466C7B4C30C0E654D2B58EA140493C009B8BAB66749FFEBE60C",
+      "next_validators_hash": "04C72627103FD466C7B4C30C0E654D2B58EA140493C009B8BAB66749FFEBE60C",
+      "consensus_hash": "048091BC7DDC283F77BFBF91D73C44DA58C3DF8A9CBC867405D8B7F3DAADA22F",
+      "app_hash": "79960B49DA7A84473A1E2541D15952B9E677A471BF7663E546DDD57F66D8BAC3",
+      "last_results_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+      "evidence_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+      "proposer_address": "F588CF8C0CA8D88CDD2F909C8262018B361CF5D5"
+    },
+    "commit": {
+      "height": "679",
+      "round": 0,
+      "block_id": {
+        "hash": "15593344841DEF05D8FF735DF57D637B2BB35EE74E37D845DD831CCE5BD201E7",
+        "parts": {
+          "total": 1,
+          "hash": "DDF5F13136B6808C592498BA251E51D0B2A3CFCB341FB60ECFE15057A230A6D4"
+        }
+      },
+      "signatures": [
+        {
+          "block_id_flag": 2,
+          "validator_address": "F588CF8C0CA8D88CDD2F909C8262018B361CF5D5",
+          "timestamp": "2025-11-24T14:24:25.800904Z",
+          "signature": "ZSthO4dnHBz8Qle2BeLt88KMnuF5lK8r34wbHM4wEztQCwX38Y0kBqJtAywYBjCuFXJhXshfn/T+52Cp6YysAA=="
+        }
+      ]
+    }
+  },
+  "validator_set": {
+    "validators": [
+      {
+        "address": "F588CF8C0CA8D88CDD2F909C8262018B361CF5D5",
+        "pub_key": {
+          "type": "tendermint/PubKeyEd25519",
+          "value": "Pn7hPwDPYkoBBTKxdxL0QZLdPCupGXyds/qSyOIBSZg="
+        },
+        "power": "10",
+        "name": null
+      }
+    ],
+    "proposer": {
+      "address": "F588CF8C0CA8D88CDD2F909C8262018B361CF5D5",
+      "pub_key": {
+        "type": "tendermint/PubKeyEd25519",
+        "value": "Pn7hPwDPYkoBBTKxdxL0QZLdPCupGXyds/qSyOIBSZg="
+      },
+      "power": "10",
+      "name": null
+    },
+    "total_voting_power": "10"
+  }
+}
