@@ -102,9 +102,9 @@ pub fn witness(
         // https://github.com/freedomofpress/webcat-spec/blob/main/server.md
         // Threshold must be at least 1.
         if enrollment.threshold == 0 {
-            return Err(Error::InvalidEnrollment(
-                "threshold must be at least 1".to_string(),
-            ));
+            return Err(
+                Error::InvalidEnrollment("threshold must be at least 1".to_string()).into(),
+            );
         }
         // From the spec:
         // The value of threshold MUST be less than or equal to the number of entries in signers
@@ -113,7 +113,8 @@ pub fn witness(
                 "threshold ({}) must be less than or equal to the number of signers ({})",
                 enrollment.threshold,
                 enrollment.signers.len()
-            )));
+            ))
+            .into());
         }
 
         let canonicalized = canonical_json::to_string(&serde_json::to_value(&enrollment)?)?;
