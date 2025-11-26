@@ -14,12 +14,6 @@ use crate::light_block::fetch_light_block_at_height;
 use crate::verification::verify_light_block;
 
 #[derive(Deserialize)]
-struct Leaf {
-    key: String,
-    value: String, // hex-encoded
-}
-
-#[derive(Deserialize)]
 struct MerkleProofInfo {
     representative_key: String,
     proof_bytes: Vec<String>, // Array of hex-encoded proof bytes
@@ -36,7 +30,7 @@ struct Proof {
 #[derive(Deserialize)]
 struct CanonicalLeavesResponse {
     block_height: u64,
-    leaves: Vec<Leaf>,
+    leaves: Vec<[String; 2]>, // Array of [key, value] pairs
     proof: Proof,
 }
 
@@ -180,11 +174,13 @@ pub async fn reconstruct(client: &HttpClient, query_url: &str) -> Result<()> {
     // Insert all leaves into the canonical substore
     // The keys already include "canonical/" prefix, so we can use them directly with put_raw
     for leaf in &leaves {
-        let value_bytes = hex::decode(&leaf.value).map_err(|e| {
-            color_eyre::eyre::eyre!("failed to decode hex value for key {}: {}", leaf.key, e)
+        let key = &leaf[0];
+        let value_hex = &leaf[1];
+        let value_bytes = hex::decode(value_hex).map_err(|e| {
+            color_eyre::eyre::eyre!("failed to decode hex value for key {}: {}", key, e)
         })?;
         // put_raw expects the full prefixed key (which already includes "canonical/")
-        store.put_raw(&leaf.key, value_bytes).await;
+        store.put_raw(key, value_bytes).await;
     }
 
     // Commit to get the root hash
@@ -267,8 +263,8 @@ pub async fn reconstruct(client: &HttpClient, query_url: &str) -> Result<()> {
             let proof_key = merkle_proof_info.representative_key.as_bytes().to_vec();
             let proof_value = leaves
                 .iter()
-                .find(|leaf| leaf.key == merkle_proof_info.representative_key)
-                .map(|leaf| hex::decode(&leaf.value).unwrap_or_default())
+                .find(|leaf| leaf[0] == merkle_proof_info.representative_key)
+                .map(|leaf| hex::decode(&leaf[1]).unwrap_or_default())
                 .ok_or_else(|| {
                     color_eyre::eyre::eyre!(
                         "representative key {} not found in leaves",

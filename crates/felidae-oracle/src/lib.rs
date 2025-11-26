@@ -10,6 +10,8 @@
 use serde::{Deserialize, Serialize};
 
 use ed25519_dalek::VerifyingKey;
+use olpc_cjson::CanonicalFormatter;
+use serde_json::Serializer;
 use sha2::Digest;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -49,7 +51,7 @@ pub enum Error {
     Enrollment(#[from] serde_json::Error),
     /// Bad canonicalization of enrollment JSON.
     #[error("failed to canonicalize enrollment JSON: {0}")]
-    Canonicalization(#[from] canonical_json::CanonicalJSONError),
+    Canonicalization(serde_json::Error),
     /// Invalid enrollment data.
     #[error("invalid enrollment: {0}")]
     InvalidEnrollment(String),
@@ -137,7 +139,12 @@ pub fn witness(
                 .map_err(|_| Error::InvalidEnrollment("invalid Ed25519 public key".to_string()))?;
         }
 
-        let canonicalized = canonical_json::to_string(&serde_json::to_value(&enrollment)?)?;
+        let mut canonicalized = Vec::new();
+        let mut serializer =
+            Serializer::with_formatter(&mut canonicalized, CanonicalFormatter::new());
+        serde_json::to_value(&enrollment)?
+            .serialize(&mut serializer)
+            .map_err(Error::Canonicalization)?;
         let canonical_hash = sha2::Sha256::digest(&canonicalized).into();
         HashObserved::Hash(canonical_hash)
     } else {
