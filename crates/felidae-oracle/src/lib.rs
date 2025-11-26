@@ -9,6 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use ed25519_dalek::VerifyingKey;
 use sha2::Digest;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -49,6 +50,9 @@ pub enum Error {
     /// Bad canonicalization of enrollment JSON.
     #[error("failed to canonicalize enrollment JSON: {0}")]
     Canonicalization(#[from] canonical_json::CanonicalJSONError),
+    /// Invalid enrollment data.
+    #[error("invalid enrollment: {0}")]
+    InvalidEnrollment(String),
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -56,10 +60,20 @@ type WitnessError = JsError;
 #[cfg(not(target_arch = "wasm32"))]
 type WitnessError = Error;
 
+/// Enrollment policy structure as defined in the spec:
+/// https://github.com/freedomofpress/webcat-spec/blob/main/server.md
 #[derive(Serialize, Deserialize)]
 struct Enrollment {
-    // Filling in the structure fields for enrollments ensures we will only certify
-    // well-formed enrollments.
+    /// An array of Ed25519 public keys, base64-encoded.
+    signers: Vec<String>,
+    /// The minimum number of distinct valid signatures required to accept a manifest as valid.
+    threshold: u32,
+    /// A base64-encoded string representing the compiled Sigsum policy.
+    policy: String,
+    /// The maximum number of seconds a manifest may remain valid after its signing timestamp.
+    max_age: u64,
+    /// The base URL of the Content Addressable Storage (CAS).
+    cas_url: String,
 }
 
 /// Create a hex-encoded, signed transaction witnessing the given observation on the given chain,
@@ -84,6 +98,45 @@ pub fn witness(
     // Get the canonical hash of the enrollment:
     let hash_observed = if !enrollment.is_empty() {
         let enrollment: Enrollment = serde_json::from_str(&enrollment)?;
+
+        // Validate enrollment constraints from the spec
+        // https://github.com/freedomofpress/webcat-spec/blob/main/server.md
+        // Threshold must be at least 1.
+        if enrollment.threshold == 0 {
+            return Err(
+                Error::InvalidEnrollment("threshold must be at least 1".to_string()).into(),
+            );
+        }
+
+        // From the spec:
+        // The value of threshold MUST be less than or equal to the number of entries in signers
+        if enrollment.threshold as usize > enrollment.signers.len() {
+            return Err(Error::InvalidEnrollment(format!(
+                "threshold ({}) must be less than or equal to the number of signers ({})",
+                enrollment.threshold,
+                enrollment.signers.len()
+            ))
+            .into());
+        }
+
+        // Validate the policy is a valid base64 string.
+        let _policy = base64_url::decode(&enrollment.policy).map_err(|_| {
+            Error::InvalidEnrollment("policy must be a valid base64 string".to_string())
+        })?;
+
+        // Validate that each key is a valid base64-encoded Ed25519 public key.
+        for key in &enrollment.signers {
+            let key_bytes = base64_url::decode(key).map_err(|_| {
+                Error::InvalidEnrollment("key must be a valid base64 string".to_string())
+            })?;
+            // Try to parse as Ed25519 public key (must be exactly 32 bytes and valid)
+            let key_array: [u8; 32] = key_bytes.try_into().map_err(|_| {
+                Error::InvalidEnrollment("Ed25519 public key must be exactly 32 bytes".to_string())
+            })?;
+            VerifyingKey::from_bytes(&key_array)
+                .map_err(|_| Error::InvalidEnrollment("invalid Ed25519 public key".to_string()))?;
+        }
+
         let canonicalized = canonical_json::to_string(&serde_json::to_value(&enrollment)?)?;
         let canonical_hash = sha2::Sha256::digest(&canonicalized).into();
         HashObserved::Hash(canonical_hash)
