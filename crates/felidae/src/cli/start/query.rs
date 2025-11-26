@@ -327,10 +327,8 @@ pub fn app(storage: Storage) -> Router {
                     let value_hex = hex::encode(&value_bytes);
                     // Use the last key as the representative key for the proof
                     representative_key = Some(key.clone());
-                    leaves.push(serde_json::json!({
-                        "key": key,
-                        "value": value_hex,
-                    }));
+                    // Return as [key, value] pairs
+                    leaves.push(serde_json::json!([key, value_hex]));
                 }
 
                 // Get a Merkle proof for the last key from the canonical substore
