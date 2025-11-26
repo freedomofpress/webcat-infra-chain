@@ -14,6 +14,8 @@ serde_json = { workspace = true }
 serde = { workspace = true }
 sha2 = { workspace = true }
 canonical_json = { workspace = true }
+base64-url = { workspace = true }
+ed25519-dalek = { workspace = true }
 
 [lib]
 crate-type = ["lib", "cdylib"]
