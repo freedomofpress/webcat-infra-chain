@@ -1,0 +1,81 @@
+{
+  "genesis_time": "2025-09-13T23:47:47.144389Z",
+  "chain_id": "webcat-testnet-01",
+  "initial_height": "0",
+  "consensus_params": {
+    "block": {
+      "max_bytes": "22020096",
+      "max_gas": "-1",
+      "time_iota_ms": "1000"
+    },
+    "evidence": {
+      "max_age_num_blocks": "100000",
+      "max_age_duration": "172800000000000",
+      "max_bytes": "1048576"
+    },
+    "validator": {
+      "pub_key_types": [
+        "ed25519"
+      ]
+    },
+    "version": {}
+  },
+  "validators": [
+    {
+      "address": "F588CF8C0CA8D88CDD2F909C8262018B361CF5D5",
+      "pub_key": {
+        "type": "tendermint/PubKeyEd25519",
+        "value": "Pn7hPwDPYkoBBTKxdxL0QZLdPCupGXyds/qSyOIBSZg="
+      },
+      "power": "10",
+      "name": ""
+    }
+  ],
+  "app_hash": "",
+  "app_state": {
+    "config": {
+      "version": 0,
+      "admins": {
+        "voting": {
+          "total": 3,
+          "quorum": 2,
+          "timeout": "1day",
+          "delay": "0s"
+        },
+        "authorized": [
+          "044c2cdd8e492567beed0281e8234a8299992ad5fb4e1f874def58512d88995e7f8c703215147078cf0dd079bff85ac3cf99d314af7e85a9a8a5185d9ebe2ab8f0",
+          "04ce97598d7bd6bc93a84241f3aa782259d4060280e253ebdfbb7c1c4ac0afca2740434df3690ce6bad0d32df78f78a5ab9660504e6627ddf0f4f3386361bd28ff",
+          "0460f224e763f10a6ad88b61f2540454f33911c8041ec364eef4fadef307c54516ad5b1faf5778fe3ef0eeccc94f8fb136be62c04cffa1a0ddf05638e958e5c416"
+        ]
+      },
+      "oracles": {
+        "enabled": true,
+        "voting": {
+          "total": 3,
+          "quorum": 2,
+          "timeout": "5m",
+          "delay": "30s"
+        },
+        "max_enrolled_subdomains": 5,
+        "observation_timeout": "5m",
+        "authorized": [
+          {
+            "identity": "04e2c1b1c0af714cc9d65f756112de4adc4b69e97177ec4df82ae71ef620eb5cbbdc6befc4576d3923fd9af400b79b436e83507b19685b7523accb9c8b1c598742",
+            "endpoint": "127.0.0.1"
+          },
+          {
+            "identity": "04c49a156cf7a6ee085ba9e67ce41af7a795071002cbbe5f4b15a82396caf41e2913412e783ef861fdb7cac882cc0cb6ee353878d66132b47e7b3a45b5ad3d1379",
+            "endpoint": "127.0.0.1"
+          },
+          {
+            "identity": "0416f61fa7930922d3e8025f56c720ea5e762e5042a6414d1bf110fd86492a5103c4b75c32a4fc7e30573d5f2681b6c0422fe7a3f75d8fa1dd4dac3cb6fa6d07f0",
+            "endpoint": "127.0.0.1"
+          }
+        ]
+      },
+      "onion": {
+        "enabled": false
+      }
+    }
+  }
+}
