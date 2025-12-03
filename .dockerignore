@@ -1,0 +1,47 @@
+# Git files
+.git
+.gitignore
+.gitmodules
+
+# Build artifacts
+target/
+**/target/
+
+# Development files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Test data
+test_data/
+devnet/
+admin*/
+oracle*/
+
+# Config files (may contain secrets)
+config.json
+example.json
+
+# CometBFT submodule (not needed for building Rust binaries)
+cometbft/
+
+# Archive
+archive/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Justfile (not needed in container)
+justfile
+
