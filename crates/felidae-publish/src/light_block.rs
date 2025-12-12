@@ -37,8 +37,19 @@ pub async fn fetch_light_block_at_height(
     let status = client.status().await?;
 
     // Fetch the commit (signed header) for the specified height
-    // Retry until the block is committed
+    // Retry until the block is committed, but stop at 10 mins
+    let start_time = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(10 * 60);
+
     let commit_result = loop {
+        // Check if we've exceeded the timeout
+        if start_time.elapsed() > timeout {
+            return Err(color_eyre::eyre::eyre!(
+                "timeout waiting for block {} to be committed (waited 10 minutes)",
+                height.value()
+            ));
+        }
+
         match client.commit(height).await {
             Ok(result) => {
                 // Successfully got the commit, block is committed
