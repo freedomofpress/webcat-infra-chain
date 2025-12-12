@@ -37,7 +37,20 @@ pub async fn fetch_light_block_at_height(
     let status = client.status().await?;
 
     // Fetch the commit (signed header) for the specified height
-    let commit_result = client.commit(height).await?;
+    // Retry until the block is committed
+    let commit_result = loop {
+        match client.commit(height).await {
+            Ok(result) => {
+                // Successfully got the commit, block is committed
+                break result;
+            }
+            Err(_) => {
+                // Block not available yet, wait and retry
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                continue;
+            }
+        }
+    };
     let signed_header = commit_result.signed_header;
 
     // Fetch validators for the same height
