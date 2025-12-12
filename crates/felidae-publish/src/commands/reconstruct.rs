@@ -34,7 +34,11 @@ struct CanonicalLeavesResponse {
     proof: Proof,
 }
 
-pub async fn reconstruct(client: &HttpClient, query_url: &str) -> Result<()> {
+pub async fn reconstruct(
+    client: &HttpClient,
+    query_url: &str,
+    timeout: std::time::Duration,
+) -> Result<()> {
     // First, get the leaves from the query server
     let query_url =
         Url::parse(query_url).map_err(|e| color_eyre::eyre::eyre!("invalid query URL: {}", e))?;
@@ -71,7 +75,7 @@ pub async fn reconstruct(client: &HttpClient, query_url: &str) -> Result<()> {
     // In CometBFT, the app_hash in block header at height N is the state root after processing block N-1.
     // The proof's app_hash is from block N (the current state).
     // So we need to fetch the light block at height N+1 to get the app_hash that corresponds to block N's state.
-    let (light_block, status) = fetch_light_block_at_height(client, block_height).await?;
+    let (light_block, status) = fetch_light_block_at_height(client, block_height, timeout).await?;
     let chain_id = status.node_info.network.to_string();
     verify_light_block(
         &light_block.signed_header,
@@ -94,7 +98,7 @@ pub async fn reconstruct(client: &HttpClient, query_url: &str) -> Result<()> {
         let mut attempts = 0;
         let max_attempts = 60; // Wait up to a minute
         loop {
-            match fetch_light_block_at_height(client, next_block_height).await {
+            match fetch_light_block_at_height(client, next_block_height, timeout).await {
                 Ok((next_light_block, _)) => {
                     // Block N+1 is now available
                     let app_hash = next_light_block.signed_header.header.app_hash;
@@ -140,7 +144,8 @@ pub async fn reconstruct(client: &HttpClient, query_url: &str) -> Result<()> {
         }
     } else {
         // Block N+1 already exists, fetch it directly
-        let (next_light_block, _) = fetch_light_block_at_height(client, next_block_height).await?;
+        let (next_light_block, _) =
+            fetch_light_block_at_height(client, next_block_height, timeout).await?;
         let app_hash = next_light_block.signed_header.header.app_hash;
         let app_hash_bytes = app_hash.as_bytes();
         let proof_app_hash_bytes = hex::decode(&response_data.proof.app_hash)

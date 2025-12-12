@@ -15,17 +15,19 @@ pub struct LightBlock {
 /// Fetch the latest light block from the node
 pub async fn fetch_light_block(
     client: &HttpClient,
+    timeout: std::time::Duration,
 ) -> Result<(LightBlock, tendermint_rpc::endpoint::status::Response)> {
     // Get the latest height from status
     let status = client.status().await?;
     let latest_height = status.sync_info.latest_block_height;
-    fetch_light_block_at_height(client, latest_height.value()).await
+    fetch_light_block_at_height(client, latest_height.value(), timeout).await
 }
 
 /// Fetch a light block at a specific height
 pub async fn fetch_light_block_at_height(
     client: &HttpClient,
     height: u64,
+    timeout: std::time::Duration,
 ) -> Result<(LightBlock, tendermint_rpc::endpoint::status::Response)> {
     use tendermint::block::Height;
     use tendermint_rpc::Paging;
@@ -37,16 +39,16 @@ pub async fn fetch_light_block_at_height(
     let status = client.status().await?;
 
     // Fetch the commit (signed header) for the specified height
-    // Retry until the block is committed, but stop at 10 mins
+    // Retry until the block is committed, but stop after the timeout
     let start_time = std::time::Instant::now();
-    let timeout = std::time::Duration::from_secs(10 * 60);
 
     let commit_result = loop {
         // Check if we've exceeded the timeout
         if start_time.elapsed() > timeout {
             return Err(color_eyre::eyre::eyre!(
-                "timeout waiting for block {} to be committed (waited 10 minutes)",
-                height.value()
+                "timeout waiting for block {} to be committed (waited {} seconds)",
+                height.value(),
+                timeout.as_secs()
             ));
         }
 

@@ -19,6 +19,10 @@ struct Args {
     #[arg(long, default_value = "http://localhost:80")]
     query_url: String,
 
+    /// Timeout in seconds for waiting for blocks to be committed (default: 600 secs = 10 minutes)
+    #[arg(long, default_value = "600")]
+    timeout: u64,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -55,10 +59,12 @@ async fn main() -> Result<()> {
     let client = HttpClient::new(rpc_url)
         .map_err(|e| color_eyre::eyre::eyre!("failed to create RPC client: {}", e))?;
 
+    let timeout = std::time::Duration::from_secs(args.timeout);
+
     match args.command {
-        Command::Print { height } => commands::print(&client, height).await?,
-        Command::Verify { height } => commands::verify(&client, height).await?,
-        Command::Reconstruct => commands::reconstruct(&client, &args.query_url).await?,
+        Command::Print { height } => commands::print(&client, height, timeout).await?,
+        Command::Verify { height } => commands::verify(&client, height, timeout).await?,
+        Command::Reconstruct => commands::reconstruct(&client, &args.query_url, timeout).await?,
     }
 
     Ok(())
