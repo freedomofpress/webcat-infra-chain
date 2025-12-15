@@ -114,17 +114,12 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
 
                     // Count the number of distinct subdomains under the registered domain in both
                     // the canonical state and the pending changes, and ensure it is less than the max
-                    // allowed:
-                    let registered_domain_votes = self
-                        .oracle_voting()
-                        .await?
-                        .votes_for_key(registered_domain.clone())
-                        .await?;
-                    let subdomain_votes = self
-                        .oracle_voting()
-                        .await?
-                        .votes_for_key_prefix(registered_domain.clone(), Some('.'))
-                        .await?;
+                    // allowed.
+                    //
+                    // We intentionally do not count votes in the voting queue here,
+                    // only pending + canonical. Votes are uncommitted and can be spammed, so
+                    // including them would allow a malicious party to fill the limit check using
+                    // uncommitted votes and block legitimate enrollments.
                     let registered_domain_pending = self
                         .oracle_voting()
                         .await?
@@ -139,15 +134,13 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                         .canonical_subdomains(registered_domain.clone().into())
                         .await?;
 
-                    // We collect all the places in the pipeline, from voting to pending to canonical:
-                    let unique_subdomains = registered_domain_votes
-                        .into_iter()
-                        .map(|v| v.key)
-                        .chain(subdomain_votes.into_iter().map(|v| v.key))
-                        .chain(registered_domain_pending.map({
+                    // We collect all the committed places in the pipeline: pending + canonical.
+                    let unique_subdomains = registered_domain_pending
+                        .map({
                             let registered_domain = registered_domain.clone();
                             move |_| registered_domain
-                        }))
+                        })
+                        .into_iter()
                         .chain(subdomain_pending.into_iter().map(|(_time, k, _v)| k))
                         .chain(canonical_subdomains.into_iter().map(Into::into))
                         .collect::<BTreeSet<_>>()
