@@ -44,6 +44,7 @@ domain_types!(
     Observation: proto::action::observe::Observation,
     HashObserved: proto::action::observe::observation::HashObserved,
     Blockstamp: proto::action::observe::observation::Blockstamp,
+    OracleVoteValue: proto::OracleVoteValue,
 );
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -332,6 +333,12 @@ impl Debug for HashObserved {
             HashObserved::NotFound => write!(f, "NotFound"),
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct OracleVoteValue {
+    pub hash_observed: HashObserved,
+    pub zone: Zone,
 }
 
 #[serde_as]
