@@ -2,6 +2,7 @@ use color_eyre::eyre::OptionExt;
 use felidae_types::{FQDN, KeyPair};
 use reqwest::StatusCode;
 use reqwest::Url;
+use std::time::Duration;
 use tendermint_rpc::HttpClient;
 use tendermint_rpc::client::Client;
 
@@ -135,7 +136,11 @@ async fn observe_domain(
         .map_err(|e| color_eyre::eyre::eyre!("failed to create RPC client: {}", e))?;
 
     // We need reqwest for the enrollment endpoint:
-    let http_client = reqwest::Client::new();
+    let http_client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .connect_timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| color_eyre::eyre::eyre!("failed to create HTTP client: {}", e))?;
 
     // Fetch the hash from the well-known endpoint of the domain/zone:
     let enrollment_string = match http_client
