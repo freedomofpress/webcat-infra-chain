@@ -233,6 +233,28 @@ After the observation reaches quorum and the delay period expires, the observed 
 curl http://localhost/snapshot
 ```
 
+## Run Oracle as HTTP Server
+
+Instead of using the CLI, you can run the oracle as an HTTP server that accepts observation requests via API:
+
+```bash
+cargo run --bin felidae oracle server \
+  --homedir /persistent/keys \
+  --node http://localhost:26657 \
+  --port 8080
+```
+
+The server exposes two endpoints:
+- `POST /observe` - Submit observation requests (JSON: `{"domain": "example.com.", "zone": "com."}`)
+- `GET /health` - Health check endpoint
+
+Example request:
+```bash
+curl -X POST http://localhost:8080/observe \
+  -H "Content-Type: application/json" \
+  -d '{"domain": "example.com.", "zone": "com."}'
+```
+
 ## Example Scenario
 
 ### Nodes
