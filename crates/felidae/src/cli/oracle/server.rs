@@ -4,7 +4,7 @@ use felidae_types::FQDN;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::info;
+use tracing::{debug, info, warn};
 
 use super::{Server, observe_domain};
 
@@ -62,10 +62,27 @@ async fn handle_observe(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ObserveRequest>,
 ) -> Result<Json<ObserveResponse>, (StatusCode, Json<ObserveResponse>)> {
+    // Log incoming request for testing
+    info!(
+        raw_domain = %req.domain,
+        raw_zone = %req.zone,
+        node = %state.node,
+        chain = ?state.chain,
+        "received /observe API request"
+    );
+    debug!(
+        "full request body: domain={}, zone={}",
+        req.domain, req.zone
+    );
+
     // Parse domain and zone
     let domain = match req.domain.parse::<FQDN>() {
-        Ok(d) => d,
+        Ok(d) => {
+            debug!(parsed_domain = %d, "successfully parsed domain");
+            d
+        }
         Err(e) => {
+            warn!(raw_domain = %req.domain, error = %e, "failed to parse domain");
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(ObserveResponse {
@@ -78,8 +95,12 @@ async fn handle_observe(
     };
 
     let zone = match req.zone.parse::<FQDN>() {
-        Ok(z) => z,
+        Ok(z) => {
+            debug!(parsed_zone = %z, "successfully parsed zone");
+            z
+        }
         Err(e) => {
+            warn!(raw_zone = %req.zone, error = %e, "failed to parse zone");
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(ObserveResponse {
@@ -91,25 +112,48 @@ async fn handle_observe(
         }
     };
 
-    info!(domain = %domain, zone = %zone, "received observation request");
+    info!(
+        domain = %domain,
+        zone = %zone,
+        "parsed observation request, starting observation"
+    );
 
     // Perform the observation
+    info!(
+        domain = %domain,
+        zone = %zone,
+        node = %state.node,
+        "calling observe_domain function"
+    );
+
     match observe_domain(
-        domain,
-        zone,
+        domain.clone(),
+        zone.clone(),
         state.node.clone(),
         state.chain.clone(),
         state.homedir.as_deref(),
     )
     .await
     {
-        Ok(()) => Ok(Json(ObserveResponse {
-            success: true,
-            message: "observation submitted successfully".to_string(),
-            tx_hash: None, // TODO: could return tx hash if we modify observe_domain?
-        })),
+        Ok(()) => {
+            info!(
+                domain = %domain,
+                zone = %zone,
+                "observation submitted successfully"
+            );
+            Ok(Json(ObserveResponse {
+                success: true,
+                message: "observation submitted successfully".to_string(),
+                tx_hash: None, // TODO: could return tx hash if we modify observe_domain?
+            }))
+        }
         Err(e) => {
-            info!(error = %e, "observation failed");
+            warn!(
+                domain = %domain,
+                zone = %zone,
+                error = %e,
+                "observation failed"
+            );
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ObserveResponse {

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WEBCAT Domain Enrollment</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>WEBCAT Domain Enrollment</h1>
+            <p class="subtitle">Submit domain enrollment requests to the WEBCAT test network</p>
+        </header>
+
+        <main>
+            <form id="enrollmentForm">
+                <div class="form-group">
+                    <label for="domain">Domain *</label>
+                    <input type="text" id="domain" name="domain" required placeholder="example.com" autocomplete="off">
+                    <small class="help-text">Enter the domain or subdomain to enroll (e.g.,
+                        example.com or test.example.com)</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="zone">Zone *</label>
+                    <div class="zone-input-group">
+                        <input type="text" id="zone" name="zone" required placeholder="com" autocomplete="off">
+                        <button type="button" id="detectZoneBtn" class="btn-secondary">
+                            Auto-detect
+                        </button>
+                    </div>
+                    <small class="help-text">The zone under which this domain is enrolled. For example,
+                        if enrolling "example.com", the zone is "com" (TLD). For a subdomain, it's the registered domain
+                        (e.g., "test.example.com", the zone is "example.com"). Click "Auto-detect" to automatically
+                        detect it.</small>
+                </div>
+
+                <div class="form-group">
+                    <button type="submit" id="submitBtn" class="btn-primary">
+                        Begin Enrollment
+                    </button>
+                </div>
+            </form>
+
+            <div id="statusMessage" class="status-message" style="display: none;"></div>
+
+            <div id="results" class="results" style="display: none;">
+                <h2>Submission Results</h2>
+                <div id="resultsContent"></div>
+            </div>
+
+            <div id="oracleInfo" class="oracle-info">
+                <h3>Configured Oracles</h3>
+                <div id="oracleList" class="oracle-list">
+                    <p class="loading">Loading oracle endpoints...</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>
