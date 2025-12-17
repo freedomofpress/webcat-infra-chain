@@ -126,14 +126,25 @@ async fn observe_domain(
     chain: Option<String>,
     homedir: Option<&std::path::Path>,
 ) -> Result<(), color_eyre::Report> {
+    info!(
+        domain = %domain,
+        zone = %zone,
+        node = %node,
+        chain = ?chain,
+        "observe_domain: starting observation"
+    );
+
     // Load the oracle keypair:
     let keypair = keypair(homedir).await?;
+    debug!("observe_domain: loaded oracle keypair");
 
     // Create a Tendermint RPC client:
     let rpc_url = tendermint_rpc::Url::try_from(node.clone())
         .map_err(|e| color_eyre::eyre::eyre!("invalid RPC URL: {}", e))?;
+    debug!(rpc_url = %rpc_url, "observe_domain: creating RPC client");
     let rpc_client = HttpClient::new(rpc_url)
         .map_err(|e| color_eyre::eyre::eyre!("failed to create RPC client: {}", e))?;
+    debug!("observe_domain: RPC client created");
 
     // We need reqwest for the enrollment endpoint:
     let http_client = reqwest::Client::builder()
@@ -141,13 +152,16 @@ async fn observe_domain(
         .connect_timeout(Duration::from_secs(5))
         .build()
         .map_err(|e| color_eyre::eyre::eyre!("failed to create HTTP client: {}", e))?;
+    debug!("observe_domain: HTTP client created");
 
     // Fetch the hash from the well-known endpoint of the domain/zone:
+    let enrollment_url = format!(
+        "https://{}/.well-known/webcat/enrollment.json",
+        domain.to_string().trim_matches('.')
+    );
+    info!(url = %enrollment_url, "observe_domain: fetching enrollment.json");
     let enrollment_string = match http_client
-        .get(format!(
-            "https://{}/.well-known/webcat/enrollment.json",
-            domain.to_string().trim_matches('.')
-        ))
+        .get(&enrollment_url)
         .send()
         .await?
         .error_for_status()
