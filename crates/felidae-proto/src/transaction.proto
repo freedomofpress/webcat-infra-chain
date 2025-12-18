@@ -33,6 +33,11 @@ message Config {
     int64 version = 4;
 }
 
+message OracleVoteValue {
+    Action.Observe.Observation.HashObserved hash_observed = 1;
+    string zone = 2;
+}
+
 message Oracle {
     OracleIdentity public_key = 1;
     string endpoint = 2;

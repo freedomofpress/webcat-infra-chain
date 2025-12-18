@@ -723,6 +723,36 @@ impl From<HashObserved> for proto::action::observe::observation::HashObserved {
     }
 }
 
+impl TryFrom<proto::OracleVoteValue> for OracleVoteValue {
+    type Error = crate::ParseError;
+
+    fn try_from(value: proto::OracleVoteValue) -> Result<Self, Self::Error> {
+        let hash_observed = value
+            .hash_observed
+            .ok_or_else(|| {
+                crate::ParseError::new::<OracleVoteValue>("missing hash_observed".to_string())
+            })?
+            .try_into()?;
+        let zone = value
+            .zone
+            .parse()
+            .map_err(|e| crate::ParseError::new::<OracleVoteValue>(format!("invalid zone: {e}")))?;
+        Ok(OracleVoteValue {
+            hash_observed,
+            zone: Zone { name: zone },
+        })
+    }
+}
+
+impl From<OracleVoteValue> for proto::OracleVoteValue {
+    fn from(value: OracleVoteValue) -> Self {
+        proto::OracleVoteValue {
+            hash_observed: Some(value.hash_observed.into()),
+            zone: value.zone.name.to_string(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

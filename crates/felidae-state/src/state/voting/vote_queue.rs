@@ -289,6 +289,55 @@ where
                 .index_delete(Internal, &self.index_pending_by_timestamp_key(time, &key));
         }
 
+        // For oracle voting, check the subdomain limit before adding to pending queue.
+        if self.internal_state_prefix == "oracle_voting/" {
+            use felidae_types::transaction::{Domain, OracleVoteValue, PrefixOrderDomain};
+            if let Ok(subdomain) = key.parse::<PrefixOrderDomain>() {
+                // Extract zone from the winning vote value
+                let encoded = winning_value.encode_to_vec();
+                let zone = match OracleVoteValue::decode(encoded.as_slice()) {
+                    Ok(oracle_value) => oracle_value.zone,
+                    Err(e) => {
+                        error!(
+                            key,
+                            error = %e,
+                            "failed to decode OracleVoteValue"
+                        );
+                        return Ok(());
+                    }
+                };
+
+                // Compute registered_domain exactly as in observe.rs
+                let registered_domain = PrefixOrderDomain::from(Domain::from(
+                    subdomain
+                        .name
+                        .hierarchy()
+                        .nth(subdomain.name.depth() - zone.name.depth() - 1)
+                        .ok_or_else(|| eyre!("zone depths invalid (should not happen)"))?
+                        .to_owned(),
+                ));
+
+                // Do the exact limit check using the registered_domain
+                if let Err(e) = self
+                    .state
+                    .check_subdomain_limit_before_pending_exact(
+                        subdomain.clone(),
+                        registered_domain,
+                    )
+                    .await
+                {
+                    info!(
+                        key,
+                        error = %e,
+                        "dropping pending entry that would exceed subdomain limit"
+                    );
+                    // Votes have already been deleted above, so we just return early
+                    // without creating a new pending entry
+                    return Ok(());
+                }
+            }
+        }
+
         // Add the winning value to the pending queue:
         self.state.store.put(
             Internal,

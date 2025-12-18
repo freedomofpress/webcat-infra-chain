@@ -41,13 +41,14 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         }
 
         // Process ripe pending oracle observations into canonical state
-        for (subdomain, hash_observed) in self
+        for (subdomain, vote_value) in self
             .oracle_voting()
             .await?
             .promote_pending_changes()
             .await?
         {
-            self.update_canonical(subdomain.into(), hash_observed)
+            // Extract hash_observed from the OracleVoteValue
+            self.update_canonical(subdomain.into(), vote_value.hash_observed)
                 .await?;
         }
 

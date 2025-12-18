@@ -122,11 +122,12 @@ pub fn app(storage: Storage) -> Router {
                              value,
                              key,
                          }| {
+                            let hash = value.hash_observed;
                             OracleVote {
                                 oracle: party,
                                 time,
                                 domain: key.into(),
-                                hash: value,
+                                hash,
                             }
                         },
                     )
@@ -222,10 +223,13 @@ pub fn app(storage: Storage) -> Router {
                 }
                 let pending: Vec<PendingObservation> = pending
                     .into_iter()
-                    .map(|(time, key, value)| PendingObservation {
-                        time,
-                        domain: key.into(),
-                        hash: value,
+                    .map(|(time, key, value)| {
+                        let hash = value.hash_observed;
+                        PendingObservation {
+                            time,
+                            domain: key.into(),
+                            hash,
+                        }
                     })
                     .collect();
                 Ok::<_, Report>(pending)
