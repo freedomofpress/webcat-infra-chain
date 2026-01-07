@@ -1,4 +1,4 @@
 [submodule "cometbft"]
 	path = cometbft
 	url = https://github.com/cometbft/cometbft.git
-	branch = v0.34.x
+	branch = v0.38.x
