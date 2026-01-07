@@ -9,9 +9,9 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     /// Get the vote queue for oracle observations.
     pub async fn oracle_voting<'a>(
         &'a mut self,
-    ) -> Result<VoteQueue<'a, S, PrefixOrderDomain, HashObserved>, Report> {
+    ) -> Result<VoteQueue<'a, S, PrefixOrderDomain, OracleVoteValue>, Report> {
         let config = self.config().await?.oracles.voting.clone();
-        Ok(VoteQueue::<S, PrefixOrderDomain, HashObserved>::new(
+        Ok(VoteQueue::<S, PrefixOrderDomain, OracleVoteValue>::new(
             self,
             "oracle_voting/",
             config,
