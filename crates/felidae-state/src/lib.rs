@@ -31,7 +31,7 @@ use tendermint::{
         request, response,
         types::{BlockSignatureInfo, CommitInfo, Misbehavior, Validator, VoteInfo},
     },
-    block::{BlockIdFlag, Header, Height},
+    block::{BlockIdFlag, Height},
     validator::Update,
     vote::Power,
 };

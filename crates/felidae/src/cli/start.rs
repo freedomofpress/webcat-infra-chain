@@ -50,11 +50,11 @@ impl Run for Start {
         let storage = state.storage.clone();
 
         // Split the state service into its ABCI components:
-        let (consensus, mempool, snapshot, info) = tower_abci::v034::split::service(state, 4);
+        let (consensus, mempool, snapshot, info) = tower_abci::v038::split::service(state, 4);
 
         // Start the ABCI server:
         let abci = tokio::spawn(async move {
-            tower_abci::v034::ServerBuilder::default()
+            tower_abci::v038::ServerBuilder::default()
                 .mempool(mempool)
                 .info(info)
                 .snapshot(snapshot)
