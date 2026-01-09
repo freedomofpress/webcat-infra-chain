@@ -4,6 +4,7 @@ use std::{
 };
 
 use futures::future::BoxFuture;
+use prost::bytes::Bytes;
 use tendermint::{abci::Code, block::Height, v0_38::abci};
 use tower::{BoxError, Service};
 use tracing::Instrument;
@@ -141,18 +142,38 @@ impl Service<tendermint::v0_38::abci::Request> for crate::Store {
                 abci::Request::ApplySnapshotChunk(_apply_snapshot_chunk) => {
                     Err("snapshots are not implemented".into())
                 }
-                // ABCI++ methods (not yet implemented):
-                abci::Request::PrepareProposal(_prepare_proposal) => {
-                    Err("prepare proposal is not implemented".into())
+                // minimal ABCI++ methods impls
+                abci::Request::PrepareProposal(prepare_proposal) => {
+                    let mut txs = Vec::new();
+                    let mut total_bytes = 0i64;
+                    let max_bytes = prepare_proposal.max_tx_bytes;
+                    for tx in prepare_proposal.txs {
+                        let tx_len = tx.len() as i64;
+                        if total_bytes + tx_len > max_bytes {
+                            break;
+                        }
+                        total_bytes += tx_len;
+                        txs.push(tx);
+                    }
+                    Ok(abci::Response::PrepareProposal(
+                        abci::response::PrepareProposal { txs },
+                    ))
                 }
-                abci::Request::ProcessProposal(_process_proposal) => {
-                    Err("process proposal is not implemented".into())
-                }
+                abci::Request::ProcessProposal(_process_proposal) => Ok(
+                    abci::Response::ProcessProposal(abci::response::ProcessProposal::Accept),
+                ),
                 abci::Request::ExtendVote(_extend_vote) => {
-                    Err("extend vote is not implemented".into())
+                    Ok(abci::Response::ExtendVote(abci::response::ExtendVote {
+                        vote_extension: Bytes::new(),
+                    }))
                 }
-                abci::Request::VerifyVoteExtension(_verify_vote_extension) => {
-                    Err("verify vote extension is not implemented".into())
+                abci::Request::VerifyVoteExtension(verify_vote_extension) => {
+                    let status = if verify_vote_extension.vote_extension.is_empty() {
+                        abci::response::VerifyVoteExtension::Accept
+                    } else {
+                        abci::response::VerifyVoteExtension::Reject
+                    };
+                    Ok(abci::Response::VerifyVoteExtension(status))
                 }
             }
         })
