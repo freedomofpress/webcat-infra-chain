@@ -105,4 +105,11 @@ mod tests {
         let zone = infer_zone(&domain).unwrap();
         assert_eq!(zone.to_string(), "example.com.au.");
     }
+
+    #[test]
+    fn test_nym_site_com() {
+        let domain: FQDN = "element.nym.re.".parse().unwrap();
+        let zone = infer_zone(&domain).unwrap();
+        assert_eq!(zone.to_string(), "nym.re.");
+    }
 }
