@@ -6,12 +6,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use super::{Server, observe_domain};
+use super::{Server, observe_domain, zone};
 
 #[derive(Deserialize)]
 struct ObserveRequest {
     domain: String,
-    zone: String,
 }
 
 #[derive(Serialize)]
@@ -62,20 +61,16 @@ async fn handle_observe(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ObserveRequest>,
 ) -> Result<Json<ObserveResponse>, (StatusCode, Json<ObserveResponse>)> {
-    // Log incoming request for testing
+    // Log incoming request
     info!(
         raw_domain = %req.domain,
-        raw_zone = %req.zone,
         node = %state.node,
         chain = ?state.chain,
         "received /observe API request"
     );
-    debug!(
-        "full request body: domain={}, zone={}",
-        req.domain, req.zone
-    );
+    debug!("full request body: domain={}", req.domain);
 
-    // Parse domain and zone
+    // Parse domain
     let domain = match req.domain.parse::<FQDN>() {
         Ok(d) => {
             debug!(parsed_domain = %d, "successfully parsed domain");
@@ -94,18 +89,19 @@ async fn handle_observe(
         }
     };
 
-    let zone = match req.zone.parse::<FQDN>() {
+    // Infer zone from domain using Mozilla Public Suffix List (PSL)
+    let zone = match zone::infer_zone(&domain) {
         Ok(z) => {
-            debug!(parsed_zone = %z, "successfully parsed zone");
+            debug!(inferred_zone = %z, "successfully inferred zone");
             z
         }
         Err(e) => {
-            warn!(raw_zone = %req.zone, error = %e, "failed to parse zone");
+            warn!(domain = %domain, error = %e, "failed to infer zone");
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(ObserveResponse {
                     success: false,
-                    message: format!("invalid zone: {}", e),
+                    message: format!("failed to infer zone from domain: {}", e),
                     tx_hash: None,
                 }),
             ));
@@ -119,13 +115,6 @@ async fn handle_observe(
     );
 
     // Perform the observation
-    info!(
-        domain = %domain,
-        zone = %zone,
-        node = %state.node,
-        "calling observe_domain function"
-    );
-
     match observe_domain(
         domain.clone(),
         zone.clone(),
