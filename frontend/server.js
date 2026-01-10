@@ -126,20 +126,15 @@ app.get('/api/oracles', async (req, res) => {
 
 // Submit observation to all oracles
 app.post('/api/submit', csrfProtection, async (req, res) => {
-  const { domain, zone } = req.body;
+  const { domain } = req.body;
 
   // Validate input
   if (!domain || typeof domain !== 'string') {
     return res.status(400).json({ error: 'Domain is required' });
   }
 
-  if (!zone || typeof zone !== 'string') {
-    return res.status(400).json({ error: 'Zone is required' });
-  }
-
-  // Normalize domain and zone (ensure they end with a dot for FQDN format)
+  // Normalize domain (ensure it ends with a dot for FQDN format)
   const normalizedDomain = domain.trim().endsWith('.') ? domain.trim() : domain.trim() + '.';
-  const normalizedZone = zone.trim().endsWith('.') ? zone.trim() : zone.trim() + '.';
 
   // Get oracle endpoints
   let oracles = config.oracleEndpoints;
@@ -169,8 +164,7 @@ app.post('/api/submit', csrfProtection, async (req, res) => {
         const response = await axios.post(
           url,
           {
-            domain: normalizedDomain,
-            zone: normalizedZone
+            domain: normalizedDomain
           },
           {
             timeout: 30000, // 30 second timeout
