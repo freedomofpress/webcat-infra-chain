@@ -9,6 +9,7 @@ use tendermint_rpc::client::Client;
 use super::Run;
 
 mod server;
+mod zone;
 
 #[derive(clap::Subcommand)]
 pub enum Oracle {
