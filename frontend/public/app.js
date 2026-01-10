@@ -22,38 +22,6 @@ async function fetchCSRFToken() {
     }
 }
 
-// Auto-detect zone from domain
-// Zone is the registered domain under which the subdomain is enrolled
-// For example: domain=testapp.nym.re, zone=nym.re (not just "re")
-function detectZone(domain) {
-    if (!domain || domain.trim() === '') {
-        return null;
-    }
-
-    const trimmed = domain.trim();
-    // Remove trailing dot if present
-    const cleanDomain = trimmed.endsWith('.') ? trimmed.slice(0, -1) : trimmed;
-
-    // Split by dots
-    const parts = cleanDomain.split('.');
-
-    // Need at least 2 parts (subdomain + registered domain)
-    if (parts.length < 2) {
-        return null;
-    }
-
-    // If we have exactly 2 parts (e.g., "example.com"), the zone is the TLD
-    // If we have more (e.g., "testapp.nym.re"), the zone is everything except the first label
-    // So for "testapp.nym.re", zone should be "nym.re"
-    if (parts.length === 2) {
-        // Simple case: example.com -> zone is "com"
-        return parts[parts.length - 1];
-    } else {
-        // Subdomain case: testapp.nym.re -> zone is "nym.re"
-        // Take all parts except the first one
-        return parts.slice(1).join('.');
-    }
-}
 
 // Show status message
 function showStatus(type, message) {
@@ -152,14 +120,12 @@ async function handleSubmit(event) {
     hideStatus();
 
     const domainInput = document.getElementById('domain');
-    const zoneInput = document.getElementById('zone');
     const submitBtn = document.getElementById('submitBtn');
 
     const domain = domainInput.value.trim();
-    const zone = zoneInput.value.trim();
 
-    if (!domain || !zone) {
-        showStatus('error', 'Please fill in both domain and zone fields');
+    if (!domain) {
+        showStatus('error', 'Please enter a domain');
         return;
     }
 
@@ -180,7 +146,7 @@ async function handleSubmit(event) {
                 'X-CSRF-Token': csrfToken
             },
             credentials: 'include',
-            body: JSON.stringify({ domain, zone })
+            body: JSON.stringify({ domain })
         });
 
         const data = await response.json();
@@ -205,38 +171,6 @@ async function handleSubmit(event) {
     }
 }
 
-// Handle auto-detect zone button
-function handleDetectZone() {
-    const domainInput = document.getElementById('domain');
-    const zoneInput = document.getElementById('zone');
-    const detectBtn = document.getElementById('detectZoneBtn');
-
-    const domain = domainInput.value.trim();
-
-    if (!domain) {
-        showStatus('error', 'Please enter a domain first');
-        domainInput.focus();
-        return;
-    }
-
-    detectBtn.disabled = true;
-    detectBtn.textContent = 'Detecting...';
-
-    // Simulate a small delay for better UX
-    setTimeout(() => {
-        const zone = detectZone(domain);
-
-        if (zone) {
-            zoneInput.value = zone;
-            showStatus('info', `Detected zone: ${zone}`);
-        } else {
-            showStatus('error', 'Could not detect zone. Please enter it manually.');
-        }
-
-        detectBtn.disabled = false;
-        detectBtn.textContent = 'Auto-detect';
-    }, 300);
-}
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
@@ -248,23 +182,4 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Set up form submission
     document.getElementById('enrollmentForm').addEventListener('submit', handleSubmit);
-
-    // Set up auto-detect button
-    document.getElementById('detectZoneBtn').addEventListener('click', handleDetectZone);
-
-    // Auto-detect zone when domain changes (optional, can be removed if too aggressive)
-    let domainChangeTimeout;
-    document.getElementById('domain').addEventListener('input', (e) => {
-        clearTimeout(domainChangeTimeout);
-        const zoneInput = document.getElementById('zone');
-        // Only auto-detect if zone is empty
-        if (!zoneInput.value.trim()) {
-            domainChangeTimeout = setTimeout(() => {
-                const zone = detectZone(e.target.value);
-                if (zone) {
-                    zoneInput.value = zone;
-                }
-            }, 1000); // Wait 1 second after user stops typing
-        }
-    });
 });
