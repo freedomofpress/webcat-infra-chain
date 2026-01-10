@@ -9,7 +9,7 @@ use tendermint_rpc::client::Client;
 use super::Run;
 
 mod server;
-mod zone;
+pub mod zone;
 
 #[derive(clap::Subcommand)]
 pub enum Oracle {
@@ -86,9 +86,9 @@ pub struct Observe {
     /// Domain name to observe.
     #[clap(long, short)]
     pub domain: FQDN,
-    /// Zone name to observe.
+    /// Zone name to observe. If not provided, the zone will be inferred from the domain using the Mozilla Public Suffix List.
     #[clap(long, short)]
-    pub zone: FQDN,
+    pub zone: Option<FQDN>,
     /// Node to which to send the observation.
     #[clap(long, short, default_value = "http://localhost:26657")]
     pub node: Url,
@@ -102,9 +102,15 @@ pub struct Observe {
 
 impl Run for Observe {
     async fn run(self) -> Result<(), color_eyre::Report> {
+        // Use provided zone or infer it from domain using PSL
+        let zone = if let Some(zone) = self.zone {
+            zone
+        } else {
+            zone::infer_zone(&self.domain)?
+        };
         observe_domain(
             self.domain,
-            self.zone,
+            zone,
             self.node,
             self.chain,
             self.homedir.as_deref(),
