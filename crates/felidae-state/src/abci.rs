@@ -4,7 +4,8 @@ use std::{
 };
 
 use futures::future::BoxFuture;
-use tendermint::{abci::Code, block::Height, v0_34::abci};
+use prost::bytes::Bytes;
+use tendermint::{abci::Code, block::Height, v0_38::abci};
 use tower::{BoxError, Service};
 use tracing::Instrument;
 
@@ -14,8 +15,8 @@ use tracing::Instrument;
 /// Store's State. The *MOST IMPORTANT THING* to note is that CheckTx *must not* modify the state;
 /// instead, it should fork the state and apply the transaction to the forked state only, discarding
 /// any ephemeral changes afterwards.
-impl Service<tendermint::v0_34::abci::Request> for crate::Store {
-    type Response = tendermint::v0_34::abci::Response;
+impl Service<tendermint::v0_38::abci::Request> for crate::Store {
+    type Response = tendermint::v0_38::abci::Response;
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
@@ -24,7 +25,7 @@ impl Service<tendermint::v0_34::abci::Request> for crate::Store {
     }
 
     #[instrument(name = "abci", skip(self, req))]
-    fn call(&mut self, req: tendermint::v0_34::abci::Request) -> Self::Future {
+    fn call(&mut self, req: tendermint::v0_38::abci::Request) -> Self::Future {
         debug!(?req);
 
         let mut store: crate::Store = self.clone();
@@ -63,15 +64,33 @@ impl Service<tendermint::v0_34::abci::Request> for crate::Store {
                         .await?;
                     Ok(abci::Response::InitChain(response))
                 }
-                abci::Request::BeginBlock(begin_block) => {
-                    let response = store
+                abci::Request::FinalizeBlock(finalize_block) => {
+                    let mut response = store
                         .state
                         .write()
                         .await
-                        .begin_block(begin_block)
-                        .instrument(info_span!("BeginBlock"))
+                        .finalize_block(finalize_block)
+                        .instrument(info_span!("FinalizeBlock"))
                         .await?;
-                    Ok(abci::Response::BeginBlock(response))
+                    // ABCI -> ABCI++ migration note: Compute the app hash after all state changes are made (ABCI 2.0)
+                    // and then record it.
+                    response.app_hash = store.root_hashes().await?.app_hash;
+                    let current_height = store
+                        .state
+                        .read()
+                        .await
+                        .block_height()
+                        .await
+                        .unwrap_or(Height::from(0u32));
+                    if current_height.value() > 0 {
+                        store
+                            .state
+                            .write()
+                            .await
+                            .record_app_hash(response.app_hash.clone())
+                            .await?;
+                    }
+                    Ok(abci::Response::FinalizeBlock(response))
                 }
                 abci::Request::CheckTx(check_tx) => {
                     // !!! EXTREMELY IMPORTANT !!!
@@ -99,57 +118,15 @@ impl Service<tendermint::v0_34::abci::Request> for crate::Store {
 
                     Ok(abci::Response::CheckTx(abci::response::CheckTx::default()))
                 }
-                abci::Request::DeliverTx(abci::request::DeliverTx { tx: tx_bytes }) => {
-                    let reject = |e| {
-                        warn!(%e);
-                        Ok(abci::Response::DeliverTx(abci::response::DeliverTx {
-                            code: Code::Err(NonZero::new(1).expect("1 != 0")),
-                            log: e,
-                            ..Default::default()
-                        }))
-                    };
-
-                    if let Err(e) = store
-                        .state
-                        .write()
-                        .await
-                        .deliver_tx(&tx_bytes)
-                        .instrument(info_span!("DeliverTx"))
-                        .await
-                    {
-                        return reject(e.to_string());
-                    }
-
-                    Ok(abci::Response::DeliverTx(
-                        abci::response::DeliverTx::default(),
-                    ))
-                }
-                abci::Request::EndBlock(end_block) => {
-                    let response = store
-                        .state
-                        .write()
-                        .await
-                        .end_block(end_block)
-                        .instrument(info_span!("EndBlock"))
-                        .await?;
-                    Ok(abci::Response::EndBlock(response))
-                }
                 abci::Request::Commit => {
                     store.commit().await?;
 
+                    // In ABCI 2.0, app_hash is returned in FinalizeBlock, not Commit
                     Ok(abci::Response::Commit(abci::response::Commit {
-                        data: store.root_hashes().await?.app_hash.into(),
                         ..Default::default()
                     }))
                 }
                 // Unimplemented ABCI methods:
-                abci::Request::SetOption(_set_option) => {
-                    Ok(abci::Response::SetOption(abci::response::SetOption {
-                        code: Code::Err(NonZero::new(1).expect("1 != 0")),
-                        log: "set option is not implemented".to_string(),
-                        info: "".to_string(),
-                    }))
-                }
                 abci::Request::Query(_query) => Ok(abci::Response::Query(abci::response::Query {
                     code: Code::Err(NonZero::new(1).expect("1 != 0")),
                     log: "query is not implemented".to_string(),
@@ -164,6 +141,39 @@ impl Service<tendermint::v0_34::abci::Request> for crate::Store {
                 }
                 abci::Request::ApplySnapshotChunk(_apply_snapshot_chunk) => {
                     Err("snapshots are not implemented".into())
+                }
+                // minimal ABCI++ methods impls
+                abci::Request::PrepareProposal(prepare_proposal) => {
+                    let mut txs = Vec::new();
+                    let mut total_bytes = 0i64;
+                    let max_bytes = prepare_proposal.max_tx_bytes;
+                    for tx in prepare_proposal.txs {
+                        let tx_len = tx.len() as i64;
+                        if total_bytes + tx_len > max_bytes {
+                            break;
+                        }
+                        total_bytes += tx_len;
+                        txs.push(tx);
+                    }
+                    Ok(abci::Response::PrepareProposal(
+                        abci::response::PrepareProposal { txs },
+                    ))
+                }
+                abci::Request::ProcessProposal(_process_proposal) => Ok(
+                    abci::Response::ProcessProposal(abci::response::ProcessProposal::Accept),
+                ),
+                abci::Request::ExtendVote(_extend_vote) => {
+                    Ok(abci::Response::ExtendVote(abci::response::ExtendVote {
+                        vote_extension: Bytes::new(),
+                    }))
+                }
+                abci::Request::VerifyVoteExtension(verify_vote_extension) => {
+                    let status = if verify_vote_extension.vote_extension.is_empty() {
+                        abci::response::VerifyVoteExtension::Accept
+                    } else {
+                        abci::response::VerifyVoteExtension::Reject
+                    };
+                    Ok(abci::Response::VerifyVoteExtension(status))
                 }
             }
         })
