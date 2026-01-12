@@ -1,10 +1,8 @@
 # Build the complete project: CometBFT and felidae
 build:
-    #!/usr/bin/env bash
-    set -euo pipefail
     git submodule update --init --recursive
-    cd cometbft && make build
-    cargo build --release
+    just build-cometbft
+    just build-felidae
 
 # Clean build artifacts
 clean:
