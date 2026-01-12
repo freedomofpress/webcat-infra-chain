@@ -1,4 +1,4 @@
-## WEBCAT Infra Chain
+# WEBCAT Infra Chain
 
 This repository showcases how a quick, permissioned blockchain for the WEBCAT infrastructure could
 look. The goal is to replace both the Enrollment Server and the Build Server with a distributed
@@ -8,7 +8,7 @@ nodes less critical.
 
 For sequence diagrams of the enrollment flow and oracle/validator communication, see [here](docs/seq_diag.md).
 
-### Key entities and behaviors
+## Key entities and behaviors
 
 The chain consists of a number of *nodes*, each of whom may or may not be a consensus validator.
 Every node has a consensus key, but only some have non-zero voting power, designated by the
@@ -53,25 +53,18 @@ oracles and admins. Additionally, care has been taken to ensure that the oracle 
 code in particular can be run in a WASM environment, so that future iterations of oracles could be
 run in serverless Javascript environments, e.g. Cloudflare Workers.
 
-### Getting Started
+## Getting Started
 
-First, you'll need to install [`just`](https://just.systems/man/en/):
+You'll need to install the following tools:
 
-On macOS:
+ * [Rust](https://rustup.rs/)
+ * [Go](https://go.dev/)
+ * [`protoc`](https://protobuf.dev/installation/)
+ * [`just`](https://just.systems/man/en/)
 
-Install just:
-
-```bash
-brew install just
-```
-
-On Linux (Debian/Ubuntu):
-
-```bash
-apt install just
-```
-
-Next, build and run the chain by running in two Terminals both CometBFT and Felidae (the ABCI application). Start CometBFT via:
+Once you have the dependencies installed, you can use the justfile targets locally.
+Build and run the chain by running both CometBFT and Felidae (the ABCI application),
+each in its own terminal window. Start CometBFT via:
 
 ```bash
 just cometbft
