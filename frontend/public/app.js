@@ -79,6 +79,92 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// Request PoW challenge from server
+async function requestPoWChallenge(domain) {
+    try {
+        const response = await fetch(`/api/pow-challenge?domain=${encodeURIComponent(domain)}`);
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to get PoW challenge');
+        }
+        return await response.json();
+    } catch (error) {
+        console.error('PoW challenge request failed:', error);
+        throw error;
+    }
+}
+
+// Compute SHA-256 hash
+async function sha256(message) {
+    const msgBuffer = new TextEncoder().encode(message);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Count leading zero bits in a hex string
+function countLeadingZeros(hex) {
+    let count = 0;
+    for (let i = 0; i < hex.length; i += 2) {
+        const byte = parseInt(hex.substr(i, 2), 16);
+        if (byte === 0) {
+            count += 8;
+        } else {
+            // Count leading zeros in this byte
+            // Convert to binary and count leading zeros
+            const binary = byte.toString(2).padStart(8, '0');
+            let leadingZeros = 0;
+            for (let j = 0; j < binary.length; j++) {
+                if (binary[j] === '0') {
+                    leadingZeros++;
+                } else {
+                    break;
+                }
+            }
+            count += leadingZeros;
+            break;
+        }
+    }
+    return count;
+}
+
+async function computePoW(challenge, difficulty, onProgress) {
+    let nonce = 0;
+    const startTime = Date.now();
+    const maxAttempts = 10000000; // Safety limit
+    let lastProgressUpdate = 0;
+
+    while (nonce < maxAttempts) {
+        const hashInput = challenge + nonce.toString();
+        const hash = await sha256(hashInput);
+        const leadingZeros = countLeadingZeros(hash);
+
+        // Update progress every 1000 attempts
+        if (nonce % 1000 === 0 && onProgress) {
+            const elapsed = Date.now() - startTime;
+            onProgress(nonce, elapsed);
+            // Yield to browser to prevent blocking
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+
+        if (leadingZeros >= difficulty) {
+            const elapsed = Date.now() - startTime;
+            console.log(`PoW solved in ${elapsed}ms with nonce ${nonce} (${nonce} attempts, hash: ${hash.substring(0, 32)}...)`);
+            console.log(`Leading zeros: ${leadingZeros}, required: ${difficulty}`);
+            return { nonce, hash };
+        }
+
+        // Log every 10000 attempts for debugging
+        if (nonce > 0 && nonce % 10000 === 0) {
+            console.log(`PoW progress: ${nonce} attempts, ${Math.round((Date.now() - startTime) / 1000)}s, best leading zeros so far: ${leadingZeros}`);
+        }
+
+        nonce++;
+    }
+
+    throw new Error('PoW computation exceeded maximum attempts');
+}
+
 // Format results
 function displayResults(results) {
     const resultsEl = document.getElementById('results');
@@ -131,13 +217,60 @@ async function handleSubmit(event) {
 
     // Disable submit button
     submitBtn.disabled = true;
-    submitBtn.textContent = 'Submitting...';
+    submitBtn.textContent = 'Requesting challenge...';
 
     try {
         // Ensure we have a CSRF token
         if (!csrfToken) {
             await fetchCSRFToken();
         }
+
+        // Request PoW challenge
+        submitBtn.textContent = 'Getting challenge...';
+        let challengeData;
+        try {
+            challengeData = await requestPoWChallenge(domain);
+            console.log('Received challenge:', challengeData);
+        } catch (error) {
+            console.error('Failed to get PoW challenge:', error);
+            throw new Error(`Failed to get PoW challenge: ${error.message}. Is the oracle server running?`);
+        }
+
+        if (!challengeData || !challengeData.challenge || !challengeData.difficulty) {
+            throw new Error('Invalid challenge response from server');
+        }
+
+        // Compute PoW
+        submitBtn.textContent = 'Computing proof of work...';
+        showStatus('info', `Computing proof of work (difficulty: ${challengeData.difficulty}, this may take a few seconds)...`);
+
+        console.log(`Starting PoW computation: challenge=${challengeData.challenge.substring(0, 16)}..., difficulty=${challengeData.difficulty}`);
+        const powStartTime = Date.now();
+
+        const powResult = await computePoW(
+            challengeData.challenge,
+            challengeData.difficulty,
+            (attempts, elapsed) => {
+                // Update button text with progress
+                submitBtn.textContent = `Computing PoW... (${attempts} attempts, ${Math.round(elapsed / 1000)}s)`;
+            }
+        );
+
+        const powElapsed = Date.now() - powStartTime;
+        console.log(`PoW computation completed in ${powElapsed}ms`);
+
+        // Create PoW token
+        const powToken = {
+            challenge: challengeData.challenge,
+            nonce: powResult.nonce,
+            timestamp: challengeData.timestamp
+        };
+
+        console.log('PoW token created:', { challenge: powToken.challenge.substring(0, 16) + '...', nonce: powToken.nonce, timestamp: powToken.timestamp });
+
+        // Submit with PoW token
+        submitBtn.textContent = 'Submitting...';
+        hideStatus();
 
         const response = await fetch('/api/submit', {
             method: 'POST',
@@ -146,7 +279,7 @@ async function handleSubmit(event) {
                 'X-CSRF-Token': csrfToken
             },
             credentials: 'include',
-            body: JSON.stringify({ domain })
+            body: JSON.stringify({ domain, powToken })
         });
 
         const data = await response.json();

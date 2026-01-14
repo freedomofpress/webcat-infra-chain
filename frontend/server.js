@@ -124,9 +124,59 @@ app.get('/api/oracles', async (req, res) => {
   }
 });
 
+// Helper function to construct oracle URL
+function getOracleUrl(endpoint) {
+  const protocol = config.oracleProtocol;
+  const port = config.oraclePort;
+  return endpoint.includes('://')
+    ? endpoint
+    : `${protocol}://${endpoint}:${port}`;
+}
+
+// Get PoW challenge from an oracle
+app.get('/api/pow-challenge', async (req, res) => {
+  const { domain } = req.query;
+
+  if (!domain || typeof domain !== 'string') {
+    return res.status(400).json({ error: 'Domain parameter is required' });
+  }
+
+  // Get oracle endpoints
+  let oracles = config.oracleEndpoints;
+  if (!oracles) {
+    oracles = await fetchOracleEndpoints();
+    if (!oracles || oracles.length === 0) {
+      return res.status(503).json({
+        error: 'No oracle endpoints available. Please configure oracle endpoints.'
+      });
+    }
+    config.oracleEndpoints = oracles;
+  }
+
+  // Request challenge from first oracle (all oracles use same secret, so challenge is the same)
+  const firstOracle = oracles[0];
+  const baseUrl = getOracleUrl(firstOracle.endpoint);
+  const challengeUrl = `${baseUrl}/pow-challenge?domain=${encodeURIComponent(domain)}`;
+
+  try {
+    const response = await axios.get(challengeUrl, {
+      timeout: 5000,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+    res.json(response.data);
+  } catch (error) {
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data?.message || error.message || 'Failed to get PoW challenge'
+    });
+  }
+});
+
 // Submit observation to all oracles
 app.post('/api/submit', csrfProtection, async (req, res) => {
-  const { domain } = req.body;
+  const { domain, powToken } = req.body;
 
   // Validate input
   if (!domain || typeof domain !== 'string') {
@@ -148,24 +198,25 @@ app.post('/api/submit', csrfProtection, async (req, res) => {
     config.oracleEndpoints = oracles;
   }
 
+  // Prepare request body with PoW token if provided
+  const requestBody = {
+    domain: normalizedDomain
+  };
+  if (powToken) {
+    requestBody.pow_token = powToken;
+  }
+
   // Submit to each oracle endpoint
   const results = await Promise.allSettled(
     oracles.map(async (oracle) => {
       const endpoint = oracle.endpoint;
-      // Construct the full URL
-      const protocol = config.oracleProtocol;
-      const port = config.oraclePort;
-      const baseUrl = endpoint.includes('://')
-        ? endpoint
-        : `${protocol}://${endpoint}:${port}`;
+      const baseUrl = getOracleUrl(endpoint);
       const url = `${baseUrl}/observe`;
 
       try {
         const response = await axios.post(
           url,
-          {
-            domain: normalizedDomain
-          },
+          requestBody,
           {
             timeout: 30000, // 30 second timeout
             headers: {
@@ -185,7 +236,7 @@ app.post('/api/submit', csrfProtection, async (req, res) => {
           endpoint,
           success: false,
           status: error.response?.status || 'N/A',
-          error: error.response?.data?.error || error.message
+          error: error.response?.data?.message || error.response?.data?.error || error.message
         };
       }
     })

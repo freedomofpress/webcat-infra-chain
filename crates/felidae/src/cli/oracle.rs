@@ -182,14 +182,25 @@ async fn observe_domain(
             Some(StatusCode::NOT_FOUND | StatusCode::GONE) => None,
             // Any other errors should not result in an oracle observation:
             None => {
-                return Err(color_eyre::eyre::eyre!(
-                    "failed to fetch enrollment: {}",
-                    error
-                ));
+                // Network-level error (DNS, connection, timeout, SSL, etc.)
+                let error_msg = if error.is_timeout() {
+                    format!("timeout while fetching enrollment from {}", enrollment_url)
+                } else if error.is_connect() {
+                    format!("connection failed to {}", enrollment_url)
+                } else if error.is_request() {
+                    format!("request error for {}: {}", enrollment_url, error)
+                } else {
+                    format!(
+                        "failed to fetch enrollment from {}: {}",
+                        enrollment_url, error
+                    )
+                };
+                return Err(color_eyre::eyre::eyre!("{}", error_msg));
             }
             Some(status) => {
                 return Err(color_eyre::eyre::eyre!(
-                    "unexpected status code while fetching enrollment: HTTP {} {}",
+                    "unexpected status code while fetching enrollment from {}: HTTP {} {}",
+                    enrollment_url,
                     status.as_u16(),
                     status.canonical_reason().unwrap_or("")
                 ));
