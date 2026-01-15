@@ -29,3 +29,6 @@ humantime = { workspace = true }
 serde_with = { workspace = true }
 fqdn = { workspace = true }
 prost = { workspace = true }
+addr = { workspace = true }
+sha2 = { workspace = true }
+getrandom = { workspace = true }
