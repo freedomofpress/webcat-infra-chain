@@ -133,7 +133,7 @@ function getOracleUrl(endpoint) {
     : `${protocol}://${endpoint}:${port}`;
 }
 
-// Get PoW challenge from an oracle
+// Get PoW challenge from all oracles (each oracle has its own secret)
 app.get('/api/pow-challenge', async (req, res) => {
   const { domain } = req.query;
 
@@ -153,30 +153,55 @@ app.get('/api/pow-challenge', async (req, res) => {
     config.oracleEndpoints = oracles;
   }
 
-  // Request challenge from first oracle (all oracles use same secret, so challenge is the same)
-  const firstOracle = oracles[0];
-  const baseUrl = getOracleUrl(firstOracle.endpoint);
-  const challengeUrl = `${baseUrl}/pow-challenge?domain=${encodeURIComponent(domain)}`;
+  // Request challenge from each oracle (each has its own secret)
+  const challengePromises = oracles.map(async (oracle) => {
+    const baseUrl = getOracleUrl(oracle.endpoint);
+    const challengeUrl = `${baseUrl}/pow-challenge?domain=${encodeURIComponent(domain)}`;
 
-  try {
-    const response = await axios.get(challengeUrl, {
-      timeout: 5000,
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    });
+    try {
+      const response = await axios.get(challengeUrl, {
+        timeout: 5000,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
 
-    res.json(response.data);
-  } catch (error) {
-    res.status(error.response?.status || 500).json({
-      error: error.response?.data?.message || error.message || 'Failed to get PoW challenge'
-    });
-  }
+      return {
+        endpoint: oracle.endpoint,
+        success: true,
+        challenge: response.data.challenge,
+        timestamp: response.data.timestamp,
+        difficulty: response.data.difficulty
+      };
+    } catch (error) {
+      return {
+        endpoint: oracle.endpoint,
+        success: false,
+        error: error.response?.data?.message || error.message || 'Failed to get PoW challenge'
+      };
+    }
+  });
+
+  const results = await Promise.allSettled(challengePromises);
+  const challenges = results.map((result, index) => {
+    if (result.status === 'fulfilled') {
+      return result.value;
+    } else {
+      return {
+        endpoint: oracles[index]?.endpoint || 'unknown',
+        success: false,
+        error: result.reason?.message || 'Unknown error'
+      };
+    }
+  });
+
+  // Return challenges for all oracles
+  res.json({ challenges });
 });
 
 // Submit observation to all oracles
 app.post('/api/submit', csrfProtection, async (req, res) => {
-  const { domain, powToken } = req.body;
+  const { domain, powTokens } = req.body;
 
   // Validate input
   if (!domain || typeof domain !== 'string') {
@@ -198,20 +223,27 @@ app.post('/api/submit', csrfProtection, async (req, res) => {
     config.oracleEndpoints = oracles;
   }
 
-  // Prepare request body with PoW token if provided
-  const requestBody = {
-    domain: normalizedDomain
-  };
-  if (powToken) {
-    requestBody.pow_token = powToken;
-  }
+  // powTokens should be a map: { endpoint: powToken }
+  // For backward compatibility, also accept single powToken
+  const powTokenMap = powTokens || (req.body.powToken ? { [oracles[0].endpoint]: req.body.powToken } : {});
 
-  // Submit to each oracle endpoint
+  // Submit to each oracle endpoint with its corresponding PoW token
   const results = await Promise.allSettled(
     oracles.map(async (oracle) => {
       const endpoint = oracle.endpoint;
       const baseUrl = getOracleUrl(endpoint);
       const url = `${baseUrl}/observe`;
+
+      // Get the PoW token for this specific oracle
+      const powToken = powTokenMap[endpoint];
+
+      // Prepare request body
+      const requestBody = {
+        domain: normalizedDomain
+      };
+      if (powToken) {
+        requestBody.pow_token = powToken;
+      }
 
       try {
         const response = await axios.post(

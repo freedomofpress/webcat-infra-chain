@@ -70,7 +70,7 @@ pub async fn run(server: Server) -> Result<(), Report> {
     let pow_difficulty: u8 = std::env::var("POW_DIFFICULTY")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(18)
+        .unwrap_or(17)
         .max(8); // Minimum difficulty of 8 bits
 
     let state = Arc::new(AppState {
