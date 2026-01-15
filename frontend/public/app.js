@@ -79,15 +79,19 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// Request PoW challenge from server
-async function requestPoWChallenge(domain) {
+// Request PoW challenges from all oracles
+async function requestPoWChallenges(domain) {
     try {
         const response = await fetch(`/api/pow-challenge?domain=${encodeURIComponent(domain)}`);
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.error || 'Failed to get PoW challenge');
+            throw new Error(error.error || 'Failed to get PoW challenges');
         }
-        return await response.json();
+        const data = await response.json();
+        if (!data.challenges || !Array.isArray(data.challenges)) {
+            throw new Error('Invalid challenges response from server');
+        }
+        return data.challenges;
     } catch (error) {
         console.error('PoW challenge request failed:', error);
         throw error;
@@ -106,7 +110,7 @@ async function sha256(message) {
 function countLeadingZeros(hex) {
     let count = 0;
     for (let i = 0; i < hex.length; i += 2) {
-        const byte = parseInt(hex.substr(i, 2), 16);
+        const byte = parseInt(hex.substring(i, i + 2), 16);
         if (byte === 0) {
             count += 8;
         } else {
@@ -225,50 +229,81 @@ async function handleSubmit(event) {
             await fetchCSRFToken();
         }
 
-        // Request PoW challenge
-        submitBtn.textContent = 'Getting challenge...';
-        let challengeData;
+        // Request PoW challenges from all oracles
+        submitBtn.textContent = 'Getting challenges...';
+        let challenges;
         try {
-            challengeData = await requestPoWChallenge(domain);
-            console.log('Received challenge:', challengeData);
+            challenges = await requestPoWChallenges(domain);
+            console.log('Received challenges:', challenges);
         } catch (error) {
-            console.error('Failed to get PoW challenge:', error);
-            throw new Error(`Failed to get PoW challenge: ${error.message}. Is the oracle server running?`);
+            console.error('Failed to get PoW challenges:', error);
+            throw new Error(`Failed to get PoW challenges: ${error.message}. Are the oracle servers running?`);
         }
 
-        if (!challengeData || !challengeData.challenge || !challengeData.difficulty) {
-            throw new Error('Invalid challenge response from server');
+        // Filter to only successful challenges
+        const validChallenges = challenges.filter(c => c.success);
+        if (validChallenges.length === 0) {
+            const errors = challenges.map(c => `${c.endpoint}: ${c.error || 'Unknown error'}`).join('; ');
+            throw new Error(`Failed to get valid challenges from any oracle: ${errors}`);
         }
 
-        // Compute PoW
-        submitBtn.textContent = 'Computing proof of work...';
-        showStatus('info', `Computing proof of work (difficulty: ${challengeData.difficulty}, this may take a few seconds)...`);
+        // Compute PoW for each challenge
+        submitBtn.textContent = `Computing proof of work (${validChallenges.length} oracles)...`;
+        const difficulty = validChallenges[0].difficulty; // Assume all have same difficulty for user output
+        showStatus('info', `Computing proof of work for ${validChallenges.length} oracles (difficulty: ${difficulty}, this may take a while)...`);
 
-        console.log(`Starting PoW computation: challenge=${challengeData.challenge.substring(0, 16)}..., difficulty=${challengeData.difficulty}`);
-        const powStartTime = Date.now();
+        const powTokens = {};
+        let completed = 0;
+        const totalChallenges = validChallenges.length;
 
-        const powResult = await computePoW(
-            challengeData.challenge,
-            challengeData.difficulty,
-            (attempts, elapsed) => {
-                // Update button text with progress
-                submitBtn.textContent = `Computing PoW... (${attempts} attempts, ${Math.round(elapsed / 1000)}s)`;
+        // Compute PoW for each challenge (we do sequentially to show progress)
+        for (const challengeData of validChallenges) {
+            if (!challengeData.challenge || !challengeData.difficulty || !challengeData.timestamp) {
+                console.warn(`Skipping invalid challenge from ${challengeData.endpoint}`);
+                continue;
             }
-        );
 
-        const powElapsed = Date.now() - powStartTime;
-        console.log(`PoW computation completed in ${powElapsed}ms`);
+            submitBtn.textContent = `Computing PoW for oracle ${completed + 1}/${totalChallenges}...`;
+            console.log(`Starting PoW computation for ${challengeData.endpoint}: challenge=${challengeData.challenge.substring(0, 16)}..., difficulty=${challengeData.difficulty}`);
+            const powStartTime = Date.now();
 
-        // Create PoW token
-        const powToken = {
-            challenge: challengeData.challenge,
-            nonce: powResult.nonce,
-            timestamp: challengeData.timestamp
-        };
+            try {
+                const powResult = await computePoW(
+                    challengeData.challenge,
+                    challengeData.difficulty,
+                    (attempts, elapsed) => {
+                        // Update button text with progress
+                        submitBtn.textContent = `Computing PoW ${completed + 1}/${totalChallenges}... (${attempts} attempts, ${Math.round(elapsed / 1000)}s)`;
+                    }
+                );
 
-        console.log('PoW token created:', { challenge: powToken.challenge.substring(0, 16) + '...', nonce: powToken.nonce, timestamp: powToken.timestamp });
+                const powElapsed = Date.now() - powStartTime;
+                console.log(`PoW computation for ${challengeData.endpoint} completed in ${powElapsed}ms`);
 
-        // Submit with PoW token
+                // Create PoW token for this oracle
+                powTokens[challengeData.endpoint] = {
+                    challenge: challengeData.challenge,
+                    nonce: powResult.nonce,
+                    timestamp: challengeData.timestamp
+                };
+
+                completed++;
+                console.log(`PoW token created for ${challengeData.endpoint}:`, {
+                    challenge: powTokens[challengeData.endpoint].challenge.substring(0, 16) + '...',
+                    nonce: powTokens[challengeData.endpoint].nonce,
+                    timestamp: powTokens[challengeData.endpoint].timestamp
+                });
+            } catch (error) {
+                console.error(`Failed to compute PoW for ${challengeData.endpoint}:`, error);
+                // Continue with other oracles
+            }
+        }
+
+        if (Object.keys(powTokens).length === 0) {
+            throw new Error('Failed to compute PoW for any oracle');
+        }
+
+        // Submit with PoW tokens
         submitBtn.textContent = 'Submitting...';
         hideStatus();
 
@@ -279,7 +314,7 @@ async function handleSubmit(event) {
                 'X-CSRF-Token': csrfToken
             },
             credentials: 'include',
-            body: JSON.stringify({ domain, powToken })
+            body: JSON.stringify({ domain, powTokens })
         });
 
         const data = await response.json();
