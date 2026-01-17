@@ -47,6 +47,10 @@ reset:
     ./cometbft/build/cometbft unsafe-reset-all
     ./target/release/felidae reset
 
+# Run the frontend
+frontend:
+  cd frontend && npm run dev
+
 # Run nix-specific linters
 nix-lint:
   nix flake check --all-systems
