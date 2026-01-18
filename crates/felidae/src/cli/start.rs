@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::SocketAddr;
 
 use clap::Parser;
 use color_eyre::{
@@ -13,15 +13,12 @@ mod query;
 
 #[derive(Parser)]
 pub struct Start {
-    /// Which port should the ABCI server listen on?
-    #[clap(long, default_value = "26658")]
-    abci: u16,
-    /// Which host/address should the ABCI server bind to?
-    #[clap(long, default_value = "127.0.0.1")]
-    abci_host: IpAddr,
-    /// Which port should the query server listen on?
-    #[clap(long, default_value = "80")]
-    query: u16,
+    /// Socket address for the ABCI server to bind to.
+    #[clap(long, default_value = "127.0.0.1:26658")]
+    abci_bind: SocketAddr,
+    /// Socket address for the query server to bind to.
+    #[clap(long, default_value = "127.0.0.1:8080")]
+    query_bind: SocketAddr,
     /// Home directory for storing state (defaults to platform-specific directory).
     #[clap(long)]
     pub homedir: Option<std::path::PathBuf>,
@@ -30,9 +27,8 @@ pub struct Start {
 impl Run for Start {
     async fn run(self) -> color_eyre::Result<()> {
         let Self {
-            abci,
-            abci_host,
-            query,
+            abci_bind,
+            query_bind,
             homedir,
         } = self;
 
@@ -65,17 +61,16 @@ impl Run for Start {
                 .consensus(consensus)
                 .finish()
                 .ok_or_eyre("could not construct ABCI server")?
-                .listen_tcp((abci_host, abci))
+                .listen_tcp(abci_bind)
                 .await
                 .or_else(|e| {
-                    bail!("could not start ABCI server on port {abci}: {e}");
+                    bail!("could not start ABCI server on {abci_bind}: {e}");
                 })
         });
 
         // Start the query server:
         let query = tokio::spawn(async move {
-            let listener =
-                tokio::net::TcpListener::bind((IpAddr::V4(Ipv4Addr::UNSPECIFIED), query)).await?;
+            let listener = tokio::net::TcpListener::bind(query_bind).await?;
             axum::serve(listener, query::app(storage)).await?;
 
             Ok::<_, Report>(())

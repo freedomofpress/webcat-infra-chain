@@ -312,12 +312,9 @@ async fn keypair(homedir: Option<&std::path::Path>) -> color_eyre::Result<KeyPai
 
 #[derive(clap::Args)]
 pub struct Server {
-    /// Which port should the API server listen on?
-    #[clap(long, default_value = "8080")]
-    pub port: u16,
-    /// Which host/address should the API server bind to?
-    #[clap(long, default_value = "0.0.0.0")]
-    pub host: String,
+    /// Socket address for the API server to bind to.
+    #[clap(long, default_value = "127.0.0.1:8081")]
+    pub bind: std::net::SocketAddr,
     /// Node to which to send observations.
     #[clap(long, short, default_value = "http://localhost:26657")]
     pub node: Url,
