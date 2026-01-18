@@ -54,3 +54,19 @@ frontend:
 # Run nix-specific linters
 nix-lint:
   nix flake check --all-systems
+
+# Bootstrap a local development chain (builds, initializes CometBFT, generates keys and config template)
+bootstrap:
+    just build
+    ./cometbft/build/cometbft init || true
+    cargo run --bin felidae admin init || true
+    cargo run --bin felidae oracle init || true
+    cargo run --bin felidae admin template > config.json
+    @echo ""
+    @echo "Bootstrap complete! Next steps:"
+    @echo "1. View your admin key:   cargo run --bin felidae admin identity"
+    @echo "2. View your oracle key:  cargo run --bin felidae oracle identity"
+    @echo "3. Edit config.json with your keys"
+    @echo "4. Start CometBFT:        just cometbft"
+    @echo "5. Start Felidae:         just felidae"
+    @echo "6. Submit config:         cargo run --bin felidae admin config config.json --chain <CHAIN_ID>"
