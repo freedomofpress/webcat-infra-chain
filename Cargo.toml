@@ -11,6 +11,7 @@ members = [
     "crates/felidae-oracle",
     "crates/felidae-admin",
     "crates/felidae-publish",
+    "crates/felidae-deployer",
 ]
 
 [workspace.dependencies]

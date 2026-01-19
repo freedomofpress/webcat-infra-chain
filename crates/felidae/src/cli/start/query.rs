@@ -2,15 +2,14 @@ use axum::body::Body;
 use axum::{Router, extract::Path, routing::get};
 use cnidarium::{StateDelta, StateRead, Storage};
 use color_eyre::{Report, eyre::eyre};
-use felidae_admin::HashObserved;
 use felidae_state::Vote;
 use felidae_state::{State, Substore};
-use felidae_types::transaction::{Config, Domain, Empty};
+use felidae_types::response::{AdminVote, OracleVote, PendingConfig, PendingObservation};
+use felidae_types::transaction::{Domain, Empty};
 use fqdn::FQDN;
 use futures::StreamExt;
 use reqwest::StatusCode;
 use serde::Serialize;
-use tendermint::Time;
 use tracing::debug;
 
 pub fn app(storage: Storage) -> Router {
@@ -42,12 +41,6 @@ pub fn app(storage: Storage) -> Router {
                 let mut state = state;
                 let vote_queue = state.admin_voting().await?;
                 let votes = vote_queue.votes_for_key_prefix(Empty, None).await?;
-                #[derive(Serialize)]
-                struct AdminVote {
-                    admin: String,
-                    time: Time,
-                    config: Config,
-                }
                 let votes: Vec<AdminVote> = votes
                     .into_iter()
                     .map(
@@ -106,13 +99,6 @@ pub fn app(storage: Storage) -> Router {
                         )
                         .await?
                 };
-                #[derive(Serialize)]
-                struct OracleVote {
-                    oracle: String,
-                    time: Time,
-                    domain: Domain,
-                    hash: HashObserved,
-                }
                 let votes: Vec<OracleVote> = votes
                     .into_iter()
                     .map(
@@ -159,11 +145,6 @@ pub fn app(storage: Storage) -> Router {
                 let mut state = state;
                 let vote_queue = state.admin_voting().await?;
                 let pending = vote_queue.pending_for_key_prefix(Empty, None).await?;
-                #[derive(Serialize)]
-                struct PendingConfig {
-                    time: Time,
-                    config: Config,
-                }
                 let pending: Vec<PendingConfig> = pending
                     .into_iter()
                     .map(|(time, _, value)| PendingConfig {
@@ -215,12 +196,6 @@ pub fn app(storage: Storage) -> Router {
                         )
                         .await?
                 };
-                #[derive(Serialize)]
-                struct PendingObservation {
-                    time: Time,
-                    domain: Domain,
-                    hash: HashObserved,
-                }
                 let pending: Vec<PendingObservation> = pending
                     .into_iter()
                     .map(|(time, key, value)| {
