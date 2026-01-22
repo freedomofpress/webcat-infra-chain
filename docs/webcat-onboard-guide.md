@@ -3,13 +3,10 @@
 ## Introduction
 
 This onboarding document is intended to help parties who are joining the WEBCAT ring.
-
-The WEBCAT architecture is built on open source software involving [CometBFT](https://cometbft.com) and FPF's '[Felidae](https://github.com/freedomofpress/webcat-infra-chain)' ABCi application.
+The WEBCAT architecture is built on open source software involving [CometBFT](https://cometbft.com) and FPF's '[Felidae](https://github.com/freedomofpress/webcat-infra-chain)' ABCI application.
 
 There are many different ways of setting up that software which may vary depending on an organization's needs.
-
 Freedom of the Press Foundation has developed several Ansible roles which aim to help organizations quickly get up and running.
-
 You are not obliged to use the Ansible roles if you have other means of provisioning and configuring systems, but if you know Ansible and would like to use it, we hope it helps!
 
 Please don't hesitate to get in touch if you run into problems using the guide.
@@ -30,13 +27,13 @@ There are three Ansible roles:
 
 - [ansible-role-cometbft-bootstrap](https://github.com/freedomofpress/ansible-role-cometbft-bootstrap)
 - [ansible-role-cometbft](https://github.com/freedomofpress/ansible-role-cometbft)
-- [ansible-role-felidae]((https://github.com/freedomofpress/ansible-role-felidae)
+- [ansible-role-felidae](https://github.com/freedomofpress/ansible-role-felidae)
 
 The 'CometBFT Bootstrap' role generates a CometBFT "testnet" directory `node0/..nodeN/`. It then **rsyncs** the right `node{{ cometbft_node_index }}` data to the right machine. It's intended to be run just once.
 
 The 'CometBFT' role is for managing the CometBFT config.toml and Docker configuration going forward.
 
-The 'Felidae' role is for managing the Felidae ABCi component's Docker configuration and other settings going forward.
+The 'Felidae' role is for managing the Felidae ABCI component's Docker configuration and other settings going forward.
 
 The CometBFT and Felidae components work closely with one another and there is an explicit relationship between them at the infrastructure level, in particular the shared Docker network that allows the containers to communicate together.
 
@@ -45,9 +42,11 @@ The CometBFT and Felidae components work closely with one another and there is a
 ## Prerequisites
 
 **On the bootstrap machine (usually your Ansible control host):**
+
 - Docker installed (bootstrap runs `docker run ... cometbft testnet ...`)
 
 **On every node (validators and sentries):**
+
 - Docker + Docker Compose plugin available (`docker compose ...`)
 - `rsync` available (for `ansible.posix.synchronize` to rsync the bootstrapped data out to the nodes)
 - Firewall rules appropriate for P2P and any exposed HTTP endpoints (more on Firewalls below).
