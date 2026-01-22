@@ -229,11 +229,18 @@ async fn observe_domain(
         .map_err(|e| color_eyre::eyre::eyre!("failed to decode transaction hex: {}", e))?;
     let broadcast_result = rpc_client.broadcast_tx_sync(tx_bytes).await?;
 
+    // Check if the transaction was rejected:
+    if broadcast_result.code.is_err() {
+        return Err(color_eyre::eyre::eyre!(
+            "transaction rejected: {}",
+            broadcast_result.log
+        ));
+    }
+
     info!(
         tx = %tx,
-        code = ?broadcast_result.code,
         hash = %hex::encode(broadcast_result.hash.as_bytes()),
-        "submitted transaction"
+        "transaction accepted"
     );
 
     Ok(())
