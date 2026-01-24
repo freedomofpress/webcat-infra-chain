@@ -121,7 +121,7 @@ impl Run for Config {
         )?;
 
         // Submit the transaction to the node:
-        let result = reqwest::Client::new()
+        let response_text = reqwest::Client::new()
             .get(self.node.join("/broadcast_tx_sync")?)
             .query(&[("tx", format!("0x{}", tx))])
             .send()
@@ -130,10 +130,38 @@ impl Run for Config {
             .text()
             .await?;
 
-        info!(tx = %tx, result = %result, "submitted transaction");
+        // Parse the CometBFT JSON-RPC response and check for transaction rejection:
+        let response: BroadcastTxResponse = serde_json::from_str(&response_text)
+            .map_err(|e| color_eyre::eyre::eyre!("failed to parse node response: {}", e))?;
+
+        if response.result.code != 0 {
+            return Err(color_eyre::eyre::eyre!(
+                "transaction rejected: {}",
+                response.result.log
+            ));
+        }
+
+        info!(
+            tx = %tx,
+            hash = %response.result.hash,
+            "transaction accepted"
+        );
 
         Ok(())
     }
+}
+
+/// CometBFT JSON-RPC response for broadcast_tx_sync.
+#[derive(serde::Deserialize)]
+struct BroadcastTxResponse {
+    result: BroadcastTxResult,
+}
+
+#[derive(serde::Deserialize)]
+struct BroadcastTxResult {
+    code: u32,
+    log: String,
+    hash: String,
 }
 
 #[derive(clap::Args)]
