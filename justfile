@@ -46,3 +46,7 @@ reset:
     just build-felidae
     ./cometbft/build/cometbft unsafe-reset-all
     ./target/release/felidae reset
+
+# Run nix-specific linters
+nix-lint:
+  nix flake check --all-systems
