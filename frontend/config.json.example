@@ -1,7 +1,7 @@
 {
   "oracleEndpoints": [
     {
-      "endpoint": "127.0.0.1",
+      "endpoint": "http://127.0.0.1:8080",
       "identity": "04b92e2117fa5548cd050dcd0d06799fd3724fbf3b03cc0f9f3bf879059770b2b305329061b6d3a54a0921237c3b791c17a23d292bf55d3d40c0050e7a343ddbf7"
     }
   ]

@@ -28,10 +28,9 @@ If `config.json` is not provided, the application will attempt to fetch oracle e
 
 The application can be configured via environment variables:
 
-- `PORT`: Server port (default: 3000)
+- `BIND_ADDRESS`: Server bind address in `host:port` format (default: `127.0.0.1:3000`)
+  - Examples: `127.0.0.1:3000`, `0.0.0.0:8080`, `[::1]:3000` (IPv6)
 - `CHAIN_API_URL`: URL of the felidae query API (default: `http://localhost`)
-- `ORACLE_PORT`: Port for oracle endpoints (default: 8080)
-- `ORACLE_PROTOCOL`: Protocol for oracle endpoints (default: `http`)
 - `ALLOWED_ORIGIN`: CORS allowed origin (default: `*`)
 
 ### Running
@@ -46,17 +45,25 @@ For development with auto-reload:
 npm run dev
 ```
 
-The application will be available at `http://localhost:3000` (or your configured port).
+The application will be available at `http://localhost:3000` (or your configured bind address).
 
 ## Oracle Endpoint Format
 
-Oracle endpoints should be configured as either:
-- IP addresses (e.g., `127.0.0.1`)
-- Domain names (e.g., `oracle.example.com`)
+Oracle endpoints in `config.json` should be full URLs:
 
-The application will construct the full URL as:
-`{ORACLE_PROTOCOL}://{endpoint}:{ORACLE_PORT}/observe`
+```json
+{
+  "oracleEndpoints": [
+    {
+      "endpoint": "http://127.0.0.1:8080",
+      "identity": "04b92e..."
+    },
+    {
+      "endpoint": "https://oracle.example.com:8443",
+      "identity": "04a1c3..."
+    }
+  ]
+}
+```
 
-For example, with defaults:
-- `http://127.0.0.1:8080/observe`
-- `http://oracle.example.com:8080/observe`
+The application appends `/observe` or `/pow-challenge` paths as needed.

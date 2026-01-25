@@ -7,7 +7,29 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+
+// Parse bind address (host:port format) using URL parser
+function parseBindAddress(addr) {
+  const defaultHost = '127.0.0.1';
+  const defaultPort = 3000;
+
+  if (!addr) {
+    return { host: defaultHost, port: defaultPort };
+  }
+
+  try {
+    const url = new URL(`http://${addr}`);
+    return {
+      host: url.hostname || defaultHost,
+      port: url.port ? parseInt(url.port, 10) : defaultPort
+    };
+  } catch {
+    console.error(`Invalid bind address: ${addr}`);
+    process.exit(1);
+  }
+}
+
+const bindAddress = parseBindAddress(process.env.BIND_ADDRESS);
 
 // CSRF protection - simple token-based implementation
 const CSRF_SECRET = process.env.CSRF_SECRET || crypto.randomBytes(32).toString('hex');
@@ -50,9 +72,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Load configuration
 let config = {
   chainApiUrl: process.env.CHAIN_API_URL || 'http://localhost',
-  oracleEndpoints: null, // Will be loaded from config file or chain API
-  oraclePort: process.env.ORACLE_PORT || 8080,
-  oracleProtocol: process.env.ORACLE_PROTOCOL || 'http'
+  oracleEndpoints: null // Will be loaded from config file or chain API
 };
 
 // Try to load oracle endpoints from config file
@@ -124,15 +144,6 @@ app.get('/api/oracles', async (req, res) => {
   }
 });
 
-// Helper function to construct oracle URL
-function getOracleUrl(endpoint) {
-  const protocol = config.oracleProtocol;
-  const port = config.oraclePort;
-  return endpoint.includes('://')
-    ? endpoint
-    : `${protocol}://${endpoint}:${port}`;
-}
-
 // Get PoW challenge from all oracles (each oracle has its own secret)
 app.get('/api/pow-challenge', async (req, res) => {
   const { domain } = req.query;
@@ -155,8 +166,7 @@ app.get('/api/pow-challenge', async (req, res) => {
 
   // Request challenge from each oracle (each has its own secret)
   const challengePromises = oracles.map(async (oracle) => {
-    const baseUrl = getOracleUrl(oracle.endpoint);
-    const challengeUrl = `${baseUrl}/pow-challenge?domain=${encodeURIComponent(domain)}`;
+    const challengeUrl = `${oracle.endpoint}/pow-challenge?domain=${encodeURIComponent(domain)}`;
 
     try {
       const response = await axios.get(challengeUrl, {
@@ -231,8 +241,7 @@ app.post('/api/submit', csrfProtection, async (req, res) => {
   const results = await Promise.allSettled(
     oracles.map(async (oracle) => {
       const endpoint = oracle.endpoint;
-      const baseUrl = getOracleUrl(endpoint);
-      const url = `${baseUrl}/observe`;
+      const url = `${endpoint}/observe`;
 
       // Get the PoW token for this specific oracle
       const powToken = powTokenMap[endpoint];
@@ -310,8 +319,8 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-app.listen(PORT, () => {
-  console.log(`Frontend server running on http://localhost:${PORT}`);
+app.listen(bindAddress.port, bindAddress.host, () => {
+  console.log(`Frontend server running on http://${bindAddress.host}:${bindAddress.port}`);
   console.log(`Chain API URL: ${config.chainApiUrl}`);
   if (config.oracleEndpoints) {
     console.log(`Configured ${config.oracleEndpoints.length} oracle endpoints`);
