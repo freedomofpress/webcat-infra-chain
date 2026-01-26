@@ -222,6 +222,8 @@ You can now submit oracle observations. For example:
 cargo run --bin felidae oracle observe --domain element.nym.re. --zone nym.re.
 ```
 
+If you omit the `--zone`, the oracle will automatically infer the zone from the domain using the Mozilla Public Suffix List (PSL).
+
 After the observation reaches quorum and the delay period expires, the observed hash will be visible in the snapshot:
 
 ```bash

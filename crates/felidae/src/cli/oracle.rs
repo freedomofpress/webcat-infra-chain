@@ -9,6 +9,7 @@ use tendermint_rpc::client::Client;
 use super::Run;
 
 mod server;
+pub mod zone;
 
 #[derive(clap::Subcommand)]
 pub enum Oracle {
@@ -85,9 +86,9 @@ pub struct Observe {
     /// Domain name to observe.
     #[clap(long, short)]
     pub domain: FQDN,
-    /// Zone name to observe.
+    /// Zone name to observe. If not provided, the zone will be inferred from the domain using the Mozilla Public Suffix List.
     #[clap(long, short)]
-    pub zone: FQDN,
+    pub zone: Option<FQDN>,
     /// Node to which to send the observation.
     #[clap(long, short, default_value = "http://localhost:26657")]
     pub node: Url,
@@ -101,9 +102,15 @@ pub struct Observe {
 
 impl Run for Observe {
     async fn run(self) -> Result<(), color_eyre::Report> {
+        // Use provided zone or infer it from domain using PSL
+        let zone = if let Some(zone) = self.zone {
+            zone
+        } else {
+            zone::infer_zone(&self.domain)?
+        };
         observe_domain(
             self.domain,
-            self.zone,
+            zone,
             self.node,
             self.chain,
             self.homedir.as_deref(),
@@ -126,14 +133,25 @@ async fn observe_domain(
     chain: Option<String>,
     homedir: Option<&std::path::Path>,
 ) -> Result<(), color_eyre::Report> {
+    info!(
+        domain = %domain,
+        zone = %zone,
+        node = %node,
+        chain = ?chain,
+        "observe_domain: starting observation"
+    );
+
     // Load the oracle keypair:
     let keypair = keypair(homedir).await?;
+    debug!("observe_domain: loaded oracle keypair");
 
     // Create a Tendermint RPC client:
     let rpc_url = tendermint_rpc::Url::try_from(node.clone())
         .map_err(|e| color_eyre::eyre::eyre!("invalid RPC URL: {}", e))?;
+    debug!(rpc_url = %rpc_url, "observe_domain: creating RPC client");
     let rpc_client = HttpClient::new(rpc_url)
         .map_err(|e| color_eyre::eyre::eyre!("failed to create RPC client: {}", e))?;
+    debug!("observe_domain: RPC client created");
 
     // We need reqwest for the enrollment endpoint:
     let http_client = reqwest::Client::builder()
@@ -141,13 +159,16 @@ async fn observe_domain(
         .connect_timeout(Duration::from_secs(5))
         .build()
         .map_err(|e| color_eyre::eyre::eyre!("failed to create HTTP client: {}", e))?;
+    debug!("observe_domain: HTTP client created");
 
     // Fetch the hash from the well-known endpoint of the domain/zone:
+    let enrollment_url = format!(
+        "https://{}/.well-known/webcat/enrollment.json",
+        domain.to_string().trim_matches('.')
+    );
+    info!(url = %enrollment_url, "observe_domain: fetching enrollment.json");
     let enrollment_string = match http_client
-        .get(format!(
-            "https://{}/.well-known/webcat/enrollment.json",
-            domain.to_string().trim_matches('.')
-        ))
+        .get(&enrollment_url)
         .send()
         .await?
         .error_for_status()
@@ -161,14 +182,25 @@ async fn observe_domain(
             Some(StatusCode::NOT_FOUND | StatusCode::GONE) => None,
             // Any other errors should not result in an oracle observation:
             None => {
-                return Err(color_eyre::eyre::eyre!(
-                    "failed to fetch enrollment: {}",
-                    error
-                ));
+                // Network-level error (DNS, connection, timeout, SSL, etc.)
+                let error_msg = if error.is_timeout() {
+                    format!("timeout while fetching enrollment from {}", enrollment_url)
+                } else if error.is_connect() {
+                    format!("connection failed to {}", enrollment_url)
+                } else if error.is_request() {
+                    format!("request error for {}: {}", enrollment_url, error)
+                } else {
+                    format!(
+                        "failed to fetch enrollment from {}: {}",
+                        enrollment_url, error
+                    )
+                };
+                return Err(color_eyre::eyre::eyre!("{}", error_msg));
             }
             Some(status) => {
                 return Err(color_eyre::eyre::eyre!(
-                    "unexpected status code while fetching enrollment: HTTP {} {}",
+                    "unexpected status code while fetching enrollment from {}: HTTP {} {}",
+                    enrollment_url,
                     status.as_u16(),
                     status.canonical_reason().unwrap_or("")
                 ));
