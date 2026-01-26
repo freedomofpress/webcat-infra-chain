@@ -25,9 +25,13 @@ pub fn find_binaries() -> color_eyre::Result<(PathBuf, PathBuf)> {
     Ok((cometbft_bin, felidae_bin))
 }
 
-/// Find the cometbft binary on the system PATH.
+/// Find the cometbft binary.
+///
+/// Search order:
+/// 1. System PATH (e.g., from nix environment)
+/// 2. Local submodule build at `./cometbft/build/cometbft`
 pub fn find_cometbft() -> color_eyre::Result<PathBuf> {
-    // Assume cometbft is available on PATH (provided by nix environment)
+    // First, check if cometbft is available on PATH (e.g., from nix environment)
     if let Ok(output) = Command::new("which").arg("cometbft").output() {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -37,7 +41,15 @@ pub fn find_cometbft() -> color_eyre::Result<PathBuf> {
         }
     }
 
+    // Fall back to local submodule build (for non-nix systems)
+    let local_build = PathBuf::from("./cometbft/build/cometbft");
+    if local_build.exists() && local_build.is_file() {
+        return Ok(local_build.canonicalize()?);
+    }
+
     Err(color_eyre::eyre::eyre!(
-        "cometbft binary not found in PATH. Ensure you're running in the nix environment (nix develop)"
+        "cometbft binary not found. Either:\n\
+         - Run in the nix environment (nix develop), or\n\
+         - Build the cometbft submodule: cd cometbft && make build"
     ))
 }
