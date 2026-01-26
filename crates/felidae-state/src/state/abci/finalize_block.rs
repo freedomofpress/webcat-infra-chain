@@ -13,7 +13,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             txs,
             decided_last_commit: CommitInfo { round: _, votes },
             misbehavior,
-            hash,
+            hash: _,
             height,
             time,
             next_validators_hash: _,
@@ -59,10 +59,6 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         // Record the current block height and time:
         self.set_block_height(height).await?;
         self.set_block_time(time).await?;
-
-        // Record the previous block's app hash:
-        self.record_app_hash(AppHash::try_from(hash.as_bytes().to_vec())?)
-            .await?;
 
         // Timeout expired votes in the vote queues
         self.admin_voting().await?.timeout_expired_votes().await?;
@@ -139,12 +135,11 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         // Get validator updates
         let validator_updates = self.active_validators().await?;
 
-        // TODO: Figure out how to compute the app hash here instead of in the caller, currently very gross
         Ok(response::FinalizeBlock {
             tx_results,
             validator_updates,
             consensus_param_updates: None,
-            app_hash: Default::default(), // todo
+            app_hash: Default::default(), // This gets filled in by the caller!
             events: vec![],
         })
     }

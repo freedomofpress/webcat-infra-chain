@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use cnidarium::{RootHash, Snapshot, StateDelta, StateRead, StateWrite, Storage};
+use cnidarium::{RootHash, Snapshot, StagedWriteBatch, StateDelta, StateRead, StateWrite, Storage};
 use color_eyre::{Report, eyre};
 use felidae_proto::DomainType;
 use futures::{Stream, stream::StreamExt};
@@ -122,6 +122,14 @@ impl Store {
         })
     }
 
+    /// Prepare the commit to get the root hash without actually committing.
+    pub async fn prepare_commit(&self) -> Result<RootHashes, Report> {
+        // TODO: here we need to use the batched writes in cnidarium?
+        // https://docs.rs/cnidarium/latest/cnidarium/struct.StagedWriteBatch.html
+        // it has a root_hash method
+        unimplemented!("prepare_commit is not implemented");
+    }
+
     /// Commit all pending changes to the underlying storage.
     pub async fn commit(&mut self) -> Result<(), Report> {
         // Pull out the current state and replace it with a new, empty one:
@@ -132,10 +140,16 @@ impl Store {
             },
         );
 
-        // Commit the pulled-out delta to storage:
-        self.storage
-            .commit(state.store)
+        // Prepare the commit to get a staged batch, then commit it
+        let batch = self
+            .storage
+            .prepare_commit(state.store)
             .await
+            .map_err(|e| eyre::eyre!(e))?;
+
+        // Commit the staged batch
+        self.storage
+            .commit_batch(batch)
             .map_err(|e| eyre::eyre!(e))?;
 
         // Update the state to use the new latest snapshot:
