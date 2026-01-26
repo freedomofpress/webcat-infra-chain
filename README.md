@@ -211,7 +211,7 @@ Replace `<CHAIN_ID>` with the chain ID from `~/.cometbft/config/genesis.json`.
 Once the chain accepts this transaction, you'll be configured as both admin and oracle. Verify the current configuration:
 
 ```bash
-curl http://localhost/config
+curl http://localhost:8080/config
 ```
 
 ### 5. Post an Oracle Observation
@@ -238,7 +238,7 @@ Instead of using the CLI, you can run the oracle as an HTTP server that accepts 
 cargo run --bin felidae oracle server \
   --homedir /persistent/keys \
   --node http://localhost:26657 \
-  --port 8080
+  --bind 127.0.0.1:8081
 ```
 
 The server exposes two endpoints:
@@ -247,7 +247,7 @@ The server exposes two endpoints:
 
 Example request:
 ```bash
-curl -X POST http://localhost:8080/observe \
+curl -X POST http://localhost:8081/observe \
   -H "Content-Type: application/json" \
   -d '{"domain": "example.com.", "zone": "com."}'
 ```
