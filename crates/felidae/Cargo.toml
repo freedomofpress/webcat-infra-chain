@@ -2,6 +2,8 @@
 name = "felidae"
 version = "0.2.0"
 edition = "2024"
+# set felidae as default binary for the workspace
+default-run = "felidae"
 
 [dependencies]
 felidae-types = { path = "../felidae-types" }

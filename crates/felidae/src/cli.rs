@@ -12,11 +12,15 @@ pub enum Options {
     /// Report observations as an oracle.
     #[command(subcommand)]
     Oracle(oracle::Oracle),
+    /// Query the Felidae chain state.
+    #[command(subcommand)]
+    Query(query::Query),
 }
 
 // One module per top-level subcommand
 mod admin;
 mod oracle;
+mod query;
 mod reset;
 mod start;
 
@@ -31,6 +35,7 @@ impl Run for Options {
             Self::Reset(reset) => reset.run().await,
             Self::Admin(admin) => admin.run().await,
             Self::Oracle(oracle) => oracle.run().await,
+            Self::Query(query) => query.run().await,
         }
     }
 }
