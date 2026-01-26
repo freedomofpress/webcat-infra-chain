@@ -56,8 +56,7 @@ struct AppState {
 
 pub async fn run(server: Server) -> Result<(), Report> {
     let Server {
-        port,
-        host,
+        bind,
         node,
         chain,
         homedir,
@@ -87,10 +86,9 @@ pub async fn run(server: Server) -> Result<(), Report> {
         .route("/health", axum::routing::get(|| async { "OK" }))
         .with_state(state);
 
-    let addr = format!("{}:{}", host, port);
-    info!(addr = %addr, "starting oracle API server");
+    info!(addr = %bind, "starting oracle API server");
 
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    let listener = tokio::net::TcpListener::bind(bind).await?;
     axum::serve(listener, app).await?;
 
     Ok(())
