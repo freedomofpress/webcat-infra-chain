@@ -34,13 +34,18 @@
       felidaeVersion = felidaeCrateToml.package.version;
 
       # CometBFT source configuration.
-      cometbftVersion = "0.34.35";
-      cometbftRev = "46db8f4afe70e936943ae97976a3b4b65cd9202e"; # v0.34.35
+      # To update the cometbft hash values, run:
+      # nix-prefetch-git --url https://github.com/cometbft/cometbft --rev <tag>
+      # and review the output.
+      cometbftVersion = "0.38.21";
+      cometbftRev = "c56d64ec53bd72dfd99a5b0f5cb3eaad224a7021"; # v0.38.21
+      cometbftSrcHash = "sha256-ehfFxnUBRCXFrlkpvB0UMmnNPjYEY1T1sTHbjUB+70g=";
+      cometbftVendorHash = "sha256-BFm+AimN+fdUPz3+MNIvJyqp8dsn5JjNaipnYsHZiC8=";
       cometbftSrc = pkgs.fetchFromGitHub {
         owner = "cometbft";
         repo = "cometbft";
         rev = cometbftRev;
-        hash = "sha256-BHt3EkULlI4IFw6u/xiGsUc89u6o52tBU11PHqOLROw=";
+        hash = cometbftSrcHash;
       };
 
       # Rust toolchain
@@ -144,7 +149,7 @@
           version = cometbftVersion;
 
           src = cometbftSrc;
-          vendorHash = "sha256-dWtgW2WFXOkvMRbqdQiYHpop56UZI5rlggIsyDsqJxI=";
+          vendorHash = cometbftVendorHash;
           subPackages = [ "cmd/cometbft" ];
           buildInputs = [ pkgs.protobuf ];
           ldflags = [
@@ -325,6 +330,8 @@
 
             # CometBFT binary (pre-built from flake)
             self.packages.${system}.cometbft
+            # nix tooling to fetch hashes for remote packages
+            pkgs.nix-prefetch-scripts
 
             # Go toolchain for CometBFT development
             pkgs.go_1_24
