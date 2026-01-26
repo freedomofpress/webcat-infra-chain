@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use cnidarium::{RootHash, Snapshot, StateDelta, StateRead, StateWrite, Storage};
+use cnidarium::{RootHash, Snapshot, StagedWriteBatch, StateDelta, StateRead, StateWrite, Storage};
 use color_eyre::{Report, eyre};
 use felidae_proto::DomainType;
 use futures::{Stream, stream::StreamExt};
@@ -10,12 +10,12 @@ use std::mem;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tendermint::AppHash;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::State;
 
 /// The mutable state backend for the Felidae node.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Store {
     /// The underlying storage backend.
     ///
@@ -24,6 +24,8 @@ pub struct Store {
     pub storage: Storage,
     /// The in-memory mutable state, yet to be applied to the storage.
     pub state: Arc<RwLock<State<StateDelta<Snapshot>>>>,
+    /// The staged write batch which gets prepared in FinalizeBlock and committed in Commit.
+    pub staged_batch: Arc<Mutex<Option<StagedWriteBatch>>>,
 }
 
 /// We have 2 substores: internal and canonical. When accessing state data, you must specify which
@@ -97,6 +99,7 @@ impl Store {
                 store: StateDelta::new(storage.latest_snapshot()),
             })),
             storage,
+            staged_batch: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -122,8 +125,13 @@ impl Store {
         })
     }
 
-    /// Commit all pending changes to the underlying storage.
-    pub async fn commit(&mut self) -> Result<(), Report> {
+    /// Prepare the commit to get the root hash and store the staged batch for later commit.
+    /// This stages the delta changes into a StagedWriteBatch to get the root hash,
+    /// and stores it so it can be committed later in the Commit phase.
+    ///
+    /// Invariants: This consumes the delta, so it should only be called once per block.
+    /// The staged batch is stored and will be used in `commit()`.
+    pub async fn prepare_commit(&mut self) -> Result<AppHash, Report> {
         // Pull out the current state and replace it with a new, empty one:
         let state = mem::replace(
             &mut *self.state.write().await,
@@ -132,11 +140,43 @@ impl Store {
             },
         );
 
-        // Commit the pulled-out delta to storage:
-        self.storage
-            .commit(state.store)
+        // Prepare the commit to get the staged batch and root hash
+        // This consumes the delta, which is why we replaced it above
+        let batch = self
+            .storage
+            .prepare_commit(state.store)
             .await
             .map_err(|e| eyre::eyre!(e))?;
+
+        // Get the root hash from the batch
+        let app_hash_root = *batch.root_hash();
+        let app_hash = AppHash::try_from(app_hash_root.0.to_vec())?;
+
+        // Store the batch for later commit
+        *self.staged_batch.lock().await = Some(batch);
+
+        Ok(app_hash)
+    }
+
+    /// Commit a staged write batch to storage.
+    pub async fn commit_staged(&self, batch: StagedWriteBatch) -> Result<(), Report> {
+        self.storage
+            .commit_batch(batch)
+            .map_err(|e| eyre::eyre!(e))?;
+        Ok(())
+    }
+
+    /// Commit all pending changes to the underlying storage.
+    /// Uses the staged batch prepared in `prepare_commit()` during FinalizeBlock.
+    pub async fn commit(&mut self) -> Result<(), Report> {
+        // Take the staged batch that was prepared in FinalizeBlock
+        // TODO: A better API would enforce that prepare_commit must be called before commit.
+        let batch = self.staged_batch.lock().await.take().ok_or_else(|| {
+            eyre::eyre!("no staged batch to commit - prepare_commit must be called before commit")
+        })?;
+
+        // Commit the staged batch
+        self.commit_staged(batch).await?;
 
         // Update the state to use the new latest snapshot:
         self.state.write().await.store = StateDelta::new(self.storage.latest_snapshot());
@@ -152,6 +192,7 @@ impl Store {
         self.state = Arc::new(RwLock::new(State {
             store: StateDelta::new(self.storage.latest_snapshot()),
         }));
+        self.staged_batch = Arc::new(Mutex::new(None));
     }
 
     /// Create a logical fork of the store.
@@ -163,6 +204,7 @@ impl Store {
         Self {
             storage: self.storage.clone(),
             state: Arc::new(RwLock::new(State { store: fork })),
+            staged_batch: Arc::new(Mutex::new(None)),
         }
     }
 

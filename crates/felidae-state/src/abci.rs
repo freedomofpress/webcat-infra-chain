@@ -65,6 +65,7 @@ impl Service<tendermint::v0_38::abci::Request> for crate::Store {
                     Ok(abci::Response::InitChain(response))
                 }
                 abci::Request::FinalizeBlock(finalize_block) => {
+                    // Fill in the app hash in the response but do not commit (yet):
                     let mut response = store
                         .state
                         .write()
@@ -72,24 +73,8 @@ impl Service<tendermint::v0_38::abci::Request> for crate::Store {
                         .finalize_block(finalize_block)
                         .instrument(info_span!("FinalizeBlock"))
                         .await?;
-                    // ABCI -> ABCI++ migration note: Compute the app hash after all state changes are made (ABCI 2.0)
-                    // and then record it.
-                    response.app_hash = store.root_hashes().await?.app_hash;
-                    let current_height = store
-                        .state
-                        .read()
-                        .await
-                        .block_height()
-                        .await
-                        .unwrap_or(Height::from(0u32));
-                    if current_height.value() > 0 {
-                        store
-                            .state
-                            .write()
-                            .await
-                            .record_app_hash(response.app_hash.clone())
-                            .await?;
-                    }
+                    let app_hash = store.prepare_commit().await?;
+                    response.app_hash = app_hash;
                     Ok(abci::Response::FinalizeBlock(response))
                 }
                 abci::Request::CheckTx(check_tx) => {
@@ -119,10 +104,18 @@ impl Service<tendermint::v0_38::abci::Request> for crate::Store {
                     Ok(abci::Response::CheckTx(abci::response::CheckTx::default()))
                 }
                 abci::Request::Commit => {
+                    // Commit and store the app hash.
                     store.commit().await?;
+                    let app_hash = store.root_hashes().await?.app_hash;
+                    store
+                        .state
+                        .write()
+                        .await
+                        .record_current_app_hash(app_hash.clone())
+                        .await?;
 
-                    // In ABCI 2.0, app_hash is returned in FinalizeBlock, not Commit
                     Ok(abci::Response::Commit(abci::response::Commit {
+                        data: Bytes::from(app_hash.as_bytes().to_vec()),
                         ..Default::default()
                     }))
                 }
