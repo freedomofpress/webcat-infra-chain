@@ -29,4 +29,5 @@ impl From<VerifyError> for ParseError {
     }
 }
 
+pub mod response;
 pub mod transaction;
