@@ -23,7 +23,11 @@ build-felidae:
 
 # Run tests
 test:
-    cargo test
+    cargo nextest run
+
+# Run integration tests
+integration:
+    cargo nextest run -p felidae-deployer --features integration --no-capture
 
 # Build WASM package for felidae-oracle
 build-wasm:
@@ -54,3 +58,14 @@ frontend:
 # Run nix-specific linters
 nix-lint:
   nix flake check --all-systems
+
+testnet_dir := "/tmp/test-network"
+# spin up a local devnet with multiple validators
+dev:
+  # prebuild bins
+  cargo build -q --bins
+  cometbft unsafe-reset-all
+  cargo run --bin felidae -- reset
+  rm -rf "{{testnet_dir}}"
+  cargo run --bin felidae-deployer -- create-network --directory "{{testnet_dir}}" --num-validators 1
+  cargo run --bin felidae-deployer -- run-network --directory "{{testnet_dir}}" --dev --process-compose

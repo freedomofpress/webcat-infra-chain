@@ -1,0 +1,53 @@
+[package]
+name = "felidae-deployer"
+version = "0.2.0"
+edition = "2024"
+description = "Developer-facing tool for generating felidae network configurations, for integration testing"
+
+[[bin]]
+name = "felidae-deployer"
+path = "src/main.rs"
+
+[lib]
+name = "felidae_deployer"
+path = "src/lib.rs"
+
+[dependencies]
+clap = { workspace = true }
+tokio = { workspace = true }
+color-eyre = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+hex = { workspace = true }
+rand = "0.9"
+toml = "0.8"
+ed25519-dalek = { workspace = true }
+sha2 = { workspace = true }
+base64 = "0.22"
+ctrlc = "3.4"
+escargot = "0.5"
+tempfile = "3.14"
+p256 = { workspace = true }
+pkcs8 = { workspace = true }
+rand_core = { workspace = true }
+chrono = "0.4"
+bytes = { workspace = true }
+felidae-types = { path = "../felidae-types" }
+
+[features]
+integration = []
+
+[dev-dependencies]
+felidae-oracle = { path = "../felidae-oracle" }
+felidae-admin = { path = "../felidae-admin" }
+tendermint-rpc = { workspace = true }
+reqwest = { workspace = true }
+axum = { workspace = true }
+p256 = { workspace = true }
+pkcs8 = { workspace = true }
+prost = { workspace = true }
+ed25519-dalek = { workspace = true }
+base64-url = { workspace = true }
+serde_with = { workspace = true }

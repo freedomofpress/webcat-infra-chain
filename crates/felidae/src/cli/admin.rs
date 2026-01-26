@@ -165,11 +165,86 @@ struct BroadcastTxResult {
 }
 
 #[derive(clap::Args)]
-pub struct Template {}
+pub struct Template {
+    /// Automatically read existing admin and oracle keys from their default paths.
+    #[clap(long, alias = "auto")]
+    pub read_local_keys: bool,
+    /// Path to the admin keypair file (defaults to platform-specific directory if --auto is set).
+    #[clap(long)]
+    pub admin_pubkey: Option<std::path::PathBuf>,
+    /// Path to the oracle keypair file (defaults to platform-specific directory if --auto is set).
+    #[clap(long)]
+    pub oracle_pubkey: Option<std::path::PathBuf>,
+    /// Home directory for reading keys when --read-local-keys is set.
+    ///
+    /// When specified, both admin and oracle keys are expected to be in this directory
+    /// (as admin_key.pkcs8.hex and oracle_key.pkcs8.hex respectively).
+    #[clap(long)]
+    pub homedir: Option<std::path::PathBuf>,
+}
 
 impl Run for Template {
     async fn run(self) -> Result<(), color_eyre::Report> {
-        let template = felidae_types::transaction::Config::template(0);
+        use felidae_types::transaction::{Admin, Oracle};
+        use prost::bytes::Bytes;
+
+        let mut template = felidae_types::transaction::Config::template(0);
+
+        // Determine the admin key path
+        let admin_keypath = if let Some(path) = self.admin_pubkey {
+            Some(path)
+        } else if self.read_local_keys {
+            Some(keypath(self.homedir.as_deref()).await?)
+        } else {
+            None
+        };
+
+        // Determine the oracle key path
+        let oracle_keypath_result = if let Some(path) = self.oracle_pubkey {
+            Some(path)
+        } else if self.read_local_keys {
+            Some(oracle_keypath(self.homedir.as_deref()).await?)
+        } else {
+            None
+        };
+
+        // Load admin public key if path is available
+        if let Some(path) = admin_keypath {
+            match load_pubkey_from_keypair(&path).await {
+                Ok(pubkey) => {
+                    template.admins.authorized = vec![Admin {
+                        identity: Bytes::from(pubkey),
+                    }];
+                }
+                Err(e) => {
+                    eprintln!(
+                        "warning: could not load admin key from {}: {}",
+                        path.display(),
+                        e
+                    );
+                }
+            }
+        }
+
+        // Load oracle public key if path is available
+        if let Some(path) = oracle_keypath_result {
+            match load_pubkey_from_keypair(&path).await {
+                Ok(pubkey) => {
+                    template.oracles.authorized = vec![Oracle {
+                        identity: Bytes::from(pubkey),
+                        endpoint: "127.0.0.1".to_string(),
+                    }];
+                }
+                Err(e) => {
+                    eprintln!(
+                        "warning: could not load oracle key from {}: {}",
+                        path.display(),
+                        e
+                    );
+                }
+            }
+        }
+
         let json = serde_json::to_string_pretty(&template)?;
         println!("{}", json);
         Ok(())
@@ -206,4 +281,33 @@ async fn keypair(homedir: Option<&std::path::Path>) -> color_eyre::Result<KeyPai
         color_eyre::eyre::eyre!("could not parse admin keypair at: {}", keypath.display())
     })?;
     Ok(keypair)
+}
+
+/// Get the default oracle key path (mirrors the logic in oracle.rs).
+async fn oracle_keypath(
+    homedir: Option<&std::path::Path>,
+) -> color_eyre::Result<std::path::PathBuf> {
+    let oracle_dir = if let Some(homedir) = homedir {
+        homedir.to_path_buf()
+    } else {
+        let directories = directories::ProjectDirs::from("press", "freedom", "felidae-oracle")
+            .ok_or_eyre("could not determine internal storage directory")?;
+        directories.data_local_dir().to_path_buf()
+    };
+
+    let keypath = oracle_dir.join("oracle_key.pkcs8.hex");
+    Ok(keypath)
+}
+
+/// Load a public key from a keypair file at the given path.
+async fn load_pubkey_from_keypair(path: &std::path::Path) -> color_eyre::Result<Vec<u8>> {
+    let keyhex = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|_| color_eyre::eyre::eyre!("could not read keypair at: {}", path.display()))?;
+    let keybytes = hex::decode(keyhex.trim()).map_err(|_| {
+        color_eyre::eyre::eyre!("could not decode keypair hex at: {}", path.display())
+    })?;
+    let keypair = KeyPair::decode(&keybytes)
+        .map_err(|_| color_eyre::eyre::eyre!("could not parse keypair at: {}", path.display()))?;
+    Ok(keypair.public_key())
 }

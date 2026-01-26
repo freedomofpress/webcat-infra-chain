@@ -325,6 +325,7 @@
             pkgs.cargo-watch
             pkgs.cargo-edit
             pkgs.cargo-release
+            pkgs.cargo-nextest
             pkgs.wasm-pack
             wasm-bindgen-cli  # Use our custom version that matches Cargo.lock
 
@@ -349,6 +350,9 @@
             # Shell utilities
             pkgs.jq
             pkgs.curl
+
+            # Process management for integration testing
+            pkgs.process-compose
 
             # Node.js for frontend development
             pkgs.nodejs

@@ -88,7 +88,8 @@ impl From<Zone> for String {
 
 impl From<PrefixOrderDomain> for String {
     fn from(value: PrefixOrderDomain) -> Self {
-        value.name.to_string()
+        // Use the Display format which produces prefix-order like ".best.jawn"
+        value.to_string()
     }
 }
 
@@ -96,9 +97,10 @@ impl TryFrom<String> for PrefixOrderDomain {
     type Error = crate::ParseError;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        let name = FQDN::from_ascii_str(&value)
-            .map_err(|_| crate::ParseError::new::<PrefixOrderDomain>(value.clone()))?;
-        Ok(PrefixOrderDomain { name })
+        // Parse from prefix-order format like ".best.jawn"
+        value
+            .parse()
+            .map_err(|_| crate::ParseError::new::<PrefixOrderDomain>(value))
     }
 }
 
