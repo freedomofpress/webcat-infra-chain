@@ -60,3 +60,23 @@ tower-http = { version = "0.6", features = ["util", "normalize-path"] }
 base64-url = "3.0.2"
 ed25519-dalek = { version = "2.1", features = ["std"] }
 addr = "0.15"
+
+# config for 'cargo release'
+[workspace.metadata.release]
+# Instruct cargo-release to increment versions for all packages in the workspace in lockstep.
+shared-version = true
+# Format spec for the auto-generated git tag, based on new version for release.
+tag-name = "v{{version}}"
+# The message is required for an annotated tag to be created.
+tag-message                = "Felidae version {{version}}"
+pre-release-commit-message = "chore: release version {{version}}"
+# Disable publishing to crates.io, for now.
+publish = false
+# Do commit, tag, and push the version bump, triggering a new release.
+tag = true
+# Don't push automatically; let the developer do that manually, after reviewing changes.
+push = false
+# Edit each crate's Cargo.toml, bumping versions for other workspace crates.
+dependent-version = "upgrade"
+# Permit publishing from any branch, because in GHA CI context, HEAD is checked out.
+allow-branch = ["*"]
