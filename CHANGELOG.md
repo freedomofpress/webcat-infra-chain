@@ -1,5 +1,9 @@
 # Unreleased
 
+Nothing yet!
+
+# Version 0.2.1 (2026-01-27)
+
 * feat: add enrollment frontend, #61
 * feat: add felidae query subcommand, #80
 * fix: config updates should error out, #75
