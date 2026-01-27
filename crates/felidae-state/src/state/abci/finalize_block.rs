@@ -120,6 +120,8 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             info!(version = new_config.version, "applying new config",);
             self.set_config(new_config.clone()).await?;
 
+            // Note: This will never be executed on the initial config specified in genesis, and only for
+            // subsequent configs.
             self.sync_validators_from_config(&new_config.validators)
                 .await?;
         }
