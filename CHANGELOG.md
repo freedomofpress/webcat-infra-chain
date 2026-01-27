@@ -2,6 +2,10 @@
 
 Nothing yet!
 
+# Version 0.3.0 (2026-01-27)
+
+* feat: migrate to CometBFT v0.38.21, #64
+
 # Version 0.2.1 (2026-01-27)
 
 * feat: add enrollment frontend, #61
