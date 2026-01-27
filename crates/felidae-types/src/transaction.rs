@@ -41,6 +41,7 @@ domain_types!(
     OracleIdentity: proto::OracleIdentity,
     OnionConfig: proto::config::OnionConfig,
     VotingConfig: proto::config::VotingConfig,
+    Validator: proto::Validator,
     Observe: proto::action::Observe,
     Observation: proto::action::observe::Observation,
     HashObserved: proto::action::observe::observation::HashObserved,
@@ -89,6 +90,8 @@ pub struct Config {
     pub admins: AdminConfig,
     pub oracles: OracleConfig,
     pub onion: OnionConfig,
+    #[serde(default)]
+    pub validators: Vec<Validator>,
 }
 
 impl Config {
@@ -124,6 +127,7 @@ impl Config {
                 }],
             },
             onion: OnionConfig { enabled: false },
+            validators: vec![],
         }
     }
 }
@@ -140,6 +144,14 @@ pub struct AdminConfig {
 pub struct Admin {
     #[serde_as(as = "Hex")]
     pub identity: Bytes,
+}
+
+#[serde_as]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct Validator {
+    #[serde_as(as = "Hex")]
+    pub public_key: Bytes,
+    pub power: u64,
 }
 
 #[serde_as]
@@ -475,6 +487,7 @@ mod tests {
                 observation_timeout: Duration::from_secs(120),
             },
             onion: OnionConfig { enabled: false },
+            validators: vec![],
         };
         assert_snapshot!(serde_json::to_string(&config).unwrap());
     }
@@ -518,6 +531,7 @@ mod tests {
                         observation_timeout: Duration::from_secs(120),
                     },
                     onion: OnionConfig { enabled: false },
+                    validators: vec![],
                 },
             })],
         };
