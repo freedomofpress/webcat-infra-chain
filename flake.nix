@@ -319,6 +319,7 @@
             # Additional Rust dev tools
             pkgs.cargo-watch
             pkgs.cargo-edit
+            pkgs.cargo-release
             pkgs.wasm-pack
             wasm-bindgen-cli  # Use our custom version that matches Cargo.lock
 
