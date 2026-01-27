@@ -260,6 +260,7 @@ impl TryFrom<proto::Config> for Config {
             admin_config,
             oracle_config,
             onion_config,
+            validators,
         } = value;
 
         let version = version
@@ -278,11 +279,17 @@ impl TryFrom<proto::Config> for Config {
             .map(TryInto::try_into)
             .ok_or_else(|| crate::ParseError::new::<OnionConfig>("missing".to_string()))??;
 
+        let validators = validators
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<_, _>>()?;
+
         Ok(Config {
             version,
             admins: admin_config,
             oracles: oracle_config,
             onion: onion_config,
+            validators,
         })
     }
 }
@@ -294,12 +301,14 @@ impl From<Config> for proto::Config {
             admins: admin_config,
             oracles: oracle_config,
             onion: onion_config,
+            validators,
         } = config;
         proto::Config {
             version: version.into(),
             admin_config: Some(admin_config.into()),
             oracle_config: Some(oracle_config.into()),
             onion_config: Some(onion_config.into()),
+            validators: validators.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -584,6 +593,28 @@ impl From<Admin> for proto::Admin {
     fn from(admin: Admin) -> Self {
         proto::Admin {
             public_key: admin.identity,
+        }
+    }
+}
+
+impl TryFrom<proto::Validator> for Validator {
+    type Error = crate::ParseError;
+
+    fn try_from(value: proto::Validator) -> Result<Self, Self::Error> {
+        let power = u64::try_from(value.power)
+            .map_err(|_| crate::ParseError::new::<u64>("invalid power".to_string()))?;
+        Ok(Validator {
+            public_key: value.public_key,
+            power,
+        })
+    }
+}
+
+impl From<Validator> for proto::Validator {
+    fn from(validator: Validator) -> Self {
+        proto::Validator {
+            public_key: validator.public_key,
+            power: i64::try_from(validator.power).unwrap_or(i64::MAX),
         }
     }
 }

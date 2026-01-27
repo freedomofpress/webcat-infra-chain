@@ -37,6 +37,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             onion: OnionConfig {
                 enabled: _, // Can be enabled or not
             },
+            validators: _,
         }: &Config,
     ) -> Result<(), Report> {
         // Ensure the version is greater than the current version:
