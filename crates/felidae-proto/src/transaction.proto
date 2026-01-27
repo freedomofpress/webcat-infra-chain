@@ -31,6 +31,7 @@ message Config {
     OracleConfig oracle_config = 2;
     OnionConfig onion_config = 3;
     int64 version = 4;
+    repeated Validator validators = 5;
 }
 
 message OracleVoteValue {
@@ -49,6 +50,11 @@ message OracleIdentity {
 
 message Admin {
     bytes public_key = 1;
+}
+
+message Validator {
+    bytes public_key = 1;
+    int64 power = 2;
 }
 
 message Signature {
