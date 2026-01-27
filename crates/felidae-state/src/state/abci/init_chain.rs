@@ -10,7 +10,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         // The initial app hash should be the hash of the InitChain request canonicalized as a protobuf:
         let mut hasher = Sha256::new();
         hasher.update(
-            tendermint_proto::v0_34::abci::RequestInitChain::from(request.clone()).encode_to_vec(),
+            tendermint_proto::v0_38::abci::RequestInitChain::from(request.clone()).encode_to_vec(),
         );
         let app_hash = AppHash::try_from(hasher.finalize().to_vec())?;
 
