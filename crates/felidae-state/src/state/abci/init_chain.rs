@@ -51,6 +51,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                     observation_timeout: Duration::from_secs(i64::MAX as u64), // No observations initially
                 },
                 onion: OnionConfig { enabled: false },
+                validators: vec![],
             }
         } else {
             // Parse the JSON from app_state_bytes and extract the config:
