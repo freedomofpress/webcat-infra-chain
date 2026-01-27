@@ -89,7 +89,7 @@ pub struct Config {
     pub admins: AdminConfig,
     pub oracles: OracleConfig,
     pub onion: OnionConfig,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub validators: Vec<Validator>,
 }
 
