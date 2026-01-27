@@ -118,7 +118,10 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             }
 
             info!(version = new_config.version, "applying new config",);
-            self.set_config(new_config).await?;
+            self.set_config(new_config.clone()).await?;
+
+            self.sync_validators_from_config(&new_config.validators)
+                .await?;
         }
 
         // Process ripe pending oracle observations into canonical state
