@@ -1079,7 +1079,7 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "felidae"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "addr",
  "axum 0.8.6",
@@ -1113,7 +1113,7 @@ dependencies = [
 
 [[package]]
 name = "felidae-admin"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "felidae-types",
  "hex",
@@ -1123,7 +1123,7 @@ dependencies = [
 
 [[package]]
 name = "felidae-oracle"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "base64-url",
  "ed25519-dalek",
@@ -1141,7 +1141,7 @@ dependencies = [
 
 [[package]]
 name = "felidae-proto"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bytes",
  "color-eyre",
@@ -1163,7 +1163,7 @@ dependencies = [
 
 [[package]]
 name = "felidae-publish"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "cnidarium",
@@ -1184,7 +1184,7 @@ dependencies = [
 
 [[package]]
 name = "felidae-state"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "cnidarium",
  "color-eyre",
@@ -1206,14 +1206,14 @@ dependencies = [
 
 [[package]]
 name = "felidae-traverse"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "prost 0.13.5",
 ]
 
 [[package]]
 name = "felidae-traverse-derive"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "proc-macro2 1.0.101",
  "quote",
@@ -1222,7 +1222,7 @@ dependencies = [
 
 [[package]]
 name = "felidae-types"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "felidae-proto",
  "fqdn",
