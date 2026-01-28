@@ -1,6 +1,9 @@
 # rust
 target/
 
+# dev configs
+config.json
+
 # nix
 /result
 .envrc
