@@ -1,5 +1,5 @@
 {
-  "name": "webcat-frontend",
+  "name": "whiskers",
   "version": "1.0.0",
   "description": "Frontend webapp for submitting WEBCAT domain enrollment requests",
   "main": "server.js",

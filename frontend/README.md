@@ -1,6 +1,6 @@
-# WEBCAT Frontend
+# WEBCAT whiskers
 
-A simple web application for submitting domain enrollment requests to the oracle network.
+A simple web application frontend for submitting domain enrollment requests to Felidae oracles on the WEBCAT network.
 
 ## Setup
 
@@ -67,3 +67,7 @@ Oracle endpoints in `config.json` should be full URLs:
 ```
 
 The application appends `/observe` or `/pow-challenge` paths as needed.
+
+### What's with the name?
+
+The app provides a frontend to WEBCAT, and whiskers are on the front end of a cat.

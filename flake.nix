@@ -33,6 +33,10 @@
       felidaeCrateToml = builtins.fromTOML (builtins.readFile ./crates/felidae/Cargo.toml);
       felidaeVersion = felidaeCrateToml.package.version;
 
+      # Extract whiskers version from package.json
+      whiskersPackageJson = builtins.fromJSON (builtins.readFile ./frontend/package.json);
+      whiskersVersion = whiskersPackageJson.version;
+
       # CometBFT source configuration.
       # To update the cometbft hash values, run:
       # nix-prefetch-git --url https://github.com/cometbft/cometbft --rev <tag>
@@ -243,45 +247,45 @@
             };
           };
 
-          # Frontend web application
-          frontend = pkgs.buildNpmPackage {
-            pname = "webcat-frontend";
-            version = "1.0.0";
+          # Whiskers web application
+          whiskers = pkgs.buildNpmPackage {
+            pname = "whiskers";
+            version = whiskersVersion;
 
             src = ./frontend;
 
-            npmDepsHash = "sha256-q/G1EgDDGLaj3ku169XLHw5NGIKdSTCWmgZiPVmmaRc=";
+            npmDepsHash = "sha256-dIUb73JZLFY4K8EllxfrHNjEPFrStqHBXjTJLXImQfg=";
 
             # No build step needed - pure runtime application
             dontNpmBuild = true;
 
             installPhase = ''
-              mkdir -p $out/lib/webcat-frontend
-              cp -r server.js public $out/lib/webcat-frontend/
-              cp -r node_modules $out/lib/webcat-frontend/
+              mkdir -p $out/lib/whiskers
+              cp -r server.js public $out/lib/whiskers/
+              cp -r node_modules $out/lib/whiskers/
 
               mkdir -p $out/bin
-              cat > $out/bin/webcat-frontend <<EOF
+              cat > $out/bin/whiskers <<EOF
               #!${pkgs.bash}/bin/bash
-              exec ${pkgs.nodejs}/bin/node $out/lib/webcat-frontend/server.js "\$@"
+              exec ${pkgs.nodejs}/bin/node $out/lib/whiskers/server.js "\$@"
               EOF
-              chmod +x $out/bin/webcat-frontend
+              chmod +x $out/bin/whiskers
             '';
 
             meta = with pkgs.lib; {
-              description = "Frontend webapp for WEBCAT domain enrollment requests";
+              description = "Whiskers webapp for WEBCAT domain enrollment requests";
               license = licenses.mit;
-              mainProgram = "webcat-frontend";
+              mainProgram = "whiskers";
             };
           };
 
           # OCI container image. Can be built via:
           #
-          #   nix build .#container
+          #   nix build .#container-felidae
           #   podman load < result
           #   podman run "localhost/felidae:$(nix eval --raw .#felidae.version)"
           #
-          container = pkgs.dockerTools.buildImage {
+          container-felidae = pkgs.dockerTools.buildImage {
             name = "felidae";
             tag = felidaeVersion;
 
@@ -290,8 +294,12 @@
               paths = [
                 self.packages.${system}.felidae
                 self.packages.${system}.cometbft
+
+                # bare minimum for scripting container runtime
                 pkgs.bashInteractive
                 pkgs.coreutils
+                pkgs.curl
+                pkgs.jq
               ];
               pathsToLink = [ "/bin" ];
             };
@@ -304,6 +312,46 @@
             };
           };
 
+          # Whiskers OCI container image. Can be built via:
+          #
+          #   nix build .#container-whiskers
+          #   podman load < result
+          #   podman run -p 3000:3000 "localhost/whiskers:$(nix eval --raw .#whiskers.version)"
+          #
+          container-whiskers = pkgs.dockerTools.buildImage {
+            name = "whiskers";
+            tag = self.packages.${system}.whiskers.version;
+
+            copyToRoot = pkgs.buildEnv {
+              name = "whiskers-image-root";
+              paths = [
+                self.packages.${system}.whiskers
+                pkgs.nodejs
+
+                # bare minimum for scripting container runtime
+                pkgs.bashInteractive
+                pkgs.coreutils
+                pkgs.curl
+                pkgs.jq
+              ];
+              pathsToLink = [ "/bin" "/lib" ];
+            };
+
+            config = {
+              Cmd = [ "/bin/whiskers" ];
+              Env = [
+                "PATH=/bin"
+                "NODE_ENV=production"
+                # Enable Node.js production logging
+                "DEBUG=*"
+              ];
+              ExposedPorts = {
+                "3000/tcp" = {};
+              };
+              WorkingDir = "/lib/whiskers";
+            };
+          };
+
           # Combined default package with both felidae and cometbft
           default = pkgs.symlinkJoin {
             name = "felidae-with-cometbft-${felidaeVersion}";
@@ -313,7 +361,6 @@
             ];
             meta = with pkgs.lib; {
               description = "Felidae blockchain application with CometBFT";
-              license = licenses.mit;
             };
           };
         };
@@ -354,7 +401,7 @@
             # Process management for integration testing
             pkgs.process-compose
 
-            # Node.js for frontend development
+            # Node.js for whiskers development
             pkgs.nodejs
           ];
 
