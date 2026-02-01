@@ -1,0 +1,144 @@
+# Workflow file to build a container image.
+# Runs on new tags, also on merge into main.
+name: container
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - '**[0-9]+.[0-9]+.[0-9]+*'
+  # Building containers on PRs to exercise the logic frequently.
+  # Per-task exceptions below will prevent *pushing* images from PRs.
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Canceliing in-progress can lead to problems, e.g. if cancellation occurs during push.
+  # Leaving it on for now to aid in debugging the build process.
+  cancel-in-progress: true
+
+jobs:
+  # Build the "felidae" container image
+  felidae:
+    # N.B. default running will be slow, I reckon.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install nix
+        uses: nixbuild/nix-quick-install-action@v28
+
+      - name: setup nix cache
+        uses: nix-community/cache-nix-action@v5
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - name: Get version for container
+        id: version
+        shell: bash
+        run: |
+          CONTAINER_VERSION="$(nix eval .#felidae.version --raw)"
+          echo "CONTAINER_VERSION=$CONTAINER_VERSION" >> $GITHUB_ENV
+          echo "CONTAINER_NAME=felidae" >> $GITHUB_ENV
+
+          # Ensure that the `ref_name` can be used as a docker tag.
+          CONTAINER_TAG="$(echo "${{ github.ref_name }}" | sed -E 's/[^a-zA-Z0-9_.-]/-/g')"
+          CONTAINER_TAG="$(echo "$CONTAINER_TAG" | sed -E 's/^[.-]/0/')"
+          echo "CONTAINER_TAG=$CONTAINER_TAG" >> $GITHUB_ENV
+
+      - name: Build container image
+        run: nix build .#container-felidae
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Load and tag image
+        if: github.event_name != 'pull_request'
+        run: |
+          # Load the image
+          docker load < result
+
+          # Tag with version and latest
+          docker tag ${{ env.CONTAINER_NAME }}:${{ env.CONTAINER_VERSION }} ghcr.io/freedomofpress/${{ env.CONTAINER_NAME }}:${{ env.CONTAINER_TAG }}
+          docker tag ${{ env.CONTAINER_NAME }}:${{ env.CONTAINER_VERSION }} ghcr.io/freedomofpress/${{ env.CONTAINER_NAME }}:latest
+
+      - name: Push image
+        if: github.event_name != 'pull_request'
+        run: |
+          # docker push ghcr.io/${{ github.repository }}:${{ steps.version.outputs.VERSION }}
+          docker push ghcr.io/freedomofpress/${{ env.CONTAINER_NAME }}:${{ env.CONTAINER_TAG }}
+          docker push ghcr.io/freedomofpress/${{ env.CONTAINER_NAME }}:latest
+
+  # Build the "whiskers" container image
+  whiskers:
+    # N.B. default running will be slow, I reckon.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install nix
+        uses: nixbuild/nix-quick-install-action@v28
+
+      - name: setup nix cache
+        uses: nix-community/cache-nix-action@v5
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - name: Get version
+        id: version
+        shell: bash
+        run: |
+          CONTAINER_VERSION="$(nix eval .#whiskers.version --raw)"
+          echo "CONTAINER_VERSION=$CONTAINER_VERSION" >> $GITHUB_ENV
+          echo "CONTAINER_NAME=whiskers" >> $GITHUB_ENV
+
+          # Ensure that the `ref_name` can be used as a docker tag.
+          CONTAINER_TAG="$(echo "${{ github.ref_name }}" | sed -E 's/[^a-zA-Z0-9_.-]/-/g')"
+          CONTAINER_TAG="$(echo "$CONTAINER_TAG" | sed -E 's/^[.-]/0/')"
+          echo "CONTAINER_TAG=$CONTAINER_TAG" >> $GITHUB_ENV
+
+      - name: Build container image
+        run: nix build .#container-whiskers
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Load and tag image
+        if: github.event_name != 'pull_request'
+        run: |
+          # Load the image
+          docker load < result
+
+          # Tag with version and latest
+          docker tag ${{ env.CONTAINER_NAME }}:${{ env.CONTAINER_VERSION }} ghcr.io/freedomofpress/${{ env.CONTAINER_NAME }}:${{ env.CONTAINER_TAG }}
+          docker tag ${{ env.CONTAINER_NAME }}:${{ env.CONTAINER_VERSION }} ghcr.io/freedomofpress/${{ env.CONTAINER_NAME }}:latest
+
+      - name: Push image
+        if: github.event_name != 'pull_request'
+        run: |
+          # docker push ghcr.io/${{ github.repository }}:${{ steps.version.outputs.VERSION }}
+          docker push ghcr.io/freedomofpress/${{ env.CONTAINER_NAME }}:${{ env.CONTAINER_TAG }}
+          docker push ghcr.io/freedomofpress/${{ env.CONTAINER_NAME }}:latest
