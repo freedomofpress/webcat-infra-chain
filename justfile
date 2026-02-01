@@ -59,6 +59,16 @@ frontend:
 nix-lint:
   nix flake check --all-systems
 
+alias container := container-felidae
+
+# Build OCI container image for felidae via nix
+container-felidae:
+  nix build .#container-felidae
+
+# Build OCI container image for whiskers via nix
+container-whiskers:
+  nix build .#container-whiskers
+
 testnet_dir := "/tmp/test-network"
 # spin up a local devnet with multiple validators
 dev:
