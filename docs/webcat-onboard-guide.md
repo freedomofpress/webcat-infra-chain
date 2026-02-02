@@ -80,13 +80,13 @@ cometbft_home: "/opt/cometbft"
 cometbft_testnet_dir: "/tmp/comet-testnet"
 
 # IMPORTANT: avoid the "double v" issue by pinning the image explicitly.
-# cometbft-bootstrap defaults to cometbft_version: "v0.34.35" and uses
+# cometbft-bootstrap defaults to cometbft_version: "v0.38.21" and uses
 # cometbft_docker_image: "cometbft/cometbft:{{ cometbft_version }}".
-# cometbft role defaults to cometbft_version: "0.34.35" and uses
+# cometbft role defaults to cometbft_version: "0.38.21" and uses
 # cometbft_docker_image: "cometbft/cometbft:v{{ cometbft_version }}".
 #
 # Easiest: set cometbft_docker_image directly and treat cometbft_version as informational.
-cometbft_version: "0.34.35"
+cometbft_version: "0.38.21"
 cometbft_docker_image: "cometbft/cometbft:v{{ cometbft_version }}"
 
 # --- Docker network contract (MUST match what Felidae uses) ---
@@ -404,7 +404,7 @@ Output should look like this:
 - Hosts not correctly in `cometbft_validators` / `cometbft_sentries`
 
 4) **Version tag mismatch**
-- One role uses `v0.34.35` while another uses `0.34.35`
+- One role uses `v0.38.21` while another uses `0.38.21`
 - Fix: set `cometbft_docker_image` explicitly (recommended above)
 
 ---
