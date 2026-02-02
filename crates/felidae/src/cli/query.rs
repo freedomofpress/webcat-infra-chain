@@ -8,8 +8,22 @@ use reqwest::Url;
 
 use super::Run;
 
+#[derive(clap::Args)]
+pub struct Query {
+    /// Felidae query server URL.
+    #[clap(
+        long,
+        visible_alias = "node-url",
+        default_value = "http://localhost:8080"
+    )]
+    pub query_url: Url,
+
+    #[command(subcommand)]
+    pub command: QueryCommand,
+}
+
 #[derive(clap::Subcommand)]
-pub enum Query {
+pub enum QueryCommand {
     /// Query canonical domain→hash mappings.
     Snapshot(Snapshot),
     /// Query active oracle votes in the vote queue.
@@ -26,28 +40,25 @@ pub enum Query {
 
 impl Run for Query {
     async fn run(self) -> color_eyre::Result<()> {
-        match self {
-            Self::Snapshot(cmd) => cmd.run().await,
-            Self::OracleVotes(cmd) => cmd.run().await,
-            Self::OraclePending(cmd) => cmd.run().await,
-            Self::AdminVotes(cmd) => cmd.run().await,
-            Self::AdminPending(cmd) => cmd.run().await,
-            Self::Config(cmd) => cmd.run().await,
+        let query_url = self.query_url;
+        match self.command {
+            QueryCommand::Snapshot(cmd) => cmd.run(query_url).await,
+            QueryCommand::OracleVotes(cmd) => cmd.run(query_url).await,
+            QueryCommand::OraclePending(cmd) => cmd.run(query_url).await,
+            QueryCommand::AdminVotes(cmd) => cmd.run(query_url).await,
+            QueryCommand::AdminPending(cmd) => cmd.run(query_url).await,
+            QueryCommand::Config(cmd) => cmd.run(query_url).await,
         }
     }
 }
 
 #[derive(clap::Args)]
-pub struct Snapshot {
-    /// Felidae query server URL.
-    #[clap(long, default_value = "http://localhost:8080")]
-    pub query_url: Url,
-}
+pub struct Snapshot {}
 
-impl Run for Snapshot {
-    async fn run(self) -> color_eyre::Result<()> {
+impl Snapshot {
+    async fn run(self, query_url: Url) -> color_eyre::Result<()> {
         let response: HashMap<String, String> = reqwest::Client::new()
-            .get(self.query_url.join("/snapshot")?)
+            .get(query_url.join("/snapshot")?)
             .send()
             .await?
             .error_for_status()?
@@ -61,23 +72,20 @@ impl Run for Snapshot {
 
 #[derive(clap::Args)]
 pub struct OracleVotes {
-    /// Felidae query server URL.
-    #[clap(long, default_value = "http://localhost:8080")]
-    pub query_url: Url,
     /// Filter by domain (optional).
     #[clap(long)]
     pub domain: Option<String>,
 }
 
-impl Run for OracleVotes {
-    async fn run(self) -> color_eyre::Result<()> {
+impl OracleVotes {
+    async fn run(self, query_url: Url) -> color_eyre::Result<()> {
         let endpoint = match &self.domain {
             Some(domain) => format!("/oracle/votes/{}", domain),
             None => "/oracle/votes".to_string(),
         };
 
         let response: Vec<OracleVote> = reqwest::Client::new()
-            .get(self.query_url.join(&endpoint)?)
+            .get(query_url.join(&endpoint)?)
             .send()
             .await?
             .error_for_status()?
@@ -90,16 +98,12 @@ impl Run for OracleVotes {
 }
 
 #[derive(clap::Args)]
-pub struct OraclePending {
-    /// Felidae query server URL.
-    #[clap(long, default_value = "http://localhost:8080")]
-    pub query_url: Url,
-}
+pub struct OraclePending {}
 
-impl Run for OraclePending {
-    async fn run(self) -> color_eyre::Result<()> {
+impl OraclePending {
+    async fn run(self, query_url: Url) -> color_eyre::Result<()> {
         let response: Vec<PendingObservation> = reqwest::Client::new()
-            .get(self.query_url.join("/oracle/pending")?)
+            .get(query_url.join("/oracle/pending")?)
             .send()
             .await?
             .error_for_status()?
@@ -112,16 +116,12 @@ impl Run for OraclePending {
 }
 
 #[derive(clap::Args)]
-pub struct AdminVotes {
-    /// Felidae query server URL.
-    #[clap(long, default_value = "http://localhost:8080")]
-    pub query_url: Url,
-}
+pub struct AdminVotes {}
 
-impl Run for AdminVotes {
-    async fn run(self) -> color_eyre::Result<()> {
+impl AdminVotes {
+    async fn run(self, query_url: Url) -> color_eyre::Result<()> {
         let response: Vec<AdminVote> = reqwest::Client::new()
-            .get(self.query_url.join("/admin/votes")?)
+            .get(query_url.join("/admin/votes")?)
             .send()
             .await?
             .error_for_status()?
@@ -134,16 +134,12 @@ impl Run for AdminVotes {
 }
 
 #[derive(clap::Args)]
-pub struct AdminPending {
-    /// Felidae query server URL.
-    #[clap(long, default_value = "http://localhost:8080")]
-    pub query_url: Url,
-}
+pub struct AdminPending {}
 
-impl Run for AdminPending {
-    async fn run(self) -> color_eyre::Result<()> {
+impl AdminPending {
+    async fn run(self, query_url: Url) -> color_eyre::Result<()> {
         let response: Vec<PendingConfig> = reqwest::Client::new()
-            .get(self.query_url.join("/admin/pending")?)
+            .get(query_url.join("/admin/pending")?)
             .send()
             .await?
             .error_for_status()?
@@ -156,16 +152,12 @@ impl Run for AdminPending {
 }
 
 #[derive(clap::Args)]
-pub struct Config {
-    /// Felidae query server URL.
-    #[clap(long, default_value = "http://localhost:8080")]
-    pub query_url: Url,
-}
+pub struct Config {}
 
-impl Run for Config {
-    async fn run(self) -> color_eyre::Result<()> {
+impl Config {
+    async fn run(self, query_url: Url) -> color_eyre::Result<()> {
         let response: ChainConfig = reqwest::Client::new()
-            .get(self.query_url.join("/config")?)
+            .get(query_url.join("/config")?)
             .send()
             .await?
             .error_for_status()?

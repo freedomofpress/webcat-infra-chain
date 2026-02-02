@@ -149,9 +149,9 @@ pub fn run_query_command(
 ) -> color_eyre::Result<String> {
     let mut cmd = Command::new(felidae_bin);
     cmd.arg("query")
-        .arg(subcommand)
         .arg("--query-url")
-        .arg(query_url);
+        .arg(query_url)
+        .arg(subcommand);
 
     for arg in extra_args {
         cmd.arg(arg);
@@ -170,8 +170,8 @@ pub fn run_query_command(
 
     let stdout = String::from_utf8(output.stdout)?;
     eprintln!(
-        "[run_query_command] {} --query-url {} => {}",
-        subcommand, query_url, stdout
+        "[run_query_command] --query-url {} {} => {}",
+        query_url, subcommand, stdout
     );
     Ok(stdout)
 }
