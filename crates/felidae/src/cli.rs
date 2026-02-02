@@ -13,7 +13,6 @@ pub enum Options {
     #[command(subcommand)]
     Oracle(oracle::Oracle),
     /// Query the Felidae chain state.
-    #[command(subcommand)]
     Query(query::Query),
 }
 
