@@ -2,6 +2,15 @@
 
 Nothing yet!
 
+# Version 0.3.1 (2026-02-03)
+
+* fix: felidae logs info level by default, #89
+* build: retool container images via nix build, #86, #91
+* build: adds container image for "whiskers" frontend, #86
+* docs: bump cometbft to 0.38.x in onboarding guide, #87
+* refactor: felidae query shoudl take url once, 88
+* test: add felidae-deployer integration test harness, #78
+
 # Version 0.3.0 (2026-01-27)
 
 * feat: migrate to CometBFT v0.38.21, #64
