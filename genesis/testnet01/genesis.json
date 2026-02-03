@@ -1,0 +1,98 @@
+{
+    "genesis_time": "2026-02-03T22:30:00.000000Z",
+    "chain_id": "webcat-test-01",
+    "initial_height": "0",
+    "consensus_params": {
+        "block": {
+            "max_bytes": "22020096",
+            "max_gas": "-1"
+        },
+        "evidence": {
+            "max_age_num_blocks": "100000",
+            "max_age_duration": "172800000000000",
+            "max_bytes": "1048576"
+        },
+        "validator": {
+            "pub_key_types": [
+                "ed25519"
+            ]
+        },
+        "version": {}
+    },
+    "validators": [
+        {
+            "address": "48926DF1CC10DBBFAA78953F9BE38E59020DE01D",
+            "pub_key": {
+                "type": "tendermint/PubKeyEd25519",
+                "value": "zEK+pyAEhhCaoHYhhT+rrorJoc9kZbfY+JkbMtF8u5Y="
+            },
+            "power": "1",
+            "name": ""
+        },
+        {
+            "address": "A39CFEBE6E8CA10B6101C46884A6EB8E62D04417",
+            "pub_key": {
+                "type": "tendermint/PubKeyEd25519",
+                "value": "8dZUej72UriKCPIDvk01c6yLaAB2ssYIli3fT3jKwSM="
+            },
+            "power": "1",
+            "name": ""
+        },
+        {
+            "address": "B734AC6CC1F14AAC8315FE8DBB07402ED4E45D72",
+            "pub_key": {
+                "type": "tendermint/PubKeyEd25519",
+                "value": "WBK6Af3uKtC+VTv8x48f2TPoNnsebSXSBTIsJku/nQw="
+            },
+            "power": "1",
+            "name": ""
+        }
+    ],
+    "app_hash": "",
+    "app_state": {
+        "config": {
+            "version": 0,
+            "admins": {
+                "voting": {
+                    "total": 3,
+                    "quorum": 2,
+                    "timeout": "1day",
+                    "delay": "0s"
+                },
+                "authorized": [
+                    "04e7dc6284068c701e9d7ce2e61f833d85880075035d5cc39176c9a5df22125deb31741335170c24e11545b477a5c5257b7665ae0dd23c276e6babf4b864842448",
+                    "04b2013b4a3848727afa882244fae3d3a2563e2eb4c3be63425222a0f70945d06fa4cf30b5ac3f39ff6c9ee106e52a1fade87b1e1a7bf7773f54fa5469807386ee",
+                    "04ee5ad12b906f269d6581b8729ffe051a529e942ac8326016c977288c4d01acebf2f497fc69e80f6d862fb80cb1070fdb614873bde0b8465ca1557dbe77222afd"
+                ]
+            },
+            "oracles": {
+                "enabled": true,
+                "voting": {
+                    "total": 3,
+                    "quorum": 2,
+                    "timeout": "7days",
+                    "delay": "1day"
+                },
+                "max_enrolled_subdomains": 5,
+                "observation_timeout": "5m",
+                "authorized": [
+                    {
+                        "identity": "04b92e2117fa5548cd050dcd0d06799fd3724fbf3b03cc0f9f3bf879059770b2b305329061b6d3a54a0921237c3b791c17a23d292bf55d3d40c0050e7a343ddbf7",
+                        "endpoint": "https://webcat-sentry-2.freedom.press"
+                    },
+                    {
+                        "identity": "04188763e3fd3354ce651a25423e8767e203271cd5239363ffbf86c8ca27dbe97a4f3d60b7464c5b47b46c4f0a4ca0aa512d5b9f14b077ed1b3d92b6ded90c14d5",
+                        "endpoint": "https://webcat-sentry-1.freedom.press"
+                    },
+                    {
+                        "identity": "04a834e44855d14530facf2c9bafca941743013599127c93a06e073cc921e801bced8287d11b32823c6936248a97c76953e5f9267f009e6abfe794381436e6b078",
+                        "endpoint": "https://webcat-sentry-3.freedom.press"
+                    }
+                ]
+            },
+            "onion": {
+                "enabled": false
+            }
+        }
+    }
+}
