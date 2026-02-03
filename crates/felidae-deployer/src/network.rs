@@ -407,6 +407,7 @@ impl Network {
                 authorized: oracle_configs,
             },
             onion: OnionConfig { enabled: false },
+            validators: vec![],
         })
     }
 
