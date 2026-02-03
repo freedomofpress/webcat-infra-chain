@@ -285,29 +285,53 @@
           #   podman load < result
           #   podman run "localhost/felidae:$(nix eval --raw .#felidae.version)"
           #
-          container-felidae = pkgs.dockerTools.buildImage {
+          container-felidae = pkgs.dockerTools.buildLayeredImage {
             name = "felidae";
             tag = felidaeVersion;
 
-            copyToRoot = pkgs.buildEnv {
-              name = "image-root";
-              paths = [
-                self.packages.${system}.felidae
-                self.packages.${system}.cometbft
+            contents = [
+              self.packages.${system}.felidae
+              self.packages.${system}.cometbft
 
-                # bare minimum for scripting container runtime
-                pkgs.bashInteractive
-                pkgs.coreutils
-                pkgs.curl
-                pkgs.jq
-              ];
-              pathsToLink = [ "/bin" ];
-            };
+              pkgs.dockerTools.caCertificates
+
+              # Shell and utilities
+              pkgs.bashInteractive
+              pkgs.coreutils
+              pkgs.curl
+              pkgs.jq
+            ];
+
+            # Create /etc/passwd and /etc/group with felidae user (uid/gid 1000),
+            # so the OCI container is similar to a normal system, e.g. Debian slim.
+            # These are created directly in fakeRootCommands rather than as separate
+            # derivations to avoid symlink issues that cause "path escapes from parent" errors.
+            fakeRootCommands = ''
+              mkdir -p ./tmp ./home/felidae ./etc
+              chown 1000:1000 ./home/felidae
+
+              cat > ./etc/passwd <<'EOF'
+              root:x:0:0:root:/root:/bin/bash
+              nobody:x:65534:65534:Nobody:/:/sbin/nologin
+              felidae:x:1000:1000::/home/felidae:/bin/bash
+              EOF
+
+              cat > ./etc/group <<'EOF'
+              root:x:0:
+              nobody:x:65534:
+              felidae:x:1000:
+              EOF
+            '';
 
             config = {
               Cmd = [ "/bin/felidae" ];
+              User = "1000:1000";
+              WorkingDir = "/home/felidae";
               Env = [
                 "PATH=/bin"
+                "HOME=/home/felidae"
+                "TMPDIR=/tmp"
+                "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
               ];
             };
           };
