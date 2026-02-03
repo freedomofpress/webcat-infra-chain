@@ -67,6 +67,7 @@ async fn test_admin_reconfiguration() -> color_eyre::Result<()> {
             ..current_config.oracles.clone()
         },
         onion: current_config.onion.clone(),
+        validators: current_config.validators.clone(),
     };
 
     // Submit reconfiguration from all 3 admins to reach quorum
@@ -174,6 +175,7 @@ async fn test_admin_reconfig_minority_no_update() -> color_eyre::Result<()> {
             ..current_config.oracles.clone()
         },
         onion: current_config.onion.clone(),
+        validators: current_config.validators.clone(),
     };
 
     // Submit reconfiguration from only 2 of 3 admins (below quorum of 3)
@@ -291,6 +293,7 @@ async fn test_admin_reconfig_full_quorum_success() -> color_eyre::Result<()> {
             ..current_config.oracles.clone()
         },
         onion: current_config.onion.clone(),
+        validators: current_config.validators.clone(),
     };
 
     // Submit reconfiguration from ALL 3 admins (meeting quorum)
