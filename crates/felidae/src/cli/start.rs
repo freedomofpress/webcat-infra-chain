@@ -80,6 +80,9 @@ impl Run for Start {
         tokio::select! {
             res = abci => res??,
             res = query => res??,
+            _ = tokio::signal::ctrl_c() => {
+                info!("received shutdown signal");
+            }
         }
 
         Ok(())
