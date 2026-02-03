@@ -1,5 +1,5 @@
 {
-    "genesis_time": "2026-02-03T22:30:00.000000Z",
+    "genesis_time": "2026-02-03T22:20:00.000000Z",
     "chain_id": "webcat-test-01",
     "initial_height": "0",
     "consensus_params": {
