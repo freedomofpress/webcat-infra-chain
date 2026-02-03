@@ -8,9 +8,11 @@ on:
       - main
     tags:
       - '**[0-9]+.[0-9]+.[0-9]+*'
-  # Building containers on PRs to exercise the logic frequently.
-  # Per-task exceptions below will prevent *pushing* images from PRs.
-  pull_request:
+  # Don't build on every PR, as the default running takes ~20m
+  # to build the nix environment.
+  # There are per-task exceptions to avoid pushing images to registry,
+  # even if build-on-PR is enabled by uncommenting the line below.
+  # pull_request:
   workflow_call:
   workflow_dispatch:
 
