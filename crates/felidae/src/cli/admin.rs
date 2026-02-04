@@ -85,7 +85,7 @@ pub struct Config {
     #[clap(long, short)]
     pub chain: String,
     /// Timeout duration for the reconfiguration to be valid (forward from now).
-    #[clap(long, short = 't', default_value = "10s")]
+    #[clap(long, short = 't', default_value = "10m")]
     pub signature_timeout: humantime::Duration,
     /// Grace period for the `not_before` timestamp.
     ///
