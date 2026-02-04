@@ -84,9 +84,20 @@ pub struct Config {
     /// Chain ID of the target chain.
     #[clap(long, short)]
     pub chain: String,
-    /// Timeout duration for the reconfiguration to be valid.
+    /// Timeout duration for the reconfiguration to be valid (forward from now).
     #[clap(long, short = 't', default_value = "10s")]
     pub signature_timeout: humantime::Duration,
+    /// Grace period for the `not_before` timestamp.
+    ///
+    /// This controls how far back in time the transaction's validity window extends.
+    /// It must be greater than the network's CometBFT `timeout_commit` value to account
+    /// for the lag between wall clock time and blockchain block time.
+    ///
+    /// If your network uses slow block times (e.g., 60s), you may need to increase this.
+    /// Setting this too small causes "current time is before the not_before bound" errors.
+    /// Setting this too large has minimal impact (config versioning prevents replays).
+    #[clap(long, short = 'g', default_value = "5m")]
+    pub not_before_grace: humantime::Duration,
     /// Home directory for storing admin keys (defaults to platform-specific directory).
     #[clap(long)]
     pub homedir: Option<std::path::PathBuf>,
@@ -117,6 +128,7 @@ impl Run for Config {
             &keypair.encode()?,
             self.chain,
             self.signature_timeout.into(),
+            Some(self.not_before_grace.into()),
             config,
         )?;
 
