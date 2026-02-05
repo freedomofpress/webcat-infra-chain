@@ -2,7 +2,7 @@
 name = "felidae-traverse"
 version = "0.3.1"
 edition = "2021"
-license = "AGPL-3.0"
+license.workspace = true
 description = "Traverse trait for visiting nested data structures"
 
 [dependencies]
