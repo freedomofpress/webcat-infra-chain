@@ -182,7 +182,7 @@
 
           meta = with pkgs.lib; {
             description = "Felidae blockchain application for WEBCAT infrastructure";
-            license = licenses.mit;
+            license = licenses.agpl3Only;
           };
         });
 
@@ -243,7 +243,7 @@
 
             meta = with pkgs.lib; {
               description = "Felidae oracle WASM package";
-              license = licenses.mit;
+              license = licenses.agpl3Only;
             };
           };
 
@@ -274,7 +274,7 @@
 
             meta = with pkgs.lib; {
               description = "Whiskers webapp for WEBCAT domain enrollment requests";
-              license = licenses.mit;
+              license = licenses.agpl3Only;
               mainProgram = "whiskers";
             };
           };
