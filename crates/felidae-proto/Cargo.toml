@@ -2,6 +2,7 @@
 name = "felidae-proto"
 version = "0.3.1"
 edition = "2024"
+license.workspace = true
 
 [dependencies]
 prost = { workspace = true }
