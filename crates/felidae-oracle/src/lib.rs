@@ -8,6 +8,7 @@
 //! stringly-typed interface than otherwise one might prefer.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use ed25519_dalek::VerifyingKey;
 use olpc_cjson::CanonicalFormatter;
@@ -65,17 +66,35 @@ type WitnessError = Error;
 /// Enrollment policy structure as defined in the spec:
 /// https://github.com/freedomofpress/webcat-spec/blob/main/server.md
 #[derive(Serialize, Deserialize)]
-struct Enrollment {
-    /// An array of Ed25519 public keys, base64-encoded.
-    signers: Vec<String>,
-    /// The minimum number of distinct valid signatures required to accept a manifest as valid.
-    threshold: u32,
-    /// A base64-encoded string representing the compiled Sigsum policy.
-    policy: String,
-    /// The maximum number of seconds a manifest may remain valid after its signing timestamp.
-    max_age: u64,
-    /// The base URL of the Content Addressable Storage (CAS).
-    cas_url: String,
+#[serde(tag = "type")]
+#[serde(rename_all = "lowercase")]
+enum Enrollment {
+    /// Sigstore enrollment structure
+    Sigstore {
+        /// A Sigstore trusted root JSON document.
+        trusted_root: serde_json::Value,
+        /// The expected OIDC identity claim for signing certificates.
+        identity: String,
+        /// The expected OIDC issuer for signing certificates.
+        issuer: String,
+        /// The maximum number of seconds a manifest may remain valid after its signing timestamp.
+        max_age: u64,
+    },
+    /// Sigsum enrollment structure
+    Sigsum {
+        /// An array of Ed25519 public keys, base64url-encoded.
+        signers: Vec<String>,
+        /// The minimum number of distinct valid signatures required to accept a manifest as valid.
+        threshold: u32,
+        /// A base64url-encoded string representing the compiled Sigsum policy.
+        policy: String,
+        /// The maximum number of seconds a manifest may remain valid after its signing timestamp.
+        max_age: u64,
+        /// The base URL of the Content Addressable Storage (CAS).
+        cas_url: String,
+        /// A mapping of Sigsum log public keys (base64url-encoded) to their corresponding log URLs.
+        logs: BTreeMap<String, String>,
+    },
 }
 
 /// Create a hex-encoded, signed transaction witnessing the given observation on the given chain,
@@ -84,6 +103,7 @@ struct Enrollment {
 /// The oracle signing key must be the hex encoding of a valid ECDSA-P256 private key in PKCS#8
 /// format.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+#[allow(clippy::useless_conversion)]
 pub fn witness(
     signing_key: String,
     chain_id: String,
@@ -103,40 +123,92 @@ pub fn witness(
 
         // Validate enrollment constraints from the spec
         // https://github.com/freedomofpress/webcat-spec/blob/main/server.md
-        // Threshold must be at least 1.
-        if enrollment.threshold == 0 {
-            return Err(
-                Error::InvalidEnrollment("threshold must be at least 1".to_string()).into(),
-            );
-        }
+        match &enrollment {
+            Enrollment::Sigstore {
+                trusted_root,
+                identity,
+                issuer,
+                max_age: _,
+            } => {
+                // Validate trusted_root is a valid JSON object
+                if !trusted_root.is_object() {
+                    return Err(Error::InvalidEnrollment(
+                        "trusted_root must be a valid JSON object".to_string(),
+                    )
+                    .into());
+                }
 
-        // From the spec:
-        // The value of threshold MUST be less than or equal to the number of entries in signers
-        if enrollment.threshold as usize > enrollment.signers.len() {
-            return Err(Error::InvalidEnrollment(format!(
-                "threshold ({}) must be less than or equal to the number of signers ({})",
-                enrollment.threshold,
-                enrollment.signers.len()
-            ))
-            .into());
-        }
+                // Validate identity is not empty
+                if identity.is_empty() {
+                    return Err(
+                        Error::InvalidEnrollment("identity must not be empty".to_string()).into(),
+                    );
+                }
 
-        // Validate the policy is a valid base64 string.
-        let _policy = base64_url::decode(&enrollment.policy).map_err(|_| {
-            Error::InvalidEnrollment("policy must be a valid base64 string".to_string())
-        })?;
+                // Validate issuer is not empty
+                if issuer.is_empty() {
+                    return Err(
+                        Error::InvalidEnrollment("issuer must not be empty".to_string()).into(),
+                    );
+                }
+            }
+            Enrollment::Sigsum {
+                signers,
+                threshold,
+                policy,
+                max_age: _,
+                cas_url: _,
+                logs,
+            } => {
+                // Threshold must be at least 1.
+                if *threshold == 0 {
+                    return Err(Error::InvalidEnrollment(
+                        "threshold must be at least 1".to_string(),
+                    )
+                    .into());
+                }
 
-        // Validate that each key is a valid base64-encoded Ed25519 public key.
-        for key in &enrollment.signers {
-            let key_bytes = base64_url::decode(key).map_err(|_| {
-                Error::InvalidEnrollment("key must be a valid base64 string".to_string())
-            })?;
-            // Try to parse as Ed25519 public key (must be exactly 32 bytes and valid)
-            let key_array: [u8; 32] = key_bytes.try_into().map_err(|_| {
-                Error::InvalidEnrollment("Ed25519 public key must be exactly 32 bytes".to_string())
-            })?;
-            VerifyingKey::from_bytes(&key_array)
-                .map_err(|_| Error::InvalidEnrollment("invalid Ed25519 public key".to_string()))?;
+                // From the spec:
+                // The value of threshold MUST be less than or equal to the number of entries in signers
+                if *threshold as usize > signers.len() {
+                    return Err(Error::InvalidEnrollment(format!(
+                        "threshold ({}) must be less than or equal to the number of signers ({})",
+                        threshold,
+                        signers.len()
+                    ))
+                    .into());
+                }
+
+                // Validate the policy is a valid base64url string.
+                let _policy = base64_url::decode(policy).map_err(|_| {
+                    Error::InvalidEnrollment("policy must be a valid base64url string".to_string())
+                })?;
+
+                // Validate that each key is a valid base64url-encoded Ed25519 public key.
+                for key in signers {
+                    let key_bytes = base64_url::decode(key).map_err(|_| {
+                        Error::InvalidEnrollment("key must be a valid base64url string".to_string())
+                    })?;
+                    // Try to parse as Ed25519 public key (must be exactly 32 bytes and valid)
+                    let key_array: [u8; 32] = key_bytes.try_into().map_err(|_| {
+                        Error::InvalidEnrollment(
+                            "Ed25519 public key must be exactly 32 bytes".to_string(),
+                        )
+                    })?;
+                    VerifyingKey::from_bytes(&key_array).map_err(|_| {
+                        Error::InvalidEnrollment("invalid Ed25519 public key".to_string())
+                    })?;
+                }
+
+                // Validate that each log key is a valid base64url string.
+                for log_key in logs.keys() {
+                    base64_url::decode(log_key).map_err(|_| {
+                        Error::InvalidEnrollment(
+                            "log key must be a valid base64url string".to_string(),
+                        )
+                    })?;
+                }
+            }
         }
 
         let mut canonicalized = Vec::new();
