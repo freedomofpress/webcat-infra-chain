@@ -438,6 +438,80 @@ pub fn app(storage: Storage) -> Router {
     let domain_oracle_pending = oracle_pending();
 
     Router::new()
+        .route(
+            "/",
+            get(|| async {
+                #[derive(Serialize)]
+                struct EndpointInfo {
+                    path: String,
+                    description: String,
+                }
+
+                #[derive(Serialize)]
+                struct RoutesResponse {
+                    endpoints: Vec<EndpointInfo>,
+                }
+
+                let response = RoutesResponse {
+                    endpoints: vec![
+                        EndpointInfo {
+                            path: "/config".to_string(),
+                            description: "Get the current chain configuration".to_string(),
+                        },
+                        EndpointInfo {
+                            path: "/oracles".to_string(),
+                            description: "Get list of authorized oracle endpoints".to_string(),
+                        },
+                        EndpointInfo {
+                            path: "/canonical/leaves".to_string(),
+                            description:
+                                "Get canonical state leaves for full client-side verification"
+                                    .to_string(),
+                        },
+                        EndpointInfo {
+                            path: "/oracle/votes".to_string(),
+                            description: "Get oracle votes for all domains".to_string(),
+                        },
+                        EndpointInfo {
+                            path: "/oracle/votes/{domain}".to_string(),
+                            description: "Get oracle votes for a specific domain".to_string(),
+                        },
+                        EndpointInfo {
+                            path: "/oracle/pending".to_string(),
+                            description: "Get pending oracle observations for all domains"
+                                .to_string(),
+                        },
+                        EndpointInfo {
+                            path: "/oracle/pending/{domain}".to_string(),
+                            description: "Get pending oracle observations for a specific domain"
+                                .to_string(),
+                        },
+                        EndpointInfo {
+                            path: "/snapshot".to_string(),
+                            description: "Get hashes for all domains".to_string(),
+                        },
+                        EndpointInfo {
+                            path: "/snapshot/{domain}".to_string(),
+                            description: "Get hash for a specific domain".to_string(),
+                        },
+                        EndpointInfo {
+                            path: "/admin/votes".to_string(),
+                            description: "Get admin votes for configuration changes".to_string(),
+                        },
+                        EndpointInfo {
+                            path: "/admin/pending".to_string(),
+                            description: "Get pending admin configuration changes".to_string(),
+                        },
+                    ],
+                };
+
+                (
+                    StatusCode::OK,
+                    [("Content-Type", "application/json")],
+                    Body::from(serde_json::to_string_pretty(&response).unwrap()),
+                )
+            }),
+        )
         .route("/config", get(move || async { config().await }))
         .route("/oracles", get(move || async { oracles().await }))
         .route(
