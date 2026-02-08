@@ -1,6 +1,6 @@
 [package]
 name = "felidae"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 license.workspace = true
 # set felidae as default binary for the workspace

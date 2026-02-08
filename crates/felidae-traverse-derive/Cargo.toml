@@ -1,6 +1,6 @@
 [package]
 name = "felidae-traverse-derive"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 license.workspace = true
 description = "Derive macro for the Traverse trait"
