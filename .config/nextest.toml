@@ -1,0 +1,4 @@
+[profile.default]
+# The integration tests can take a while with longer block times,
+# so we raise the "slow" warning threshold from its default of 1m.
+slow-timeout = { period = "3m" }

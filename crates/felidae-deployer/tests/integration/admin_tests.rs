@@ -3,12 +3,14 @@
 //! This module contains tests for the admin reconfiguration system, including
 //! config updates, quorum enforcement, and BFT voting behavior.
 
-use std::time::Duration;
-
 use felidae_types::transaction::{Config, OracleConfig};
+use std::time::Duration;
 use tendermint_rpc::{Client, HttpClient};
 
 use crate::binaries::find_binaries;
+use crate::constants::{
+    admin_reconfig_tx_timeout, consensus_propagation_wait, inter_tx_delay, network_startup_timeout,
+};
 use crate::harness::TestNetwork;
 use crate::helpers::{query_admin_pending, query_admin_votes, query_config};
 
@@ -46,7 +48,7 @@ async fn test_admin_reconfiguration() -> color_eyre::Result<()> {
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
-    network.wait_ready(Duration::from_secs(30)).await?;
+    network.wait_ready(network_startup_timeout()).await?;
 
     let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
 
@@ -74,7 +76,7 @@ async fn test_admin_reconfiguration() -> color_eyre::Result<()> {
         let tx_hex = felidae_admin::reconfigure(
             &admin_key,
             crate::constants::TEST_CHAIN_ID.to_string(),
-            Duration::from_secs(60),
+            admin_reconfig_tx_timeout(),
             None, // Use default grace period
             new_config.clone(),
         )?;
@@ -96,11 +98,11 @@ async fn test_admin_reconfiguration() -> color_eyre::Result<()> {
             );
         }
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(inter_tx_delay()).await;
     }
 
     // Wait for the config change to take effect (admin delay is 0s in test config)
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    tokio::time::sleep(consensus_propagation_wait()).await;
 
     // Verify the configuration was updated via CLI
     let updated_config = query_config(&felidae_bin, &network.query_url())?;
@@ -143,7 +145,7 @@ async fn test_admin_reconfig_minority_no_update() -> color_eyre::Result<()> {
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
-    network.wait_ready(Duration::from_secs(30)).await?;
+    network.wait_ready(network_startup_timeout()).await?;
 
     let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
 
@@ -174,7 +176,7 @@ async fn test_admin_reconfig_minority_no_update() -> color_eyre::Result<()> {
         let tx_hex = felidae_admin::reconfigure(
             &admin_key,
             crate::constants::TEST_CHAIN_ID.to_string(),
-            Duration::from_secs(60),
+            admin_reconfig_tx_timeout(),
             None, // Use default grace period
             new_config.clone(),
         )?;
@@ -187,11 +189,11 @@ async fn test_admin_reconfig_minority_no_update() -> color_eyre::Result<()> {
             i, result.tx_result.code, result.tx_result.log
         );
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(inter_tx_delay()).await;
     }
 
     // Wait enough time for any potential processing
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    tokio::time::sleep(consensus_propagation_wait()).await;
 
     // Verify votes are accumulated but not applied via CLI
     let admin_votes = query_admin_votes(&felidae_bin, &network.query_url())?;
@@ -260,7 +262,7 @@ async fn test_admin_reconfig_full_quorum_success() -> color_eyre::Result<()> {
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
-    network.wait_ready(Duration::from_secs(30)).await?;
+    network.wait_ready(network_startup_timeout()).await?;
 
     let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
 
@@ -291,7 +293,7 @@ async fn test_admin_reconfig_full_quorum_success() -> color_eyre::Result<()> {
         let tx_hex = felidae_admin::reconfigure(
             &admin_key,
             crate::constants::TEST_CHAIN_ID.to_string(),
-            Duration::from_secs(60),
+            admin_reconfig_tx_timeout(),
             None, // Use default grace period
             new_config.clone(),
         )?;
@@ -304,11 +306,11 @@ async fn test_admin_reconfig_full_quorum_success() -> color_eyre::Result<()> {
             i, result.tx_result.code, result.tx_result.log
         );
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(inter_tx_delay()).await;
     }
 
     // Wait for the config change to take effect (admin delay is 0s in test config)
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    tokio::time::sleep(consensus_propagation_wait()).await;
 
     // Verify votes were consumed (should be empty after quorum) via CLI
     let admin_votes = query_admin_votes(&felidae_bin, &network.query_url())?;

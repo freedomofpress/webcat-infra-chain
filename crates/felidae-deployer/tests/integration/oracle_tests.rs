@@ -3,15 +3,15 @@
 //! This module contains tests for the oracle observation system, including
 //! vote submission, quorum detection, enrollment, unenrollment, and edge cases.
 
-use std::time::Duration;
-
 use felidae_types::KeyPair;
 use tendermint_rpc::{Client, HttpClient};
 
 use crate::binaries::find_binaries;
 use crate::constants::{
     TEST_DOMAIN_EXAMPLE, TEST_DOMAIN_UNENROLL, TEST_DOMAIN_WEBCAT, TEST_DOMAINS,
-    TEST_SUBDOMAIN_PREFIX_1, TEST_SUBDOMAIN_PREFIX_2, test_enrollment_json,
+    TEST_SUBDOMAIN_PREFIX_1, TEST_SUBDOMAIN_PREFIX_2, consensus_propagation_wait,
+    consensus_propagation_wait_long, inter_tx_delay, network_startup_timeout, poll_interval,
+    test_enrollment_json,
 };
 use crate::harness::TestNetwork;
 use crate::helpers::{
@@ -62,10 +62,12 @@ async fn test_three_validator_network_starts() -> color_eyre::Result<()> {
     )?;
 
     // Wait for network to be ready (blocks being produced indicates healthy consensus)
-    network.wait_ready(Duration::from_secs(30)).await?;
+    network.wait_ready(network_startup_timeout()).await?;
 
     // Wait for oracle servers to be ready (health check returns OK)
-    network.wait_oracles_ready(Duration::from_secs(30)).await?;
+    network
+        .wait_oracles_ready(network_startup_timeout())
+        .await?;
 
     // Verify the Felidae query API is operational via CLI
     let config = query_config(&felidae_bin, &network.query_url())?;
@@ -116,7 +118,7 @@ async fn test_oracle_observation_single_domain() -> color_eyre::Result<()> {
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
-    network.wait_ready(Duration::from_secs(30)).await?;
+    network.wait_ready(network_startup_timeout()).await?;
 
     let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
 
@@ -151,7 +153,7 @@ async fn test_oracle_observation_single_domain() -> color_eyre::Result<()> {
     // Note: votes may not appear immediately due to block timing
     let mut found = false;
     for attempt in 1..=10 {
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(poll_interval()).await;
 
         let block = rpc_client.latest_block().await?;
         let height = block.block.header.height.value();
@@ -228,7 +230,7 @@ async fn test_oracle_quorum_reached() -> color_eyre::Result<()> {
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
-    network.wait_ready(Duration::from_secs(30)).await?;
+    network.wait_ready(network_startup_timeout()).await?;
 
     let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
 
@@ -250,11 +252,11 @@ async fn test_oracle_quorum_reached() -> color_eyre::Result<()> {
         .await?;
 
         // Brief delay to ensure transactions are sequenced properly
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(inter_tx_delay()).await;
     }
 
     // Wait for quorum and promotion
-    tokio::time::sleep(Duration::from_secs(10)).await;
+    tokio::time::sleep(consensus_propagation_wait_long()).await;
 
     // Query the canonical snapshot via CLI - the enrollment should now be visible
     let snapshot = query_snapshot(&felidae_bin, &network.query_url())?;
@@ -282,7 +284,7 @@ async fn test_oracle_observation_multiple_domains() -> color_eyre::Result<()> {
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
-    network.wait_ready(Duration::from_secs(30)).await?;
+    network.wait_ready(network_startup_timeout()).await?;
 
     let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
 
@@ -301,12 +303,12 @@ async fn test_oracle_observation_multiple_domains() -> color_eyre::Result<()> {
                 Some(&enrollment),
             )
             .await?;
-            tokio::time::sleep(Duration::from_millis(300)).await;
+            tokio::time::sleep(inter_tx_delay()).await;
         }
     }
 
     // Wait for both domains to reach quorum and be promoted
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    tokio::time::sleep(consensus_propagation_wait()).await;
 
     // Query the canonical snapshot via CLI
     let snapshot = query_snapshot(&felidae_bin, &network.query_url())?;
@@ -339,7 +341,7 @@ async fn test_oracle_unenrollment() -> color_eyre::Result<()> {
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
-    network.wait_ready(Duration::from_secs(30)).await?;
+    network.wait_ready(network_startup_timeout()).await?;
 
     let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
 
@@ -361,11 +363,11 @@ async fn test_oracle_unenrollment() -> color_eyre::Result<()> {
             Some(&enrollment),
         )
         .await?;
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        tokio::time::sleep(inter_tx_delay()).await;
     }
 
     // Wait for enrollment to become canonical
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    tokio::time::sleep(consensus_propagation_wait()).await;
 
     // Verify the domain was enrolled via CLI
     let snapshot = query_snapshot(&felidae_bin, &network.query_url())?;
@@ -392,11 +394,11 @@ async fn test_oracle_unenrollment() -> color_eyre::Result<()> {
             None, // Without enrollment = NotFound = delete mapping
         )
         .await?;
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        tokio::time::sleep(inter_tx_delay()).await;
     }
 
     // Wait for unenrollment to become canonical
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    tokio::time::sleep(consensus_propagation_wait()).await;
 
     // Verify the domain was removed from canonical state via CLI
     let snapshot = query_snapshot(&felidae_bin, &network.query_url())?;
@@ -421,7 +423,7 @@ async fn test_unauthorized_oracle_rejected() -> color_eyre::Result<()> {
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
-    network.wait_ready(Duration::from_secs(30)).await?;
+    network.wait_ready(network_startup_timeout()).await?;
 
     let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
 
@@ -482,7 +484,7 @@ async fn test_partial_quorum_no_canonical() -> color_eyre::Result<()> {
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
-    network.wait_ready(Duration::from_secs(30)).await?;
+    network.wait_ready(network_startup_timeout()).await?;
 
     let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
 
@@ -503,11 +505,11 @@ async fn test_partial_quorum_no_canonical() -> color_eyre::Result<()> {
             Some(&enrollment),
         )
         .await?;
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(inter_tx_delay()).await;
     }
 
     // Wait for potential processing (should not reach quorum)
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    tokio::time::sleep(consensus_propagation_wait()).await;
 
     // Verify votes exist in the vote queue via CLI
     let votes = query_oracle_votes(&felidae_bin, &network.query_url())?;
@@ -550,7 +552,7 @@ async fn test_enrollment_update() -> color_eyre::Result<()> {
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
-    network.wait_ready(Duration::from_secs(30)).await?;
+    network.wait_ready(network_startup_timeout()).await?;
 
     let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
 
@@ -572,10 +574,10 @@ async fn test_enrollment_update() -> color_eyre::Result<()> {
             Some(&enrollment_v1),
         )
         .await?;
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        tokio::time::sleep(inter_tx_delay()).await;
     }
 
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    tokio::time::sleep(consensus_propagation_wait()).await;
 
     // Verify initial enrollment via CLI
     let snapshot_v1 = query_snapshot(&felidae_bin, &network.query_url())?;
@@ -617,10 +619,10 @@ async fn test_enrollment_update() -> color_eyre::Result<()> {
             Some(&enrollment_v2),
         )
         .await?;
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        tokio::time::sleep(inter_tx_delay()).await;
     }
 
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    tokio::time::sleep(consensus_propagation_wait()).await;
 
     // Verify the enrollment was updated via CLI
     let snapshot_v2 = query_snapshot(&felidae_bin, &network.query_url())?;
@@ -653,7 +655,7 @@ async fn test_subdomain_limit_enforcement() -> color_eyre::Result<()> {
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
-    network.wait_ready(Duration::from_secs(30)).await?;
+    network.wait_ready(network_startup_timeout()).await?;
 
     let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
 
@@ -686,11 +688,11 @@ async fn test_subdomain_limit_enforcement() -> color_eyre::Result<()> {
                 Some(&enrollment),
             )
             .await?;
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            tokio::time::sleep(inter_tx_delay()).await;
         }
 
         // Wait for this entry to reach canonical state before enrolling next
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        tokio::time::sleep(consensus_propagation_wait()).await;
     }
 
     // Verify all entries are enrolled via CLI
@@ -729,11 +731,11 @@ async fn test_subdomain_limit_enforcement() -> color_eyre::Result<()> {
             rejected = true;
             break;
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(inter_tx_delay()).await;
     }
 
     // Give time for any processing
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    tokio::time::sleep(consensus_propagation_wait()).await;
 
     // Verify the over-limit subdomain is NOT in canonical state via CLI
     let snapshot = query_snapshot(&felidae_bin, &network.query_url())?;
