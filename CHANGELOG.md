@@ -2,6 +2,13 @@
 
 Nothing yet!
 
+# Version 0.3.2 (2026-02-08)
+
+* feat: add root route to felidae query, #100
+* fix: make admin timeouts flexible, #94
+* fix: update enrollment structure, #98
+* build: declare AGPL license throughout, #95
+
 # Version 0.3.1 (2026-02-03)
 
 * fix: felidae logs info level by default, #89
