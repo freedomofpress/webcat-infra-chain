@@ -75,6 +75,7 @@ async fn test_admin_reconfiguration() -> color_eyre::Result<()> {
             &admin_key,
             crate::constants::TEST_CHAIN_ID.to_string(),
             Duration::from_secs(60),
+            None, // Use default grace period
             new_config.clone(),
         )?;
 
@@ -174,6 +175,7 @@ async fn test_admin_reconfig_minority_no_update() -> color_eyre::Result<()> {
             &admin_key,
             crate::constants::TEST_CHAIN_ID.to_string(),
             Duration::from_secs(60),
+            None, // Use default grace period
             new_config.clone(),
         )?;
 
@@ -290,6 +292,7 @@ async fn test_admin_reconfig_full_quorum_success() -> color_eyre::Result<()> {
             &admin_key,
             crate::constants::TEST_CHAIN_ID.to_string(),
             Duration::from_secs(60),
+            None, // Use default grace period
             new_config.clone(),
         )?;
 
