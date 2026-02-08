@@ -1,7 +1,8 @@
-//! Test constants and enrollment data generation.
+//! Test constants, timing functions, and enrollment data generation.
 //!
 //! This module contains constants used across integration tests, including
-//! test domain names, zone configurations, and enrollment JSON generation.
+//! test domain names, zone configurations, enrollment JSON generation,
+//! and block-time-relative duration functions for timing-sensitive operations.
 
 /// Test domain constants as (domain, zone) tuples.
 ///
@@ -34,6 +35,66 @@ pub const TEST_SUBDOMAIN_PREFIX_2: &str = "subby";
 
 /// The chain ID used in all integration tests.
 pub const TEST_CHAIN_ID: &str = "felidae-integration-test";
+
+// ---------------------------------------------------------------------------
+// Block-time-relative timing functions
+// ---------------------------------------------------------------------------
+//
+// Every duration in the integration tests derives from a single base unit:
+// `block_time()`, which reads `FELIDAE_BLOCK_TIME_SECS` (default: 1).
+//
+// This keeps CI fast (1s blocks ≈ 2 min) while allowing ad-hoc production-
+// like runs with `FELIDAE_BLOCK_TIME_SECS=60`.
+
+use std::time::Duration;
+
+/// Base block interval. Reads `FELIDAE_BLOCK_TIME_SECS` (default `1`).
+pub fn block_time() -> Duration {
+    let secs: u64 = std::env::var("FELIDAE_BLOCK_TIME_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+    Duration::from_secs(secs)
+}
+
+/// CometBFT `timeout_commit` value as a string (e.g. `"1s"`).
+pub fn timeout_commit_str() -> String {
+    format!("{}s", block_time().as_secs())
+}
+
+/// Timeout for the network to spawn processes and produce first blocks.
+/// Fixed 30s base + 3 block times.
+pub fn network_startup_timeout() -> Duration {
+    Duration::from_secs(30) + block_time() * 3
+}
+
+/// Pause between sequential transaction submissions.
+/// `max(300ms, block_time / 3)` — avoids flooding the mempool while
+/// remaining responsive at short block intervals.
+pub fn inter_tx_delay() -> Duration {
+    let third = block_time() / 3;
+    std::cmp::max(Duration::from_millis(300), third)
+}
+
+/// Standard wait for vote → quorum → promotion (5 blocks).
+pub fn consensus_propagation_wait() -> Duration {
+    block_time() * 5
+}
+
+/// Conservative wait for quorum + promotion (10 blocks).
+pub fn consensus_propagation_wait_long() -> Duration {
+    block_time() * 10
+}
+
+/// Interval between state-check polls. `max(2s, block_time)`.
+pub fn poll_interval() -> Duration {
+    std::cmp::max(Duration::from_secs(2), block_time())
+}
+
+/// Admin transaction validity window. `max(60s, 10 blocks)`.
+pub fn admin_reconfig_tx_timeout() -> Duration {
+    std::cmp::max(Duration::from_secs(60), block_time() * 10)
+}
 
 /// Generates a valid WEBCAT enrollment JSON for testing.
 ///

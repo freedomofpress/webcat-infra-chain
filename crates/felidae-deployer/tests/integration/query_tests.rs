@@ -3,9 +3,8 @@
 //! This module tests the felidae query HTTP API routes directly via reqwest,
 //! verifying status codes and response structure.
 
-use std::time::Duration;
-
 use crate::binaries::find_binaries;
+use crate::constants::network_startup_timeout;
 use crate::harness::TestNetwork;
 
 /// Verifies that GET `/` returns 200 OK with a JSON listing of available endpoints.
@@ -25,7 +24,7 @@ async fn test_root_route_returns_ok_with_endpoints() -> color_eyre::Result<()> {
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
-    network.wait_ready(Duration::from_secs(30)).await?;
+    network.wait_ready(network_startup_timeout()).await?;
 
     let client = reqwest::Client::new();
     let url = format!("{}/", network.query_url());
@@ -118,7 +117,7 @@ async fn test_config_route_returns_ok_json() -> color_eyre::Result<()> {
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
-    network.wait_ready(Duration::from_secs(30)).await?;
+    network.wait_ready(network_startup_timeout()).await?;
 
     let client = reqwest::Client::new();
     let url = format!("{}/config", network.query_url());

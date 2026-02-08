@@ -88,6 +88,36 @@ Note that the application's genesis file, which contains the initial configurati
 
 > **Tip:** For more verbose logging, run commands with `RUST_LOG=info` (or `RUST_LOG=debug` for even more detail).
 
+## Testing
+
+Run the standard unit test suite:
+
+```bash
+just test
+```
+
+Run the integration tests (spawns a 3-validator network per test):
+
+```bash
+just integration
+```
+
+### Block time configuration
+
+Integration tests derive all timing from a configurable block interval
+(`FELIDAE_BLOCK_TIME_SECS`, default `1`). The default keeps CI fast (~2 min).
+To test with longer block times (e.g. matching production's 60s):
+
+```bash
+just integration 60
+```
+
+Or equivalently:
+
+```bash
+FELIDAE_BLOCK_TIME_SECS=60 just integration
+```
+
 ## Setting Up Admin and Oracle
 
 ### 1. Generate Configuration Template

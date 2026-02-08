@@ -59,6 +59,7 @@ impl TestNetwork {
             num_validators,
             use_sentries: false,
             directory,
+            timeout_commit: crate::constants::timeout_commit_str(),
             ..Default::default()
         };
 
