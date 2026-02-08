@@ -594,11 +594,13 @@ async fn test_enrollment_update() -> color_eyre::Result<()> {
         let test_pubkey = base64_url::encode(verifying_key.as_bytes());
 
         serde_json::json!({
+            "type": "sigsum",
             "signers": [test_pubkey],
             "threshold": 1,
             "policy": "BBBB",
             "max_age": 86400,
-            "cas_url": "https://example.com/cas/v2"
+            "cas_url": "https://example.com/cas/v2",
+            "logs": {}
         })
         .to_string()
     };
