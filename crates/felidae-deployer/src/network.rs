@@ -295,7 +295,10 @@ impl Network {
                 .cloned()
                 .collect();
 
-            let config = generate_config_toml(node, &peers.join(","), &self.config.timeout_commit)?;
+            // Derive all consensus timeouts from timeout_commit so they scale
+            // correctly for both fast test blocks (1s) and slow production blocks (50-60s).
+            let timeouts = ConsensusTimeouts::from_timeout_commit(&self.config.timeout_commit);
+            let config = generate_config_toml(node, &peers.join(","), &timeouts)?;
             let mut file = fs::File::create(node.config_toml_path())?;
             file.write_all(config.as_bytes())?;
         }
@@ -717,11 +720,70 @@ fn generate_felidae_keys(node: &WebcatNode) -> Result<()> {
     Ok(())
 }
 
+/// Derived CometBFT consensus timeouts, scaled from `timeout_commit`.
+///
+/// CometBFT's default timeouts assume ~1s block times. When `timeout_commit` is
+/// increased significantly (e.g. 50-60s), the other consensus timeouts must scale
+/// proportionally. The formulas here reproduce the CometBFT defaults at 1s and
+/// scale smoothly for longer block times.
+struct ConsensusTimeouts {
+    /// How long to wait for a proposal before prevoting nil.
+    /// Formula: max(3s, block_time * 60%). At 1s→3s, 50s→30s.
+    timeout_propose: String,
+    /// How much timeout_propose grows per failed round.
+    /// Formula: max(500ms, block_time * 10%). At 1s→500ms, 50s→5s.
+    timeout_propose_delta: String,
+    /// How long to wait after +2/3 conflicting prevotes before voting nil.
+    /// Formula: max(1s, block_time * 10%). At 1s→1s, 50s→5s.
+    timeout_prevote: String,
+    /// How much timeout_prevote grows per failed round.
+    /// Formula: max(500ms, block_time * 4%). At 1s→500ms, 50s→2s.
+    timeout_prevote_delta: String,
+    /// How long to wait after +2/3 conflicting precommits before precommitting nil.
+    /// Same formula as timeout_prevote.
+    timeout_precommit: String,
+    /// How much timeout_precommit grows per failed round.
+    /// Same formula as timeout_prevote_delta.
+    timeout_precommit_delta: String,
+    /// The block interval itself.
+    timeout_commit: String,
+    /// RPC timeout for /broadcast_tx_commit.
+    /// Formula: clamp(block_time * 10, 30s, 180s).
+    timeout_broadcast_tx_commit: String,
+}
+
+impl ConsensusTimeouts {
+    fn from_timeout_commit(timeout_commit: &str) -> Self {
+        let block_secs: u64 = timeout_commit.trim_end_matches('s').parse().unwrap_or(1);
+        let block_ms = block_secs * 1000;
+
+        Self {
+            timeout_propose: fmt_ms((block_ms * 3 / 5).max(3000)),
+            timeout_propose_delta: fmt_ms((block_ms / 10).max(500)),
+            timeout_prevote: fmt_ms((block_ms / 10).max(1000)),
+            timeout_prevote_delta: fmt_ms((block_ms / 25).max(500)),
+            timeout_precommit: fmt_ms((block_ms / 10).max(1000)),
+            timeout_precommit_delta: fmt_ms((block_ms / 25).max(500)),
+            timeout_commit: timeout_commit.to_string(),
+            timeout_broadcast_tx_commit: format!("{}s", (block_secs * 10).clamp(30, 180)),
+        }
+    }
+}
+
+/// Format a millisecond duration as "Xs" if whole seconds, otherwise "Xms".
+fn fmt_ms(ms: u64) -> String {
+    if ms >= 1000 && ms % 1000 == 0 {
+        format!("{}s", ms / 1000)
+    } else {
+        format!("{}ms", ms)
+    }
+}
+
 /// Generate config.toml for a node.
 fn generate_config_toml(
     node: &WebcatNode,
     persistent_peers: &str,
-    timeout_commit: &str,
+    timeouts: &ConsensusTimeouts,
 ) -> Result<String> {
     let config = format!(
         r#"# This is a TOML config file.
@@ -756,7 +818,7 @@ max_subscriptions_per_client = 5
 experimental_subscription_buffer_size = 200
 experimental_websocket_write_buffer_size = 200
 experimental_close_on_slow_client = false
-timeout_broadcast_tx_commit = "10s"
+timeout_broadcast_tx_commit = "{timeout_broadcast_tx_commit}"
 max_body_bytes = 1000000
 max_header_bytes = 1048576
 tls_cert_file = ""
@@ -811,12 +873,12 @@ chunk_fetchers = "4"
 
 [consensus]
 wal_file = "data/cs.wal/wal"
-timeout_propose = "3s"
-timeout_propose_delta = "500ms"
-timeout_prevote = "1s"
-timeout_prevote_delta = "500ms"
-timeout_precommit = "1s"
-timeout_precommit_delta = "500ms"
+timeout_propose = "{timeout_propose}"
+timeout_propose_delta = "{timeout_propose_delta}"
+timeout_prevote = "{timeout_prevote}"
+timeout_prevote_delta = "{timeout_prevote_delta}"
+timeout_precommit = "{timeout_precommit}"
+timeout_precommit_delta = "{timeout_precommit_delta}"
 timeout_commit = "{timeout_commit}"
 double_sign_check_height = 0
 skip_timeout_commit = false
@@ -843,7 +905,14 @@ namespace = "cometbft"
         rpc_address = node.rpc_listen_address(),
         p2p_address = node.p2p_listen_address(),
         persistent_peers = persistent_peers,
-        timeout_commit = timeout_commit,
+        timeout_propose = timeouts.timeout_propose,
+        timeout_propose_delta = timeouts.timeout_propose_delta,
+        timeout_prevote = timeouts.timeout_prevote,
+        timeout_prevote_delta = timeouts.timeout_prevote_delta,
+        timeout_precommit = timeouts.timeout_precommit,
+        timeout_precommit_delta = timeouts.timeout_precommit_delta,
+        timeout_commit = timeouts.timeout_commit,
+        timeout_broadcast_tx_commit = timeouts.timeout_broadcast_tx_commit,
     );
 
     Ok(config)
