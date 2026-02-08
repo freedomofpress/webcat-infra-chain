@@ -65,11 +65,13 @@ pub fn test_enrollment_json() -> String {
     let test_pubkey = base64_url::encode(verifying_key.as_bytes());
 
     serde_json::json!({
+        "type": "sigsum",
         "signers": [test_pubkey],
         "threshold": 1,
         "policy": "AAAA", // Minimal base64-url policy
         "max_age": 86400,
-        "cas_url": "https://example.com/cas"
+        "cas_url": "https://example.com/cas",
+        "logs": {}
     })
     .to_string()
 }

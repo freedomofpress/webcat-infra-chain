@@ -27,7 +27,7 @@ test:
 
 # Run integration tests
 integration:
-    cargo nextest run -p felidae-deployer --features integration --no-capture
+    cargo nextest run -p felidae-deployer --features integration --no-capture --no-fail-fast
 
 # Build WASM package for felidae-oracle
 build-wasm:
