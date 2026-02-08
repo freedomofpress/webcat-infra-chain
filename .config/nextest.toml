@@ -2,3 +2,10 @@
 # The integration tests can take a while with longer block times,
 # so we raise the "slow" warning threshold from its default of 1m.
 slow-timeout = { period = "3m" }
+
+# Each integration test spawns 9 processes (3 CometBFT + 3 Felidae + 3 Oracle).
+# Running several test networks concurrently starves CometBFT of CPU, causing
+# consensus timeouts.  Serialize them so each gets the full machine.
+[[profile.default.overrides]]
+filter = "binary_id(felidae-deployer::integration)"
+threads-required = 'num-cpus'
