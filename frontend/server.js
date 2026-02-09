@@ -69,37 +69,102 @@ app.use(cors({
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Load configuration
+// Validate that each oracle entry has a well-formed endpoint URL.
+// Normalizes each endpoint to end with '/' so that relative URL resolution
+// via new URL('path', base) appends correctly.
+function validateOracleEndpoints(oracles, source) {
+  for (const oracle of oracles) {
+    if (!oracle.endpoint) {
+      console.error(`Oracle entry from ${source} is missing 'endpoint' field`);
+      process.exit(1);
+    }
+    try {
+      new URL(oracle.endpoint);
+    } catch {
+      console.error(`Invalid oracle endpoint URL from ${source}: ${oracle.endpoint}`);
+      process.exit(1);
+    }
+    if (!oracle.endpoint.endsWith('/')) {
+      oracle.endpoint += '/';
+    }
+  }
+  return oracles;
+}
+
+// Load configuration.
+// Precedence (highest to lowest): env vars > config.json > defaults.
 let config = {
-  chainApiUrl: process.env.CHAIN_API_URL || 'http://localhost',
-  oracleEndpoints: null // Will be loaded from config file or chain API
+  chainApiUrl: 'http://localhost:8080',
+  oracleEndpoints: null // Will be loaded from config file, env var, or chain API
 };
 
-// Try to load oracle endpoints from config file
+// 1. Load config.json as base layer, if present.
 const configPath = path.join(__dirname, 'config.json');
 if (fs.existsSync(configPath)) {
   try {
     const configFile = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    if (configFile.oracleEndpoints && Array.isArray(configFile.oracleEndpoints)) {
-      config.oracleEndpoints = configFile.oracleEndpoints;
-      console.log(`Loaded ${config.oracleEndpoints.length} oracle endpoints from config file`);
+    if (configFile.chainApiUrl) {
+      config.chainApiUrl = configFile.chainApiUrl;
     }
+    if (configFile.oracleEndpoints && Array.isArray(configFile.oracleEndpoints)) {
+      config.oracleEndpoints = validateOracleEndpoints(configFile.oracleEndpoints, 'config.json');
+    }
+    console.log('Loaded config from config.json');
   } catch (error) {
     console.warn('Failed to load config.json:', error.message);
   }
 }
 
+// 2. Env vars override config.json values.
+if (process.env.CHAIN_API_URL) {
+  config.chainApiUrl = process.env.CHAIN_API_URL;
+}
+
+// Validate and normalize chainApiUrl with trailing slash for correct
+// relative URL resolution via new URL('path', base).
+try {
+  new URL(config.chainApiUrl);
+} catch {
+  console.error(`Invalid CHAIN_API_URL: ${config.chainApiUrl}`);
+  process.exit(1);
+}
+if (!config.chainApiUrl.endsWith('/')) {
+  config.chainApiUrl += '/';
+}
+
+if (process.env.ORACLE_ENDPOINTS) {
+  try {
+    const envOracles = JSON.parse(process.env.ORACLE_ENDPOINTS);
+    if (Array.isArray(envOracles)) {
+      config.oracleEndpoints = validateOracleEndpoints(envOracles, 'ORACLE_ENDPOINTS env var');
+      console.log(`Loaded ${config.oracleEndpoints.length} oracle endpoints from ORACLE_ENDPOINTS env var`);
+    } else {
+      console.error('ORACLE_ENDPOINTS env var must be a JSON array');
+      process.exit(1);
+    }
+  } catch (error) {
+    console.error('Failed to parse ORACLE_ENDPOINTS env var:', error.message);
+    process.exit(1);
+  }
+}
+
+if (config.oracleEndpoints) {
+  console.log(`Configured ${config.oracleEndpoints.length} oracle endpoints`);
+}
+
 // Helper function to fetch oracle endpoints from chain API
 async function fetchOracleEndpoints() {
   try {
-    const response = await axios.get(`${config.chainApiUrl}/oracles`, {
+    const response = await axios.get(new URL('/oracles', config.chainApiUrl).href, {
       timeout: 5000
     });
     if (response.data && Array.isArray(response.data)) {
-      return response.data.map(oracle => ({
+      const oracles = response.data.map(oracle => ({
         endpoint: oracle.endpoint,
         identity: oracle.identity
       }));
+      validateOracleEndpoints(oracles, 'chain API');
+      return oracles;
     }
   } catch (error) {
     console.error('Failed to fetch oracle endpoints from chain API:', error.message);
@@ -134,7 +199,7 @@ app.get('/api/oracles', async (req, res) => {
 
     if (!oracles || oracles.length === 0) {
       return res.status(503).json({
-        error: 'No oracle endpoints configured. Please configure oracle endpoints in config.json or ensure chain API is accessible.'
+        error: 'No oracle endpoints configured. Set ORACLE_ENDPOINTS env var, configure config.json, or ensure chain API is accessible.'
       });
     }
 
@@ -166,7 +231,7 @@ app.get('/api/pow-challenge', async (req, res) => {
 
   // Request challenge from each oracle (each has its own secret)
   const challengePromises = oracles.map(async (oracle) => {
-    const challengeUrl = `${oracle.endpoint}/pow-challenge?domain=${encodeURIComponent(domain)}`;
+    const challengeUrl = new URL(`pow-challenge?domain=${encodeURIComponent(domain)}`, oracle.endpoint);
 
     try {
       const response = await axios.get(challengeUrl, {
@@ -241,7 +306,7 @@ app.post('/api/submit', csrfProtection, async (req, res) => {
   const results = await Promise.allSettled(
     oracles.map(async (oracle) => {
       const endpoint = oracle.endpoint;
-      const url = `${endpoint}/observe`;
+      const url = new URL('observe', endpoint);
 
       // Get the PoW token for this specific oracle
       const powToken = powTokenMap[endpoint];
@@ -322,9 +387,7 @@ app.use((err, req, res, next) => {
 app.listen(bindAddress.port, bindAddress.host, () => {
   console.log(`Frontend server running on http://${bindAddress.host}:${bindAddress.port}`);
   console.log(`Chain API URL: ${config.chainApiUrl}`);
-  if (config.oracleEndpoints) {
-    console.log(`Configured ${config.oracleEndpoints.length} oracle endpoints`);
-  } else {
+  if (!config.oracleEndpoints) {
     console.log('Oracle endpoints will be fetched from chain API');
   }
 });

@@ -352,13 +352,15 @@
                 self.packages.${system}.whiskers
                 pkgs.nodejs
 
+                pkgs.dockerTools.caCertificates
+
                 # bare minimum for scripting container runtime
                 pkgs.bashInteractive
                 pkgs.coreutils
                 pkgs.curl
                 pkgs.jq
               ];
-              pathsToLink = [ "/bin" "/lib" ];
+              pathsToLink = [ "/bin" "/lib" "/etc" ];
             };
 
             config = {
@@ -366,6 +368,7 @@
               Env = [
                 "PATH=/bin"
                 "NODE_ENV=production"
+                "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
                 # Enable Node.js production logging
                 "DEBUG=*"
               ];
