@@ -52,8 +52,8 @@ reset:
     ./target/release/felidae reset
 
 # Run the frontend
-frontend:
-  cd frontend && npm run dev
+frontend chain_url="http://localhost:8080":
+  cd frontend && CHAIN_API_URL="{{chain_url}}" npm run dev
 
 # Run nix-specific linters
 nix-lint:

@@ -30,8 +30,9 @@ The application can be configured via environment variables:
 
 - `BIND_ADDRESS`: Server bind address in `host:port` format (default: `127.0.0.1:3000`)
   - Examples: `127.0.0.1:3000`, `0.0.0.0:8080`, `[::1]:3000` (IPv6)
-- `CHAIN_API_URL`: URL of the felidae query API (default: `http://localhost`)
+- `CHAIN_API_URL`: URL of the felidae query API (default: `http://localhost:8080`)
 - `ALLOWED_ORIGIN`: CORS allowed origin (default: `*`)
+- `ORACLE_ENDPOINTS`: JSON-encoded custom oracleEndpoints (default: `null`; oracles will be fetched from chain API )
 
 ### Running
 

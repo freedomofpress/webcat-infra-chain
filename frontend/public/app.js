@@ -1,5 +1,6 @@
 // CSRF token management
 let csrfToken = '';
+let oraclesAvailable = false;
 
 // Fetch CSRF token
 async function fetchCSRFToken() {
@@ -47,19 +48,28 @@ function hideStatus() {
 async function loadOracles() {
     const oracleListEl = document.getElementById('oracleList');
 
+    const submitBtn = document.getElementById('submitBtn');
+
     try {
         const response = await fetch('/api/oracles');
         const data = await response.json();
 
         if (data.error) {
             oracleListEl.innerHTML = `<p class="error-text">${data.error}</p>`;
+            oraclesAvailable = false;
+            submitBtn.disabled = true;
             return;
         }
 
         if (!data.oracles || data.oracles.length === 0) {
             oracleListEl.innerHTML = '<p class="error-text">No oracle endpoints configured</p>';
+            oraclesAvailable = false;
+            submitBtn.disabled = true;
             return;
         }
+
+        oraclesAvailable = true;
+        submitBtn.disabled = false;
 
         oracleListEl.innerHTML = data.oracles.map(oracle => `
             <div class="oracle-item">
@@ -69,6 +79,8 @@ async function loadOracles() {
         `).join('');
     } catch (error) {
         oracleListEl.innerHTML = `<p class="error-text">Failed to load oracle endpoints: ${error.message}</p>`;
+        oraclesAvailable = false;
+        submitBtn.disabled = true;
     }
 }
 
@@ -334,7 +346,7 @@ async function handleSubmit(event) {
         showStatus('error', `Submission failed: ${error.message}`);
         console.error('Submission error:', error);
     } finally {
-        submitBtn.disabled = false;
+        submitBtn.disabled = !oraclesAvailable;
         submitBtn.textContent = 'Begin Enrollment';
     }
 }
