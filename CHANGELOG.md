@@ -2,6 +2,11 @@
 
 Nothing yet!
 
+# Version 0.3.3 (2026-02-09)
+
+* feat: stronger config validation for frontend, #103
+* fix: frontend should parse url as domain, #105
+
 # Version 0.3.2 (2026-02-08)
 
 * feat: add root route to felidae query, #100
@@ -15,7 +20,7 @@ Nothing yet!
 * build: retool container images via nix build, #86, #91
 * build: adds container image for "whiskers" frontend, #86
 * docs: bump cometbft to 0.38.x in onboarding guide, #87
-* refactor: felidae query shoudl take url once, 88
+* refactor: felidae query should take url once, 88
 * test: add felidae-deployer integration test harness, #78
 
 # Version 0.3.0 (2026-01-27)
