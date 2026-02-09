@@ -84,6 +84,28 @@ async function loadOracles() {
     }
 }
 
+// Extract a bare domain from user input, which may be a URL or a plain domain.
+// Returns null if the input can't be parsed as a valid domain.
+function parseDomain(input) {
+    if (!input) return null;
+
+    // If input contains "://", treat it as a URL and extract the hostname.
+    // Otherwise, try prepending a scheme so the URL parser can handle inputs
+    // like "example.com/path" or "example.com:8080".
+    let hostname;
+    try {
+        const url = input.includes('://') ? new URL(input) : new URL(`https://${input}`);
+        hostname = url.hostname;
+    } catch {
+        return null;
+    }
+
+    // Reject empty hostnames or bare IP addresses
+    if (!hostname || !hostname.includes('.')) return null;
+
+    return hostname;
+}
+
 // Escape HTML to prevent XSS
 function escapeHtml(text) {
     const div = document.createElement('div');
@@ -224,10 +246,10 @@ async function handleSubmit(event) {
     const domainInput = document.getElementById('domain');
     const submitBtn = document.getElementById('submitBtn');
 
-    const domain = domainInput.value.trim();
+    const domain = parseDomain(domainInput.value.trim());
 
     if (!domain) {
-        showStatus('error', 'Please enter a domain');
+        showStatus('error', 'Please enter a valid domain (e.g., example.com or https://example.com)');
         return;
     }
 
