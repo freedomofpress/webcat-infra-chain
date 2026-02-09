@@ -6,7 +6,7 @@ A simple web application frontend for submitting domain enrollment requests to F
 
 ### Prerequisites
 
-- Node.js (v14 or higher)
+- Node.js (v22 or higher)
 - npm or yarn
 
 ### Installation
@@ -16,17 +16,9 @@ A simple web application frontend for submitting domain enrollment requests to F
 npm install
 ```
 
-2. (Optional) Configure oracle endpoints in `config.json`:
-```bash
-cp config.json.example config.json
-# Edit config.json with your oracle endpoints
-```
-
-If `config.json` is not provided, the application will attempt to fetch oracle endpoints from the felidae query API at `/oracles`.
-
 ### Configuration
 
-The application can be configured via environment variables:
+The application should be configured via environment variables:
 
 - `BIND_ADDRESS`: Server bind address in `host:port` format (default: `127.0.0.1:3000`)
   - Examples: `127.0.0.1:3000`, `0.0.0.0:8080`, `[::1]:3000` (IPv6)
@@ -34,21 +26,12 @@ The application can be configured via environment variables:
 - `ALLOWED_ORIGIN`: CORS allowed origin (default: `*`)
 - `ORACLE_ENDPOINTS`: JSON-encoded custom oracleEndpoints (default: `null`; oracles will be fetched from chain API )
 
-### Running
+It's also possible to provide a `config.json` file, rather than env vars.
 
-Start the server:
 ```bash
-npm start
+cp config.json.example config.json
+# Edit config.json with your oracle endpoints
 ```
-
-For development with auto-reload:
-```bash
-npm run dev
-```
-
-The application will be available at `http://localhost:3000` (or your configured bind address).
-
-## Oracle Endpoint Format
 
 Oracle endpoints in `config.json` should be full URLs:
 
@@ -69,6 +52,29 @@ Oracle endpoints in `config.json` should be full URLs:
 
 The application appends `/observe` or `/pow-challenge` paths as needed.
 
-### What's with the name?
+### Running
+
+Start the server:
+```bash
+npm start
+```
+
+For development with auto-reload:
+```bash
+npm run dev
+```
+
+The application will be available at `http://localhost:3000` (or your configured bind address).
+
+## Deployment
+
+There's a container image available at [ghcr.io/freedomofpress/whiskers](http://ghcr.io/freedomofpress/whiskers).
+See example deployment manifests in [`examples/`](./examples/).
+
+## What's with the name?
 
 The app provides a frontend to WEBCAT, and whiskers are on the front end of a cat.
+
+## License
+
+AGPLv3
