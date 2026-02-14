@@ -73,10 +73,14 @@ enum Enrollment {
     Sigstore {
         /// A Sigstore trusted root JSON document.
         trusted_root: serde_json::Value,
-        /// The expected OIDC identity claim for signing certificates.
-        identity: String,
-        /// The expected OIDC issuer for signing certificates.
-        issuer: String,
+        /// A map of expected certificate claims, keyed by OID.
+        /// Each entry must match exactly and all conditions are evaluated
+        /// as a logical AND.
+        ///
+        /// Examples:
+        /// - "2.5.29.17" => "alice@example.com"
+        /// - "1.3.6.1.4.1.57264.1.8" => "https://token.actions.githubusercontent.com"
+        claims: std::collections::BTreeMap<String, String>,
         /// The maximum number of seconds a manifest may remain valid after its signing timestamp.
         max_age: u64,
     },
@@ -126,8 +130,7 @@ pub fn witness(
         match &enrollment {
             Enrollment::Sigstore {
                 trusted_root,
-                identity,
-                issuer,
+                claims,
                 max_age: _,
             } => {
                 // Validate trusted_root is a valid JSON object
@@ -138,18 +141,29 @@ pub fn witness(
                     .into());
                 }
 
-                // Validate identity is not empty
-                if identity.is_empty() {
+                // Validate claims is not empty
+                if claims.is_empty() {
                     return Err(
-                        Error::InvalidEnrollment("identity must not be empty".to_string()).into(),
+                        Error::InvalidEnrollment("claims must not be empty".to_string()).into(),
                     );
                 }
 
-                // Validate issuer is not empty
-                if issuer.is_empty() {
-                    return Err(
-                        Error::InvalidEnrollment("issuer must not be empty".to_string()).into(),
-                    );
+                // Validate each OID and value
+                for (oid, value) in claims {
+                    if oid.trim().is_empty() {
+                        return Err(Error::InvalidEnrollment(
+                            "claim OID must not be empty".to_string(),
+                        )
+                        .into());
+                    }
+
+                    if value.trim().is_empty() {
+                        return Err(Error::InvalidEnrollment(format!(
+                            "claim value for OID {} must not be empty",
+                            oid
+                        ))
+                        .into());
+                    }
                 }
             }
             Enrollment::Sigsum {
