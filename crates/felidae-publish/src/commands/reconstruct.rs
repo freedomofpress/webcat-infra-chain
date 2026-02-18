@@ -188,8 +188,8 @@ pub async fn reconstruct(
         store.put_raw(key, value_bytes).await;
     }
 
-    // Commit to get the root hash
-    store.commit().await?;
+    // Commit to get the root hash and record the app hash
+    let _ = store.commit_block().await?;
 
     // Get the canonical root hash
     let root_hash = store.root_hash(Some(Substore::Canonical)).await?;

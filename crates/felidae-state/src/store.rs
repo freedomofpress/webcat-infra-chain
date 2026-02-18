@@ -169,10 +169,10 @@ impl Store {
     }
 
     /// Commit all pending changes to the underlying storage.
-    /// Uses the staged batch prepared in `prepare_commit()` during FinalizeBlock.
-    pub async fn commit(&mut self) -> Result<(), Report> {
+    ///
+    /// Uses previously prepared staged batch.
+    async fn commit(&mut self) -> Result<(), Report> {
         // Take the staged batch that was prepared in FinalizeBlock
-        // TODO: A better API would enforce that prepare_commit must be called before commit.
         let batch = self.staged_batch.lock().await.take().ok_or_else(|| {
             eyre::eyre!("no staged batch to commit - prepare_commit must be called before commit")
         })?;
@@ -187,6 +187,25 @@ impl Store {
         // *before* the commit, which would lead to errors on subsequent reads/writes.
 
         Ok(())
+    }
+
+    /// Single entry point for ABCI `Commit`: persist all state and return the `AppHash`.
+    ///
+    /// 1. Commits the staged batch (prepared in `FinalizeBlock`).
+    /// 2. Records the new `AppHash` in state and persists it.
+    pub async fn commit_block(&mut self) -> Result<AppHash, Report> {
+        self.commit().await?;
+        let app_hash = self.root_hashes().await?.app_hash;
+
+        // `record_current_app_hash` does not persist, so we need to commit again after recording the app hash.
+        self.state
+            .write()
+            .await
+            .record_current_app_hash(app_hash.clone())
+            .await?;
+        let _ = self.prepare_commit().await?;
+        self.commit().await?;
+        Ok(app_hash)
     }
 
     /// Discard all pending changes.

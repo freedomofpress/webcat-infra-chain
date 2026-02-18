@@ -104,19 +104,7 @@ impl Service<tendermint::v0_38::abci::Request> for crate::Store {
                     Ok(abci::Response::CheckTx(abci::response::CheckTx::default()))
                 }
                 abci::Request::Commit => {
-                    // Commit and store the app hash.
-                    store.commit().await?;
-                    let app_hash = store.root_hashes().await?.app_hash;
-                    store
-                        .state
-                        .write()
-                        .await
-                        .record_current_app_hash(app_hash.clone())
-                        .await?;
-                    // Calling record_current_app_hash does not persist it, so we commit again.
-                    let _ = store.prepare_commit().await?;
-                    store.commit().await?;
-
+                    let app_hash = store.commit_block().await?;
                     Ok(abci::Response::Commit(abci::response::Commit {
                         data: Bytes::from(app_hash.as_bytes().to_vec()),
                         ..Default::default()
