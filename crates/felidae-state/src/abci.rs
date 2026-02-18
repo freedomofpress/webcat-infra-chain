@@ -113,6 +113,9 @@ impl Service<tendermint::v0_38::abci::Request> for crate::Store {
                         .await
                         .record_current_app_hash(app_hash.clone())
                         .await?;
+                    // Calling record_current_app_hash does not persist it, so we commit again.
+                    let _ = store.prepare_commit().await?;
+                    store.commit().await?;
 
                     Ok(abci::Response::Commit(abci::response::Commit {
                         data: Bytes::from(app_hash.as_bytes().to_vec()),

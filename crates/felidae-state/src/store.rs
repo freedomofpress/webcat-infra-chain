@@ -129,7 +129,9 @@ impl Store {
     /// This stages the delta changes into a StagedWriteBatch to get the root hash,
     /// and stores it so it can be committed later in the Commit phase.
     ///
-    /// Invariants: This consumes the delta, so it should only be called once per block.
+    /// Invariants: This consumes the delta, so it should only be called twice per block: once
+    /// when the block is finalized, and again after the new `AppHash` is recorded.
+    ///
     /// The staged batch is stored and will be used in `commit()`.
     pub async fn prepare_commit(&mut self) -> Result<AppHash, Report> {
         // Pull out the current state and replace it with a new, empty one:
