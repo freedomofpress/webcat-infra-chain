@@ -22,7 +22,8 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     ) -> Result<response::FinalizeBlock, Report> {
         // ABCI -> ABCI++ migration note: BeginBlock provided the Header, but FinalizeBlock
         // does not, so we can't check the chain ID as we used to do in the ABCI BeginBlock
-        // handler.
+        // handler. We also can't record the previous block's app hash from the header,
+        // but instead need to fetch it from the state, which we do in the caller.
 
         // Record validator uptime
         let mut voting_validators = BTreeSet::new();
