@@ -1,12 +1,13 @@
 use super::*;
 
 impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
-    /// Get the current block height from the state.
+    /// Get the current block height from the state, else default to 0.
     pub async fn block_height(&self) -> Result<Height, Report> {
-        self.store
+        Ok(self
+            .store
             .get::<Height>(Internal, "current/block_height")
             .await?
-            .ok_or_eyre("block height not found in state; is the state initialized?")
+            .unwrap_or(Height::from(0u32)))
     }
 
     /// Set the current block height in the state.

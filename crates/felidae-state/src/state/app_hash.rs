@@ -1,12 +1,16 @@
+use tracing::info;
+
 use super::*;
 
 impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
-    /// Record the current block's app hash in the state.
-    pub(crate) async fn record_current_app_hash(
-        &mut self,
-        app_hash: AppHash,
-    ) -> Result<(), Report> {
-        let height = self.block_height().await?.value();
+    /// Record the app hash of the previous block in the state.
+    pub(crate) async fn record_app_hash(&mut self, app_hash: AppHash) -> Result<(), Report> {
+        let height = self.block_height().await?.value() - 1;
+        info!(
+            height,
+            app_hash = hex::encode(app_hash.as_bytes()),
+            "recording app hash for block"
+        );
         self.store.put(
             Internal,
             &format!("apphash/{}", util::pad_height(height.try_into()?)),

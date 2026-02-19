@@ -62,10 +62,24 @@ impl Service<tendermint::v0_38::abci::Request> for crate::Store {
                         .init_chain(init_chain)
                         .instrument(info_span!("InitChain"))
                         .await?;
+
                     Ok(abci::Response::InitChain(response))
                 }
                 abci::Request::FinalizeBlock(finalize_block) => {
-                    // Fill in the app hash in the response but do not commit (yet):
+                    // Before we run the finalize block handler, we need to record the previous block's app hash.
+                    // Only for non genesis blocks.
+                    let height = store.state.write().await.block_height().await?;
+                    info!(height = height.value(), "height in finalize block handler");
+                    if height != Height::from(0u32) {
+                        let previous_block_app_hash = store.root_hashes().await?.app_hash;
+                        store
+                            .state
+                            .write()
+                            .await
+                            .record_app_hash(previous_block_app_hash)
+                            .await?;
+                    }
+
                     let mut response = store
                         .state
                         .write()
@@ -73,6 +87,8 @@ impl Service<tendermint::v0_38::abci::Request> for crate::Store {
                         .finalize_block(finalize_block)
                         .instrument(info_span!("FinalizeBlock"))
                         .await?;
+
+                    // Fill in the app hash in the response but do not commit (yet):
                     let app_hash = store.prepare_commit().await?;
                     response.app_hash = app_hash;
                     Ok(abci::Response::FinalizeBlock(response))
@@ -104,16 +120,12 @@ impl Service<tendermint::v0_38::abci::Request> for crate::Store {
                     Ok(abci::Response::CheckTx(abci::response::CheckTx::default()))
                 }
                 abci::Request::Commit => {
-                    // Commit and store the app hash.
                     store.commit().await?;
                     let app_hash = store.root_hashes().await?.app_hash;
-                    store
-                        .state
-                        .write()
-                        .await
-                        .record_current_app_hash(app_hash.clone())
-                        .await?;
-
+                    info!(
+                        app_hash = hex::encode(app_hash.as_bytes()),
+                        "in commit handler, app hash for block"
+                    );
                     Ok(abci::Response::Commit(abci::response::Commit {
                         data: Bytes::from(app_hash.as_bytes().to_vec()),
                         ..Default::default()
