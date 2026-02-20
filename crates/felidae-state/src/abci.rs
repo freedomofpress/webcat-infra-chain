@@ -67,9 +67,18 @@ impl Service<tendermint::v0_38::abci::Request> for crate::Store {
                 }
                 abci::Request::FinalizeBlock(finalize_block) => {
                     // Before we run the finalize block handler, we need to record the previous block's app hash.
-                    // Only for non genesis blocks.
-                    let height = store.state.write().await.block_height().await?;
+                    //
+                    // We only do this for non genesis blocks (since there's no "previous block" at genesis).
+                    let height = store
+                        .state
+                        .read()
+                        .await
+                        .block_height()
+                        .await
+                        .unwrap_or(Height::from(0u32));
+
                     info!(height = height.value(), "height in finalize block handler");
+
                     if height != Height::from(0u32) {
                         let previous_block_app_hash = store.root_hashes().await?.app_hash;
                         store
