@@ -51,7 +51,8 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         }
 
         // Ensure the blockstamp's app hash matches the app hash at the given block number
-        let recorded_app_hash = self.previous_app_hash(*block_height).await?;
+        let previous_block_height = Height::from((block_height.value().saturating_sub(1)) as u32);
+        let recorded_app_hash = self.previous_app_hash(previous_block_height).await?;
         if recorded_app_hash != *app_hash {
             bail!(
                 "blockstamp app hash {app_hash} does not match recorded app hash {recorded_app_hash} for block {block_height}"

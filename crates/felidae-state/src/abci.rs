@@ -76,8 +76,13 @@ impl Service<tendermint::v0_38::abci::Request> for crate::Store {
                             .state
                             .write()
                             .await
-                            .record_app_hash(previous_block_app_hash)
+                            .record_app_hash(previous_block_app_hash.clone())
                             .await?;
+                        info!(
+                            previous_block_app_hash =
+                                hex::encode(previous_block_app_hash.as_bytes()),
+                            "set app hash in finalize block handler"
+                        );
                     }
 
                     let mut response = store
