@@ -2,6 +2,12 @@
 
 Nothing yet!
 
+# Version 0.3.4 (2026-02-20)
+
+* fix: stage previous AppHash in FinalizeBlock, #113
+* feat: update enrollment struct, #109
+* docs: link to new docs website, #107
+
 # Version 0.3.3 (2026-02-09)
 
 * feat: stronger config validation for frontend, #103
