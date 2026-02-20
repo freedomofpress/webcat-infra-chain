@@ -1,6 +1,6 @@
 [package]
 name = "felidae-deployer"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2024"
 license.workspace = true
 description = "Developer-facing tool for generating felidae network configurations, for integration testing"
