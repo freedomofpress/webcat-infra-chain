@@ -1,0 +1,39 @@
+name: integration
+on:
+  pull_request:
+    # Don't run Rust tests if only docs changed.
+    paths-ignore:
+      - 'docs/**'
+      - 'README.md'
+      # integration tests don't exercise the web frontend
+      - frontend/**
+  # Also support ad-hoc calls for workflow.
+  workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    # n.b. default runner "ubuntu-latest" may be under-sized
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: install nix
+        uses: nixbuild/nix-quick-install-action@v34
+
+      - name: setup nix cache
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      # debugging step, to confirm that we have a working devshell
+      - name: invoke the nix dev shell
+        run: nix develop --command echo hello
+
+      - name: run the integration test suite
+        run: nix develop --command just integration

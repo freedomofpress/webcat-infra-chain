@@ -9,10 +9,11 @@ use tendermint_rpc::{Client, HttpClient};
 
 use crate::binaries::find_binaries;
 use crate::constants::{
-    admin_reconfig_tx_timeout, consensus_propagation_wait, inter_tx_delay, network_startup_timeout,
+    admin_reconfig_tx_timeout, consensus_propagation_wait, consensus_propagation_wait_long,
+    inter_tx_delay, network_startup_timeout, poll_interval,
 };
 use crate::harness::TestNetwork;
-use crate::helpers::{query_admin_pending, query_admin_votes, query_config};
+use crate::helpers::{poll_until, query_admin_pending, query_admin_votes, query_config};
 
 /// Verifies that admin reconfiguration transactions work correctly.
 ///
@@ -101,8 +102,15 @@ async fn test_admin_reconfiguration() -> color_eyre::Result<()> {
         tokio::time::sleep(inter_tx_delay()).await;
     }
 
-    // Wait for the config change to take effect (admin delay is 0s in test config)
-    tokio::time::sleep(consensus_propagation_wait()).await;
+    // Poll for the config change to take effect (admin delay is 0s in test config)
+    let expected_version = current_config.version;
+    poll_until(
+        consensus_propagation_wait_long(),
+        poll_interval(),
+        "config version incremented",
+        || Ok(query_config(&felidae_bin, &network.query_url())?.version > expected_version),
+    )
+    .await?;
 
     // Verify the configuration was updated via CLI
     let updated_config = query_config(&felidae_bin, &network.query_url())?;
@@ -110,7 +118,7 @@ async fn test_admin_reconfiguration() -> color_eyre::Result<()> {
 
     // The version should have incremented
     assert!(
-        updated_config.version >= current_config.version,
+        updated_config.version > current_config.version,
         "config version should have incremented (was {}, now {})",
         current_config.version,
         updated_config.version
@@ -309,8 +317,15 @@ async fn test_admin_reconfig_full_quorum_success() -> color_eyre::Result<()> {
         tokio::time::sleep(inter_tx_delay()).await;
     }
 
-    // Wait for the config change to take effect (admin delay is 0s in test config)
-    tokio::time::sleep(consensus_propagation_wait()).await;
+    // Poll for the config change to take effect (admin delay is 0s in test config)
+    let target_version = current_config.version + 1;
+    poll_until(
+        consensus_propagation_wait_long(),
+        poll_interval(),
+        "config version updated after full quorum",
+        || Ok(query_config(&felidae_bin, &network.query_url())?.version >= target_version),
+    )
+    .await?;
 
     // Verify votes were consumed (should be empty after quorum) via CLI
     let admin_votes = query_admin_votes(&felidae_bin, &network.query_url())?;
