@@ -5,10 +5,41 @@
 
 use std::collections::HashMap;
 use std::process::Command;
+use std::time::Duration;
 
 use felidae_types::response::{AdminVote, OracleVote, PendingObservation};
 use felidae_types::transaction::Config;
 use tendermint_rpc::{Client, HttpClient};
+
+// =============================================================================
+// POLLING UTILITIES
+// =============================================================================
+
+/// Polls a condition until it returns true or timeout is reached.
+///
+/// Useful for waiting on state changes that propagate through consensus,
+/// where the exact timing depends on block production.
+pub async fn poll_until(
+    timeout: Duration,
+    interval: Duration,
+    description: &str,
+    check: impl Fn() -> color_eyre::Result<bool>,
+) -> color_eyre::Result<()> {
+    let start = std::time::Instant::now();
+    loop {
+        match check() {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(e) => eprintln!("[poll_until] {description}: error (retrying): {e}"),
+        }
+        if start.elapsed() > timeout {
+            return Err(color_eyre::eyre::eyre!(
+                "condition not met within {timeout:?}: {description}"
+            ));
+        }
+        tokio::time::sleep(interval).await;
+    }
+}
 
 // =============================================================================
 // TRANSACTION SUBMISSION HELPERS

@@ -26,8 +26,8 @@ test:
     cargo nextest run
 
 # Run integration tests (block_time in seconds; default 1s for fast CI)
-integration block_time="1":
-    FELIDAE_BLOCK_TIME_SECS={{block_time}} cargo nextest run -p felidae-deployer --features integration --no-capture --no-fail-fast
+integration block_time="2":
+    FELIDAE_BLOCK_TIME_SECS={{block_time}} cargo nextest run -p felidae-deployer --features integration --no-fail-fast --test-threads 1
 
 # Build WASM package for felidae-oracle
 build-wasm:
