@@ -27,9 +27,9 @@ pub enum QueryCommand {
     /// Query canonical domain→hash mappings.
     Snapshot(Snapshot),
     /// Query active oracle votes in the vote queue.
-    OracleVotes(OracleVotes),
+    EnrollmentVotes(EnrollmentVotes),
     /// Query pending oracle observations awaiting promotion.
-    OraclePending(OraclePending),
+    EnrollmentPending(EnrollmentPending),
     /// Query active admin reconfiguration votes.
     AdminVotes(AdminVotes),
     /// Query pending admin config changes.
@@ -43,8 +43,8 @@ impl Run for Query {
         let query_url = self.query_url;
         match self.command {
             QueryCommand::Snapshot(cmd) => cmd.run(query_url).await,
-            QueryCommand::OracleVotes(cmd) => cmd.run(query_url).await,
-            QueryCommand::OraclePending(cmd) => cmd.run(query_url).await,
+            QueryCommand::EnrollmentVotes(cmd) => cmd.run(query_url).await,
+            QueryCommand::EnrollmentPending(cmd) => cmd.run(query_url).await,
             QueryCommand::AdminVotes(cmd) => cmd.run(query_url).await,
             QueryCommand::AdminPending(cmd) => cmd.run(query_url).await,
             QueryCommand::Config(cmd) => cmd.run(query_url).await,
@@ -71,17 +71,17 @@ impl Snapshot {
 }
 
 #[derive(clap::Args)]
-pub struct OracleVotes {
+pub struct EnrollmentVotes {
     /// Filter by domain (optional).
     #[clap(long)]
     pub domain: Option<String>,
 }
 
-impl OracleVotes {
+impl EnrollmentVotes {
     async fn run(self, query_url: Url) -> color_eyre::Result<()> {
         let endpoint = match &self.domain {
-            Some(domain) => format!("/oracle/votes/{}", domain),
-            None => "/oracle/votes".to_string(),
+            Some(domain) => format!("/enrollment/votes/{}", domain),
+            None => "/enrollment/votes".to_string(),
         };
 
         let response: Vec<OracleVote> = reqwest::Client::new()
@@ -98,12 +98,12 @@ impl OracleVotes {
 }
 
 #[derive(clap::Args)]
-pub struct OraclePending {}
+pub struct EnrollmentPending {}
 
-impl OraclePending {
+impl EnrollmentPending {
     async fn run(self, query_url: Url) -> color_eyre::Result<()> {
         let response: Vec<PendingObservation> = reqwest::Client::new()
-            .get(query_url.join("/oracle/pending")?)
+            .get(query_url.join("/enrollment/pending")?)
             .send()
             .await?
             .error_for_status()?

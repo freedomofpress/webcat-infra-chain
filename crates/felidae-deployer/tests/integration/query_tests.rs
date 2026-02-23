@@ -84,7 +84,7 @@ async fn test_root_route_returns_ok_with_endpoints() -> color_eyre::Result<()> {
         .filter_map(|e| e["path"].as_str())
         .collect();
 
-    let expected_paths = ["/config", "/oracles", "/snapshot", "/oracle/votes"];
+    let expected_paths = ["/config", "/oracles", "/snapshot", "/enrollment/votes"];
     for expected in &expected_paths {
         assert!(
             paths.contains(expected),

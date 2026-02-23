@@ -8,7 +8,7 @@ use tendermint::Time;
 
 use crate::transaction::{Config, Domain, HashObserved};
 
-/// Response structure from the `/oracle/votes` query endpoint.
+/// Response structure from the `/enrollment/votes` query endpoint.
 ///
 /// This represents a single oracle's active vote in the voting queue. Votes
 /// remain active until either:
@@ -27,7 +27,7 @@ pub struct OracleVote {
     pub hash: HashObserved,
 }
 
-/// Response structure from the `/oracle/pending` query endpoint.
+/// Response structure from the `/enrollment/pending` query endpoint.
 ///
 /// Pending observations have reached quorum but are waiting for the delay
 /// period to expire before being promoted to canonical state. During this

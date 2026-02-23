@@ -7,10 +7,10 @@ fn main() -> Result<()> {
     for entry in fs::read_dir("src/")? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) == Some("proto")
-            && let Some(path_str) = path.to_str()
-        {
-            proto_files.push(path_str.to_string());
+        if path.extension().and_then(|s| s.to_str()) == Some("proto") {
+            if let Some(path_str) = path.to_str() {
+                proto_files.push(path_str.to_string());
+            }
         }
     }
 

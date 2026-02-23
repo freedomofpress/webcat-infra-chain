@@ -181,11 +181,11 @@ pub fn run_query_command(
 /// Votes are in-flight observations that haven't yet reached quorum. Each vote
 /// shows which oracle voted for which domain with what hash. Multiple oracles
 /// voting for the same (domain, hash) pair will trigger quorum detection.
-pub fn query_oracle_votes(
+pub fn query_enrollment_votes(
     felidae_bin: &std::path::Path,
     query_url: &str,
 ) -> color_eyre::Result<Vec<OracleVote>> {
-    let output = run_query_command(felidae_bin, "oracle-votes", query_url, &[])?;
+    let output = run_query_command(felidae_bin, "enrollment-votes", query_url, &[])?;
     let votes: Vec<OracleVote> = serde_json::from_str(&output)?;
     Ok(votes)
 }
@@ -195,11 +195,11 @@ pub fn query_oracle_votes(
 /// Pending observations have reached quorum but are in the delay period before
 /// becoming canonical. The delay provides a window for detecting and responding
 /// to incorrect observations before they become permanent.
-pub fn query_oracle_pending(
+pub fn query_enrollment_pending(
     felidae_bin: &std::path::Path,
     query_url: &str,
 ) -> color_eyre::Result<Vec<PendingObservation>> {
-    let output = run_query_command(felidae_bin, "oracle-pending", query_url, &[])?;
+    let output = run_query_command(felidae_bin, "enrollment-pending", query_url, &[])?;
     let pending: Vec<PendingObservation> = serde_json::from_str(&output)?;
     Ok(pending)
 }
@@ -220,7 +220,7 @@ pub fn query_admin_votes(
 
 /// Queries the admin pending via CLI for config changes awaiting promotion.
 ///
-/// Similar to oracle pending, admin pending contains config changes that have
+/// Similar to enrollment pending, admin pending contains config changes that have
 /// reached quorum but are waiting for the configured delay before being applied.
 pub fn query_admin_pending(
     felidae_bin: &std::path::Path,
