@@ -73,7 +73,7 @@ pub fn app(storage: Storage) -> Router {
         }
     };
 
-    let oracle_votes = || {
+    let enrollment_votes = || {
         let storage = storage.clone();
         move |domain: Domain| async move {
             let state = State::new(StateDelta::new(storage.latest_snapshot()));
@@ -170,7 +170,7 @@ pub fn app(storage: Storage) -> Router {
         }
     };
 
-    let oracle_pending = || {
+    let enrollment_pending = || {
         let storage = storage.clone();
         move |domain: Domain| async move {
             let state = State::new(StateDelta::new(storage.latest_snapshot()));
@@ -432,10 +432,10 @@ pub fn app(storage: Storage) -> Router {
     // Duplicate underlying services as needed for routing:
     let root_snapshot = snapshot();
     let domain_snapshot = snapshot();
-    let root_oracle_votes = oracle_votes();
-    let domain_oracle_votes = oracle_votes();
-    let root_oracle_pending = oracle_pending();
-    let domain_oracle_pending = oracle_pending();
+    let root_enrollment_votes = enrollment_votes();
+    let domain_enrollment_votes = enrollment_votes();
+    let root_enrollment_pending = enrollment_pending();
+    let domain_enrollment_pending = enrollment_pending();
 
     Router::new()
         .route(
@@ -469,20 +469,20 @@ pub fn app(storage: Storage) -> Router {
                                     .to_string(),
                         },
                         EndpointInfo {
-                            path: "/oracle/votes".to_string(),
-                            description: "Get oracle votes for all domains".to_string(),
+                            path: "/enrollment/votes".to_string(),
+                            description: "Get oracle votes for all domains submitted".to_string(),
                         },
                         EndpointInfo {
-                            path: "/oracle/votes/{domain}".to_string(),
+                            path: "/enrollment/votes/{domain}".to_string(),
                             description: "Get oracle votes for a specific domain".to_string(),
                         },
                         EndpointInfo {
-                            path: "/oracle/pending".to_string(),
+                            path: "/enrollment/pending".to_string(),
                             description: "Get pending oracle observations for all domains"
                                 .to_string(),
                         },
                         EndpointInfo {
-                            path: "/oracle/pending/{domain}".to_string(),
+                            path: "/enrollment/pending/{domain}".to_string(),
                             description: "Get pending oracle observations for a specific domain"
                                 .to_string(),
                         },
@@ -524,37 +524,37 @@ pub fn app(storage: Storage) -> Router {
             get(move || async { admin_pending().await }),
         )
         .route(
-            "/oracle/votes",
+            "/enrollment/votes",
             get(move || async {
-                root_oracle_votes(Domain {
+                root_enrollment_votes(Domain {
                     name: FQDN::default(),
                 })
                 .await
             }),
         )
         .route(
-            "/oracle/votes/{domain}",
+            "/enrollment/votes/{domain}",
             get(move |Path(domain): Path<String>| async move {
                 match permissive_domain(domain) {
-                    Ok(domain) => domain_oracle_votes(domain).await,
+                    Ok(domain) => domain_enrollment_votes(domain).await,
                     Err(e) => e,
                 }
             }),
         )
         .route(
-            "/oracle/pending",
+            "/enrollment/pending",
             get(move || async {
-                root_oracle_pending(Domain {
+                root_enrollment_pending(Domain {
                     name: FQDN::default(),
                 })
                 .await
             }),
         )
         .route(
-            "/oracle/pending/{domain}",
+            "/enrollment/pending/{domain}",
             get(move |Path(domain): Path<String>| async move {
                 match permissive_domain(domain) {
-                    Ok(domain) => domain_oracle_pending(domain).await,
+                    Ok(domain) => domain_enrollment_pending(domain).await,
                     Err(e) => e,
                 }
             }),

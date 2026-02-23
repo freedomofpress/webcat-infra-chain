@@ -15,8 +15,8 @@ use crate::constants::{
 };
 use crate::harness::TestNetwork;
 use crate::helpers::{
-    query_config, query_oracle_pending, query_oracle_votes, query_snapshot, run_query_command,
-    submit_observation,
+    query_config, query_enrollment_pending, query_enrollment_votes, query_snapshot,
+    run_query_command, submit_observation,
 };
 
 /// Verifies that a 3-validator network can successfully bootstrap and produce blocks.
@@ -99,8 +99,8 @@ async fn test_three_validator_network_starts() -> color_eyre::Result<()> {
 ///    - Vote is stored in the vote queue keyed by domain
 ///
 /// 3. **Query API**:
-///    - `/oracle/votes` returns the pending vote
-///    - Domain-specific endpoint `/oracle/votes/{domain}` works
+///    - `/enrollment/votes` returns the pending vote
+///    - Domain-specific endpoint `/enrollment/votes/{domain}` works
 ///
 /// # Why No Canonical Entry?
 ///
@@ -158,13 +158,13 @@ async fn test_oracle_observation_single_domain() -> color_eyre::Result<()> {
         let block = rpc_client.latest_block().await?;
         let height = block.block.header.height.value();
 
-        let votes = query_oracle_votes(&felidae_bin, &network.query_url())?;
-        let pending = query_oracle_pending(&felidae_bin, &network.query_url())?;
+        let votes = query_enrollment_votes(&felidae_bin, &network.query_url())?;
+        let pending = query_enrollment_pending(&felidae_bin, &network.query_url())?;
 
         // Test the domain-specific vote query via CLI (with --domain filter)
         let domain_votes_output = run_query_command(
             &felidae_bin,
-            "oracle-votes",
+            "enrollment-votes",
             &network.query_url(),
             &["--domain", TEST_DOMAIN_WEBCAT.0.trim_end_matches('.')],
         )?;
@@ -512,7 +512,7 @@ async fn test_partial_quorum_no_canonical() -> color_eyre::Result<()> {
     tokio::time::sleep(consensus_propagation_wait()).await;
 
     // Verify votes exist in the vote queue via CLI
-    let votes = query_oracle_votes(&felidae_bin, &network.query_url())?;
+    let votes = query_enrollment_votes(&felidae_bin, &network.query_url())?;
     eprintln!("[test] votes after partial quorum: {:?}", votes);
 
     // Votes should still be in the queue (not consumed by quorum)
