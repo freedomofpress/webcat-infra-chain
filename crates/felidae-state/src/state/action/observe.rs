@@ -1,5 +1,9 @@
 use super::*;
 
+#[cfg(test)]
+#[path = "observe_tests.rs"]
+mod tests;
+
 impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     /// Handle an observation action.
     #[instrument(skip(self, observe), fields(domain = %observe.observation.domain, zone = %observe.observation.zone))]
@@ -211,7 +215,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 .len();
 
             // If adding this new subdomain would exceed the max, bail:
-            if unique_subdomains as u64 + 1 >= max_enrolled_subdomains {
+            if unique_subdomains as u64 + 1 > max_enrolled_subdomains {
                 bail!(
                     "cannot add subdomain {subdomain} to pending queue: would exceed max enrolled subdomains of {max_enrolled_subdomains} for registered domain {registered_domain}",
                 );
