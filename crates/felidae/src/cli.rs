@@ -14,13 +14,14 @@ pub enum Options {
     Oracle(oracle::Oracle),
     /// Query the Felidae chain state.
     Query(query::Query),
-    /// Compare felidae JMT state between two storage directories (e.g. after a halt).
-    CompareState(compare_state::CompareState),
+    /// Developer debugging utilities.
+    #[command(subcommand)]
+    Debug(debug::Debug),
 }
 
 // One module per top-level subcommand
 mod admin;
-mod compare_state;
+mod debug;
 mod oracle;
 mod query;
 mod reset;
@@ -38,7 +39,7 @@ impl Run for Options {
             Self::Admin(admin) => admin.run().await,
             Self::Oracle(oracle) => oracle.run().await,
             Self::Query(query) => query.run().await,
-            Self::CompareState(cmd) => cmd.run().await,
+            Self::Debug(cmd) => cmd.run().await,
         }
     }
 }

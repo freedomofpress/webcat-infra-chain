@@ -94,7 +94,7 @@ fn hex_preview(bytes: &[u8], max_len: usize) -> String {
     }
 }
 
-use super::Run;
+use super::super::Run;
 
 impl Run for CompareState {
     async fn run(self) -> color_eyre::Result<()> {
