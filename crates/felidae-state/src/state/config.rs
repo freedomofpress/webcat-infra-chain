@@ -37,6 +37,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             onion: OnionConfig {
                 enabled: _, // Can be enabled or not
             },
+            validators,
         }: &Config,
     ) -> Result<(), Report> {
         // Ensure the version is greater than the current version:
@@ -77,6 +78,27 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             if Self::is_all_zeros(&oracle.identity) {
                 bail!(
                     "oracle at index {} has an all-zero identity (placeholder not replaced)",
+                    i
+                );
+            }
+        }
+
+        // Validate validators field (primarily check the power is not too large)
+        for (i, validator) in validators.iter().enumerate() {
+            // Validate that power doesn't exceed `u32::MAX`
+            if validator.power > u32::MAX as u64 {
+                bail!(
+                    "validator at index {} has power {} which exceeds maximum {}",
+                    i,
+                    validator.power,
+                    u32::MAX
+                );
+            }
+
+            // Validate that public key is not all zeros (placeholder entry)
+            if Self::is_all_zeros(&validator.public_key) {
+                bail!(
+                    "validator at index {} has an all-zero public key (placeholder not replaced)",
                     i
                 );
             }
