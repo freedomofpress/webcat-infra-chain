@@ -15,7 +15,7 @@ use crate::constants::{
 };
 use crate::harness::TestNetwork;
 use crate::helpers::{
-    query_config, query_enrollment_pending, query_enrollment_votes, query_snapshot,
+    poll_until, query_config, query_enrollment_pending, query_enrollment_votes, query_snapshot,
     run_query_command, submit_observation,
 };
 
@@ -255,12 +255,20 @@ async fn test_oracle_quorum_reached() -> color_eyre::Result<()> {
         tokio::time::sleep(inter_tx_delay()).await;
     }
 
-    // Wait for quorum and promotion
-    tokio::time::sleep(consensus_propagation_wait_long()).await;
+    // Poll for quorum and promotion instead of fixed sleep
+    poll_until(
+        consensus_propagation_wait_long(),
+        poll_interval(),
+        &format!("{} in canonical snapshot", TEST_DOMAIN_EXAMPLE.0),
+        || {
+            Ok(query_snapshot(&felidae_bin, &network.query_url())?
+                .contains_key(TEST_DOMAIN_EXAMPLE.0))
+        },
+    )
+    .await?;
 
     // Query the canonical snapshot via CLI - the enrollment should now be visible
     let snapshot = query_snapshot(&felidae_bin, &network.query_url())?;
-
     eprintln!("[test] snapshot: {:?}", snapshot);
 
     // Verify the domain appears in canonical state with the expected hash
@@ -307,12 +315,21 @@ async fn test_oracle_observation_multiple_domains() -> color_eyre::Result<()> {
         }
     }
 
-    // Wait for both domains to reach quorum and be promoted
-    tokio::time::sleep(consensus_propagation_wait()).await;
+    // Poll for both domains to reach quorum and be promoted
+    poll_until(
+        consensus_propagation_wait_long(),
+        poll_interval(),
+        "both domains in canonical snapshot",
+        || {
+            let snapshot = query_snapshot(&felidae_bin, &network.query_url())?;
+            Ok(snapshot.contains_key(TEST_DOMAIN_WEBCAT.0)
+                && snapshot.contains_key(TEST_DOMAIN_EXAMPLE.0))
+        },
+    )
+    .await?;
 
     // Query the canonical snapshot via CLI
     let snapshot = query_snapshot(&felidae_bin, &network.query_url())?;
-
     eprintln!("[test] snapshot: {:?}", snapshot);
 
     // Both domains should appear in the canonical state
@@ -366,8 +383,17 @@ async fn test_oracle_unenrollment() -> color_eyre::Result<()> {
         tokio::time::sleep(inter_tx_delay()).await;
     }
 
-    // Wait for enrollment to become canonical
-    tokio::time::sleep(consensus_propagation_wait()).await;
+    // Poll for enrollment to become canonical
+    poll_until(
+        consensus_propagation_wait_long(),
+        poll_interval(),
+        &format!("{} enrolled", TEST_DOMAIN_UNENROLL.0),
+        || {
+            Ok(query_snapshot(&felidae_bin, &network.query_url())?
+                .contains_key(TEST_DOMAIN_UNENROLL.0))
+        },
+    )
+    .await?;
 
     // Verify the domain was enrolled via CLI
     let snapshot = query_snapshot(&felidae_bin, &network.query_url())?;
@@ -397,8 +423,17 @@ async fn test_oracle_unenrollment() -> color_eyre::Result<()> {
         tokio::time::sleep(inter_tx_delay()).await;
     }
 
-    // Wait for unenrollment to become canonical
-    tokio::time::sleep(consensus_propagation_wait()).await;
+    // Poll for unenrollment to become canonical
+    poll_until(
+        consensus_propagation_wait_long(),
+        poll_interval(),
+        &format!("{} unenrolled", TEST_DOMAIN_UNENROLL.0),
+        || {
+            Ok(!query_snapshot(&felidae_bin, &network.query_url())?
+                .contains_key(TEST_DOMAIN_UNENROLL.0))
+        },
+    )
+    .await?;
 
     // Verify the domain was removed from canonical state via CLI
     let snapshot = query_snapshot(&felidae_bin, &network.query_url())?;
@@ -577,16 +612,20 @@ async fn test_enrollment_update() -> color_eyre::Result<()> {
         tokio::time::sleep(inter_tx_delay()).await;
     }
 
-    tokio::time::sleep(consensus_propagation_wait()).await;
+    // Poll for initial enrollment
+    poll_until(
+        consensus_propagation_wait_long(),
+        poll_interval(),
+        &format!("{update_domain} enrolled (v1)"),
+        || Ok(query_snapshot(&felidae_bin, &network.query_url())?.contains_key(&update_domain)),
+    )
+    .await?;
 
     // Verify initial enrollment via CLI
     let snapshot_v1 = query_snapshot(&felidae_bin, &network.query_url())?;
     eprintln!("[test] snapshot after v1: {:?}", snapshot_v1);
 
-    let hash_v1 = snapshot_v1
-        .get(&update_domain)
-        .unwrap_or_else(|| panic!("{} should be enrolled", update_domain))
-        .clone();
+    let hash_v1 = snapshot_v1.get(&update_domain).unwrap().clone();
 
     // PHASE 2: Update enrollment with a different enrollment (different hash)
     let enrollment_v2 = {
@@ -622,16 +661,26 @@ async fn test_enrollment_update() -> color_eyre::Result<()> {
         tokio::time::sleep(inter_tx_delay()).await;
     }
 
-    tokio::time::sleep(consensus_propagation_wait()).await;
+    // Poll for the enrollment hash to change
+    let hash_v1_ref = hash_v1.clone();
+    poll_until(
+        consensus_propagation_wait_long(),
+        poll_interval(),
+        &format!("{update_domain} enrollment hash updated"),
+        || {
+            let snapshot = query_snapshot(&felidae_bin, &network.query_url())?;
+            Ok(snapshot
+                .get(&update_domain)
+                .map_or(false, |h| *h != hash_v1_ref))
+        },
+    )
+    .await?;
 
     // Verify the enrollment was updated via CLI
     let snapshot_v2 = query_snapshot(&felidae_bin, &network.query_url())?;
     eprintln!("[test] snapshot after v2: {:?}", snapshot_v2);
 
-    let hash_v2 = snapshot_v2
-        .get(&update_domain)
-        .unwrap_or_else(|| panic!("{} should still be enrolled", update_domain))
-        .clone();
+    let hash_v2 = snapshot_v2.get(&update_domain).unwrap().clone();
 
     // The hash should have changed
     assert_ne!(
@@ -663,15 +712,16 @@ async fn test_subdomain_limit_enforcement() -> color_eyre::Result<()> {
 
     let (registered_domain, zone) = TEST_DOMAIN_EXAMPLE;
 
-    // Create domains: the registered domain + 3 subdomains = 4 total
+    // Create domains: the registered domain + 4 subdomains = 5 total (exactly at limit)
     let subdomains: Vec<String> = vec![
         registered_domain.to_string(),
         format!("{}.{}", TEST_SUBDOMAIN_PREFIX_1, registered_domain),
         format!("{}.{}", TEST_SUBDOMAIN_PREFIX_2, registered_domain),
         format!("{}1.{}", TEST_SUBDOMAIN_PREFIX_1, registered_domain),
+        format!("{}1.{}", TEST_SUBDOMAIN_PREFIX_2, registered_domain),
     ];
 
-    // PHASE 1: Enroll 4 entries under the registered domain
+    // PHASE 1: Enroll 5 entries under the registered domain (fills the limit exactly)
     eprintln!("[test] Phase 1: Enrolling {} entries", subdomains.len());
 
     for (idx, subdomain) in subdomains.iter().enumerate() {
@@ -691,8 +741,15 @@ async fn test_subdomain_limit_enforcement() -> color_eyre::Result<()> {
             tokio::time::sleep(inter_tx_delay()).await;
         }
 
-        // Wait for this entry to reach canonical state before enrolling next
-        tokio::time::sleep(consensus_propagation_wait()).await;
+        // Poll for this entry to reach canonical state before enrolling next
+        let sd = subdomain.clone();
+        poll_until(
+            consensus_propagation_wait_long(),
+            poll_interval(),
+            &format!("{sd} enrolled"),
+            || Ok(query_snapshot(&felidae_bin, &network.query_url())?.contains_key(&sd)),
+        )
+        .await?;
     }
 
     // Verify all entries are enrolled via CLI
@@ -707,8 +764,8 @@ async fn test_subdomain_limit_enforcement() -> color_eyre::Result<()> {
         );
     }
 
-    // PHASE 2: Attempt to enroll another subdomain (should fail at limit)
-    eprintln!("[test] Phase 2: Attempting 5th entry (should fail)");
+    // PHASE 2: Attempt to enroll another subdomain (should fail, limit is 5)
+    eprintln!("[test] Phase 2: Attempting 6th entry (should fail)");
 
     let over_limit_subdomain = format!("{}2.{}", TEST_SUBDOMAIN_PREFIX_2, registered_domain);
 

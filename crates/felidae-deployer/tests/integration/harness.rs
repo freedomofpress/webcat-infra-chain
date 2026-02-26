@@ -92,8 +92,8 @@ impl TestNetwork {
             let cometbft_name = format!("{}-cometbft", node.name);
             let child = Command::new(cometbft_bin)
                 .args(["start", "--home", &node.cometbft_home().to_string_lossy()])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
                 .spawn()?;
             self.processes.insert(cometbft_name, child);
 
@@ -109,8 +109,8 @@ impl TestNetwork {
                     "--homedir",
                     &node.felidae_home().to_string_lossy(),
                 ])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
                 .spawn()?;
             self.processes.insert(felidae_name, child);
 
@@ -128,8 +128,8 @@ impl TestNetwork {
                         "--homedir",
                         &node.felidae_home().to_string_lossy(),
                     ])
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
                     .spawn()?;
                 self.processes.insert(oracle_name, child);
             }
@@ -139,7 +139,7 @@ impl TestNetwork {
     }
 
     /// Wait for the network to be ready (blocks are being produced).
-    pub async fn wait_ready(&self, timeout: Duration) -> color_eyre::Result<()> {
+    pub async fn wait_ready(&mut self, timeout: Duration) -> color_eyre::Result<()> {
         let rpc_url = format!(
             "http://{}:{}",
             self.network.nodes[0].bind_address, self.network.nodes[0].ports.cometbft_rpc
@@ -162,8 +162,16 @@ impl TestNetwork {
                         return Ok(());
                     }
                 }
-                Err(_) => {
-                    // Node not ready yet
+                Err(e) => {
+                    eprintln!("[wait_ready] RPC error (retrying): {e}");
+                    // Check if any process has exited unexpectedly
+                    for (name, child) in &mut self.processes {
+                        if let Some(status) = child.try_wait()? {
+                            return Err(color_eyre::eyre::eyre!(
+                                "process '{name}' exited unexpectedly: {status}"
+                            ));
+                        }
+                    }
                 }
             }
 
@@ -265,13 +273,37 @@ impl TestNetwork {
         Ok(hex::decode(key_hex.trim())?)
     }
 
-    /// Shutdown all processes.
+    /// Shutdown all processes and wait for ports to be released.
     pub fn shutdown(&mut self) {
         self.shutdown.store(true, Ordering::SeqCst);
         for (_name, mut child) in self.processes.drain() {
             let _ = child.kill();
             let _ = child.wait();
         }
+
+        // After SIGKILL + reap, the kernel may still hold TCP sockets briefly.
+        // Poll until every port used by this network is genuinely free, so the
+        // next test can bind without races.
+        let ports = self.network.collect_required_ports();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let all_free = ports
+                .iter()
+                .all(|(port, _)| std::net::TcpListener::bind(("127.0.0.1", *port)).is_ok());
+            if all_free {
+                break;
+            }
+            if std::time::Instant::now() > deadline {
+                eprintln!("[shutdown] warning: ports still held after 10s, proceeding anyway");
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        // Give the OS time to fully reclaim resources (file descriptors, tmpfs
+        // pages, process table entries) before the next test spins up another
+        // 9-process cluster.
+        std::thread::sleep(Duration::from_secs(2));
     }
 }
 
