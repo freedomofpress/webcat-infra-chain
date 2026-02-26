@@ -712,15 +712,16 @@ async fn test_subdomain_limit_enforcement() -> color_eyre::Result<()> {
 
     let (registered_domain, zone) = TEST_DOMAIN_EXAMPLE;
 
-    // Create domains: the registered domain + 3 subdomains = 4 total
+    // Create domains: the registered domain + 4 subdomains = 5 total (exactly at limit)
     let subdomains: Vec<String> = vec![
         registered_domain.to_string(),
         format!("{}.{}", TEST_SUBDOMAIN_PREFIX_1, registered_domain),
         format!("{}.{}", TEST_SUBDOMAIN_PREFIX_2, registered_domain),
         format!("{}1.{}", TEST_SUBDOMAIN_PREFIX_1, registered_domain),
+        format!("{}1.{}", TEST_SUBDOMAIN_PREFIX_2, registered_domain),
     ];
 
-    // PHASE 1: Enroll 4 entries under the registered domain
+    // PHASE 1: Enroll 5 entries under the registered domain (fills the limit exactly)
     eprintln!("[test] Phase 1: Enrolling {} entries", subdomains.len());
 
     for (idx, subdomain) in subdomains.iter().enumerate() {
@@ -763,8 +764,8 @@ async fn test_subdomain_limit_enforcement() -> color_eyre::Result<()> {
         );
     }
 
-    // PHASE 2: Attempt to enroll another subdomain (should fail at limit)
-    eprintln!("[test] Phase 2: Attempting 5th entry (should fail)");
+    // PHASE 2: Attempt to enroll another subdomain (should fail, limit is 5)
+    eprintln!("[test] Phase 2: Attempting 6th entry (should fail)");
 
     let over_limit_subdomain = format!("{}2.{}", TEST_SUBDOMAIN_PREFIX_2, registered_domain);
 
