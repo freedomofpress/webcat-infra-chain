@@ -2,6 +2,12 @@
 
 Nothing yet!
 
+# Version 0.3.5 (2026-03-02)
+
+* feat: debug utility for comparing apphashes, #113
+* fix: rename oracle/* endpoints to enrollment/*, #120
+* fix: off-by-one error in max subdomain, #123
+
 # Version 0.3.4 (2026-02-20)
 
 * fix: stage previous AppHash in FinalizeBlock, #113
