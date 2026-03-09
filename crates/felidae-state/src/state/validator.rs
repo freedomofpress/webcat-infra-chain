@@ -104,7 +104,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     pub(crate) async fn sync_validators_from_config(
         &mut self,
         config_validators: &[felidae_types::transaction::Validator],
-    ) -> Result<(), Report> {
+    ) -> Result<Vec<Update>, Report> {
         // We grab all the current validators from the state (including those with power 0
         // which we need to be careful not to reset their power because they might be tombstoned)
         let mut state_validators = BTreeMap::new();
@@ -129,6 +129,9 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             config_validators_map.insert(pub_key_bytes, (pub_key, power));
         }
 
+        // Collect validator updates to return to CometBFT via FinalizeBlock.
+        let mut updates = Vec::new();
+
         // Add new validators from config (only if they don't exist in state)
         for (pub_key_bytes, (pub_key, config_power)) in config_validators_map.iter() {
             if state_validators.contains_key(pub_key_bytes) {
@@ -143,15 +146,17 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                     power = config_power.value(),
                     "adding new validator"
                 );
-                self.declare_validator(Update {
+                let update = Update {
                     pub_key: *pub_key,
                     power: *config_power,
-                })
-                .await?;
+                };
+                self.declare_validator(update.clone()).await?;
+                updates.push(update);
             }
         }
 
-        // Finally, remove validators that are in state but NOT in the config by setting their power to 0
+        // Remove validators that are in state but NOT in the config by setting their power to 0.
+        // The power=0 update must be returned so CometBFT sees the removal.
         for (pub_key_bytes, (pub_key, state_power)) in state_validators.iter() {
             if !config_validators_map.contains_key(pub_key_bytes) && state_power.value() > 0 {
                 info!(
@@ -164,10 +169,14 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                     &format!("current/validators/{}", hex::encode(pub_key.to_bytes())),
                     zero_power,
                 );
+                updates.push(Update {
+                    pub_key: *pub_key,
+                    power: zero_power,
+                });
             }
         }
 
-        Ok(())
+        Ok(updates)
     }
 
     /// Record validator uptime for the current block.
