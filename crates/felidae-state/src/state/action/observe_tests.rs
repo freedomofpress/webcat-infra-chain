@@ -50,6 +50,7 @@ fn test_config(oracle: &Bytes, obs_timeout_secs: u64, max_subdomains: u64) -> Co
             }],
         },
         onion: OnionConfig { enabled: false },
+        validators: vec![],
     }
 }
 
