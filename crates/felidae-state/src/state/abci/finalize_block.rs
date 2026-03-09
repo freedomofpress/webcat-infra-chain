@@ -98,7 +98,9 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             tx_results.push(result);
         }
 
-        // Process ripe pending config changes into current config
+        // Process ripe pending config changes into current config.
+        // Collect any validator set changes so they can be included in the response.
+        let mut validator_changes: Vec<Update> = Vec::new();
         for (_, new_config) in self.admin_voting().await?.promote_pending_changes().await? {
             // We want to only apply configs with a version greater than the current version, to
             // avoid replay attacks. This can only happen if there are multiple pending config
@@ -123,8 +125,10 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
 
             // Note: This will never be executed on the initial config specified in genesis, and only for
             // subsequent configs.
-            self.sync_validators_from_config(&new_config.validators)
+            let changes = self
+                .sync_validators_from_config(&new_config.validators)
                 .await?;
+            validator_changes.extend(changes);
         }
 
         // Process ripe pending oracle observations into canonical state
@@ -138,8 +142,10 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 .await?;
         }
 
-        // Get validator updates
-        let validator_updates = self.active_validators().await?;
+        // Get validator updates: the active set plus any changes from config sync
+        // (which includes power=0 removals that active_validators() would filter out).
+        let mut validator_updates = self.active_validators().await?;
+        validator_updates.extend(validator_changes);
 
         Ok(response::FinalizeBlock {
             tx_results,
