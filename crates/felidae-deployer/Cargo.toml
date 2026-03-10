@@ -46,6 +46,7 @@ integration = []
 [dev-dependencies]
 felidae-oracle = { path = "../felidae-oracle" }
 felidae-admin = { path = "../felidae-admin" }
+tendermint = { workspace = true }
 tendermint-rpc = { workspace = true }
 reqwest = { workspace = true }
 axum = { workspace = true }

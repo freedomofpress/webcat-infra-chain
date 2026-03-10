@@ -99,7 +99,9 @@ impl TestNetwork {
 
             // Start Felidae
             let felidae_name = format!("{}-felidae", node.name);
+            let felidae_log = std::fs::File::create(node.home_dir.join("felidae.log"))?;
             let child = Command::new(felidae_bin)
+                .env("RUST_LOG", "info")
                 .args([
                     "start",
                     "--abci-bind",
@@ -110,7 +112,7 @@ impl TestNetwork {
                     &node.felidae_home().to_string_lossy(),
                 ])
                 .stdout(Stdio::null())
-                .stderr(Stdio::null())
+                .stderr(Stdio::from(felidae_log))
                 .spawn()?;
             self.processes.insert(felidae_name, child);
 
