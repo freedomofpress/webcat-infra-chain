@@ -9,13 +9,13 @@ use std::time::Duration;
 
 use felidae_types::response::{AdminVote, OracleVote, PendingObservation};
 use felidae_types::transaction::Config;
-use tendermint_rpc::{Client, HttpClient};
+use tendermint_rpc::{Client, HttpClient, Paging};
 
 // =============================================================================
 // POLLING UTILITIES
 // =============================================================================
 
-/// Polls a condition until it returns true or timeout is reached.
+/// Polls a synchronous condition until it returns true or timeout is reached.
 ///
 /// Useful for waiting on state changes that propagate through consensus,
 /// where the exact timing depends on block production.
@@ -31,6 +31,36 @@ pub async fn poll_until(
             Ok(true) => return Ok(()),
             Ok(false) => {}
             Err(e) => eprintln!("[poll_until] {description}: error (retrying): {e}"),
+        }
+        if start.elapsed() > timeout {
+            return Err(color_eyre::eyre::eyre!(
+                "condition not met within {timeout:?}: {description}"
+            ));
+        }
+        tokio::time::sleep(interval).await;
+    }
+}
+
+/// Polls an async condition until it returns true or timeout is reached.
+///
+/// Like `poll_until` but accepts an async check function, useful for polling
+/// async RPC calls (e.g. CometBFT validator queries).
+pub async fn poll_until_async<F, Fut>(
+    timeout: Duration,
+    interval: Duration,
+    description: &str,
+    check: F,
+) -> color_eyre::Result<()>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = color_eyre::Result<bool>>,
+{
+    let start = std::time::Instant::now();
+    loop {
+        match check().await {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(e) => eprintln!("[poll_until_async] {description}: error (retrying): {e}"),
         }
         if start.elapsed() > timeout {
             return Err(color_eyre::eyre::eyre!(
@@ -321,4 +351,116 @@ pub async fn run_oracle_observe(
         enrollment_json.to_owned(),
     )
     .await
+}
+
+// VALIDATOR HELPERS
+// =============================================================================
+
+/// Reads the 32-byte Ed25519 public key from a CometBFT `priv_validator_key.json`
+/// file.
+pub fn read_priv_validator_pubkey(path: &std::path::Path) -> color_eyre::Result<Vec<u8>> {
+    use base64::Engine;
+    use color_eyre::eyre::OptionExt;
+
+    let content = std::fs::read_to_string(path)?;
+    let key_json: serde_json::Value = serde_json::from_str(&content)?;
+    let b64 = key_json["pub_key"]["value"]
+        .as_str()
+        .ok_or_eyre("missing pub_key.value in priv_validator_key.json")?;
+    Ok(base64::engine::general_purpose::STANDARD.decode(b64)?)
+}
+
+/// Reads the genesis validator Ed25519 public keys from each validator node's
+/// `priv_validator_key.json` and returns them as `Validator` structs with the
+/// given power, ready for use in a `Config.validators` field.
+pub fn read_genesis_validator_pubkeys(
+    network: &crate::harness::TestNetwork,
+) -> color_eyre::Result<Vec<felidae_types::transaction::Validator>> {
+    let mut validators = Vec::new();
+    for node in network
+        .network
+        .nodes
+        .iter()
+        .filter(|n| n.role.is_validator())
+    {
+        let pub_key_bytes = read_priv_validator_pubkey(&node.priv_validator_key_path())?;
+        validators.push(felidae_types::transaction::Validator {
+            public_key: pub_key_bytes.into(),
+            power: 10,
+        });
+    }
+    Ok(validators)
+}
+
+/// Queries CometBFT's active validator set via RPC and returns (pubkey_bytes, power) tuples,
+/// sorted for deterministic comparison.
+pub async fn query_cometbft_validators(
+    rpc_client: &HttpClient,
+) -> color_eyre::Result<Vec<(Vec<u8>, u64)>> {
+    // Query at the latest height, not Height::default() which is Height(1) (genesis).
+    let latest_height = rpc_client.latest_block().await?.block.header.height;
+    let response = rpc_client.validators(latest_height, Paging::All).await?;
+    let mut result: Vec<_> = response
+        .validators
+        .iter()
+        .map(|v| {
+            let key_bytes = match v.pub_key {
+                tendermint::PublicKey::Ed25519(key) => key.as_bytes().to_vec(),
+                _ => panic!("unexpected key type"),
+            };
+            (key_bytes, v.power.value())
+        })
+        .collect();
+    result.sort();
+    Ok(result)
+}
+
+/// Generates a random Ed25519 public key for use as a dummy validator.
+pub fn generate_ed25519_pubkey() -> Vec<u8> {
+    use ed25519_dalek::SigningKey;
+    let mut secret = [0u8; 32];
+    rand::Fill::fill(&mut secret, &mut rand::rng());
+    SigningKey::from_bytes(&secret)
+        .verifying_key()
+        .to_bytes()
+        .to_vec()
+}
+
+/// Submits an admin reconfiguration from all validator nodes in the network.
+///
+/// Reads each admin key, signs and submits the reconfiguration transaction,
+/// and waits `inter_tx_delay()` between each submission.
+pub async fn submit_admin_reconfig(
+    network: &crate::harness::TestNetwork,
+    rpc_client: &HttpClient,
+    new_config: Config,
+) -> color_eyre::Result<()> {
+    let num_validators = network
+        .network
+        .nodes
+        .iter()
+        .filter(|n| n.role.is_validator())
+        .count();
+    for i in 0..num_validators {
+        let admin_key = network.read_admin_key(i)?;
+        let tx_hex = felidae_admin::reconfigure(
+            &admin_key,
+            crate::constants::TEST_CHAIN_ID.to_string(),
+            crate::constants::admin_reconfig_tx_timeout(),
+            None,
+            new_config.clone(),
+        )?;
+        let tx_bytes = hex::decode(&tx_hex)?;
+        // Use broadcast_tx_sync (submit to mempool, don't wait for block inclusion)
+        // rather than broadcast_tx_commit, which can time out when validator set
+        // updates cause longer block processing times. The subsequent polling
+        // verifies the tx took effect.
+        let result = rpc_client.broadcast_tx_sync(tx_bytes).await?;
+        eprintln!(
+            "[reconfig] admin {i}: code={:?}, log={}",
+            result.code, result.log
+        );
+        tokio::time::sleep(crate::constants::inter_tx_delay()).await;
+    }
+    Ok(())
 }

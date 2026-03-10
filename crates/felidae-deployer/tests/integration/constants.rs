@@ -81,9 +81,12 @@ pub fn consensus_propagation_wait() -> Duration {
     block_time() * 5
 }
 
-/// Conservative wait for quorum + promotion (10 blocks).
+/// Conservative wait for quorum + promotion (15 blocks).
+/// 10 blocks was marginal: occasional CometBFT block production stalls
+/// under load can cause admin reconfig votes to take longer than expected
+/// to land and reach quorum.
 pub fn consensus_propagation_wait_long() -> Duration {
-    block_time() * 10
+    block_time() * 15
 }
 
 /// Interval between state-check polls. `max(2s, block_time)`.
