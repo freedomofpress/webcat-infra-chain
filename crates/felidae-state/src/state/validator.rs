@@ -105,6 +105,14 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         &mut self,
         config_validators: &[felidae_types::transaction::Validator],
     ) -> Result<Vec<Update>, Report> {
+        // An empty validators field means "not managed by config" — leave the
+        // validator set untouched.  Without this guard the removal loop below
+        // would interpret every state validator as absent from the config and
+        // set them all to power 0, halting consensus.
+        if config_validators.is_empty() {
+            return Ok(vec![]);
+        }
+
         // We grab all the current validators from the state (including those with power 0
         // which we need to be careful not to reset their power because they might be tombstoned)
         let mut state_validators = BTreeMap::new();
