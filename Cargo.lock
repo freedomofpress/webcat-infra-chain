@@ -1195,6 +1195,7 @@ dependencies = [
  "serde_with",
  "sha2 0.10.9",
  "tempfile",
+ "tendermint",
  "tendermint-rpc",
  "tokio",
  "toml",
