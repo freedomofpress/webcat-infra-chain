@@ -142,10 +142,12 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 .await?;
         }
 
-        // Get validator updates: the active set plus any changes from config sync
-        // (which includes power=0 removals that active_validators() would filter out).
-        let mut validator_updates = self.active_validators().await?;
-        validator_updates.extend(validator_changes);
+        // Return only the delta (additions and power=0 removals) from config sync.
+        // CometBFT maintains its own validator set and only expects changes, not the
+        // full set.  Returning the full active set would cause duplicates when a newly
+        // added validator appears in both active_validators() and validator_changes,
+        // which CometBFT rejects ("duplicate entry").
+        let validator_updates = validator_changes;
 
         Ok(response::FinalizeBlock {
             tx_results,
