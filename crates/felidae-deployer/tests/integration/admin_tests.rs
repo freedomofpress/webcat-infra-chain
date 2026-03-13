@@ -3,7 +3,7 @@
 //! This module contains tests for the admin reconfiguration system, including
 //! config updates, quorum enforcement, and BFT voting behavior.
 
-use felidae_types::transaction::{Config, OracleConfig};
+use felidae_types::transaction::{Config, OracleConfig, Validator};
 use std::time::Duration;
 use tendermint_rpc::{Client, HttpClient};
 
@@ -13,7 +13,10 @@ use crate::constants::{
     inter_tx_delay, network_startup_timeout, poll_interval,
 };
 use crate::harness::TestNetwork;
-use crate::helpers::{poll_until, query_admin_pending, query_admin_votes, query_config};
+use crate::helpers::{
+    generate_ed25519_pubkey, poll_until, poll_until_async, query_admin_pending, query_admin_votes,
+    query_cometbft_validators, query_config, read_genesis_validator_pubkeys, submit_admin_reconfig,
+};
 
 /// Verifies that admin reconfiguration transactions work correctly.
 ///
@@ -67,6 +70,7 @@ async fn test_admin_reconfiguration() -> color_eyre::Result<()> {
             ..current_config.oracles.clone()
         },
         onion: current_config.onion.clone(),
+        validators: current_config.validators.clone(),
     };
 
     // Submit reconfiguration from all 3 admins to reach quorum
@@ -174,6 +178,7 @@ async fn test_admin_reconfig_minority_no_update() -> color_eyre::Result<()> {
             ..current_config.oracles.clone()
         },
         onion: current_config.onion.clone(),
+        validators: current_config.validators.clone(),
     };
 
     // Submit reconfiguration from only 2 of 3 admins (below quorum of 3)
@@ -291,6 +296,7 @@ async fn test_admin_reconfig_full_quorum_success() -> color_eyre::Result<()> {
             ..current_config.oracles.clone()
         },
         onion: current_config.onion.clone(),
+        validators: current_config.validators.clone(),
     };
 
     // Submit reconfiguration from ALL 3 admins (meeting quorum)
@@ -362,6 +368,321 @@ async fn test_admin_reconfig_full_quorum_success() -> color_eyre::Result<()> {
     );
 
     eprintln!("[test] confirmed: full quorum successfully updates config");
+
+    Ok(())
+}
+
+/// Tests the full validator onboarding and offboarding lifecycle.
+///
+/// This test exercises adding and removing a validator via admin reconfiguration
+/// on a 3-validator network, verifying that both the felidae config and CometBFT's
+/// active validator set are updated correctly.
+///
+/// # Phases
+///
+/// 0. **Setup**: Start 3-validator network, verify initial state
+/// 1. **Declare genesis validators**: Populate config.validators with the 3 genesis validators
+/// 2. **Onboard 4th validator**: Add a dummy validator with power 5
+/// 3. **Offboard 4th validator**: Remove it, verify chain continues
+#[tokio::test]
+#[cfg(feature = "integration")]
+async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()> {
+    let (cometbft_bin, felidae_bin) = find_binaries()?;
+
+    let mut network = TestNetwork::create(3).await?;
+    network.start(
+        cometbft_bin.to_str().unwrap(),
+        felidae_bin.to_str().unwrap(),
+    )?;
+    network.wait_ready(network_startup_timeout()).await?;
+
+    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+
+    // ── Phase 0: Verify initial state ──
+
+    let initial_config = query_config(&felidae_bin, &network.query_url())?;
+    eprintln!(
+        "[phase 0] initial config version: {}",
+        initial_config.version
+    );
+    assert!(
+        initial_config.validators.is_empty(),
+        "initial config should have no validators field"
+    );
+
+    let initial_cometbft_vals = query_cometbft_validators(&rpc_client).await?;
+    assert_eq!(
+        initial_cometbft_vals.len(),
+        3,
+        "CometBFT should have 3 genesis validators"
+    );
+    eprintln!(
+        "[phase 0] CometBFT has {} validators",
+        initial_cometbft_vals.len()
+    );
+
+    // Read the 3 genesis validator pubkeys from priv_validator_key.json files
+    let genesis_validators = read_genesis_validator_pubkeys(&network)?;
+    assert_eq!(genesis_validators.len(), 3);
+    eprintln!(
+        "[phase 0] read {} genesis validator pubkeys",
+        genesis_validators.len()
+    );
+
+    // ── Phase 1: Declare genesis validators in config ──
+
+    let phase1_config = Config {
+        version: initial_config.version + 1,
+        admins: initial_config.admins.clone(),
+        oracles: initial_config.oracles.clone(),
+        onion: initial_config.onion.clone(),
+        validators: genesis_validators.clone(),
+    };
+
+    eprintln!("[phase 1] submitting config with 3 genesis validators");
+    submit_admin_reconfig(&network, &rpc_client, phase1_config).await?;
+
+    let target_version = initial_config.version + 1;
+    poll_until(
+        consensus_propagation_wait_long(),
+        poll_interval(),
+        "phase 1: config version incremented",
+        || Ok(query_config(&felidae_bin, &network.query_url())?.version >= target_version),
+    )
+    .await?;
+
+    let config_after_phase1 = query_config(&felidae_bin, &network.query_url())?;
+    assert_eq!(
+        config_after_phase1.validators.len(),
+        3,
+        "config should have 3 validators"
+    );
+
+    // CometBFT should still have exactly 3 validators (no-op sync)
+    let cometbft_vals_phase1 = query_cometbft_validators(&rpc_client).await?;
+    assert_eq!(
+        cometbft_vals_phase1.len(),
+        3,
+        "CometBFT should still have 3 validators after declaring genesis set"
+    );
+    eprintln!("[phase 1] confirmed: 3 validators in config and CometBFT");
+
+    // ── Phase 2: Onboard a 4th validator ──
+
+    let new_pubkey = generate_ed25519_pubkey();
+    eprintln!(
+        "[phase 2] generated new validator pubkey: {}",
+        hex::encode(&new_pubkey)
+    );
+
+    let mut phase2_validators = genesis_validators.clone();
+    phase2_validators.push(Validator {
+        public_key: new_pubkey.clone().into(),
+        power: 5,
+    });
+
+    let phase2_config = Config {
+        version: config_after_phase1.version + 1,
+        admins: config_after_phase1.admins.clone(),
+        oracles: config_after_phase1.oracles.clone(),
+        onion: config_after_phase1.onion.clone(),
+        validators: phase2_validators,
+    };
+
+    eprintln!("[phase 2] submitting config with 4 validators");
+    submit_admin_reconfig(&network, &rpc_client, phase2_config).await?;
+
+    let target_version = config_after_phase1.version + 1;
+    poll_until(
+        consensus_propagation_wait_long(),
+        poll_interval(),
+        "phase 2: config version incremented",
+        || Ok(query_config(&felidae_bin, &network.query_url())?.version >= target_version),
+    )
+    .await?;
+
+    let config_after_phase2 = query_config(&felidae_bin, &network.query_url())?;
+    assert_eq!(
+        config_after_phase2.validators.len(),
+        4,
+        "config should have 4 validators"
+    );
+
+    // Poll CometBFT until it sees the 4th validator (update takes effect after FinalizeBlock)
+    poll_until_async(
+        consensus_propagation_wait_long(),
+        poll_interval(),
+        "phase 2: CometBFT sees 4 validators",
+        || async {
+            let vals = query_cometbft_validators(&rpc_client).await?;
+            Ok(vals.len() == 4)
+        },
+    )
+    .await?;
+
+    let cometbft_vals_phase2 = query_cometbft_validators(&rpc_client).await?;
+    assert_eq!(
+        cometbft_vals_phase2.len(),
+        4,
+        "CometBFT should have 4 validators"
+    );
+
+    // Verify the new validator has power 5
+    let new_val_entry = cometbft_vals_phase2
+        .iter()
+        .find(|(key, _)| key == &new_pubkey)
+        .expect("new validator should be in CometBFT validator set");
+    assert_eq!(new_val_entry.1, 5, "new validator should have power 5");
+    eprintln!("[phase 2] confirmed: 4th validator onboarded with power 5");
+
+    // ── Phase 3: Offboard the 4th validator ──
+
+    let phase3_config = Config {
+        version: config_after_phase2.version + 1,
+        admins: config_after_phase2.admins.clone(),
+        oracles: config_after_phase2.oracles.clone(),
+        onion: config_after_phase2.onion.clone(),
+        validators: genesis_validators.clone(),
+    };
+
+    eprintln!("[phase 3] submitting config with 3 validators (removing 4th)");
+    submit_admin_reconfig(&network, &rpc_client, phase3_config).await?;
+
+    let target_version = config_after_phase2.version + 1;
+    poll_until(
+        consensus_propagation_wait_long(),
+        poll_interval(),
+        "phase 3: config version incremented",
+        || Ok(query_config(&felidae_bin, &network.query_url())?.version >= target_version),
+    )
+    .await?;
+
+    let config_after_phase3 = query_config(&felidae_bin, &network.query_url())?;
+    assert_eq!(
+        config_after_phase3.validators.len(),
+        3,
+        "config should have 3 validators"
+    );
+
+    // Poll CometBFT until it shows 3 validators again
+    poll_until_async(
+        consensus_propagation_wait_long(),
+        poll_interval(),
+        "phase 3: CometBFT back to 3 validators",
+        || async {
+            let vals = query_cometbft_validators(&rpc_client).await?;
+            Ok(vals.len() == 3)
+        },
+    )
+    .await?;
+
+    let cometbft_vals_phase3 = query_cometbft_validators(&rpc_client).await?;
+    assert_eq!(
+        cometbft_vals_phase3.len(),
+        3,
+        "CometBFT should be back to 3 validators"
+    );
+    eprintln!("[phase 3] confirmed: 4th validator removed");
+
+    // Verify the chain is still producing blocks
+    let height_before = rpc_client.latest_block().await?.block.header.height.value();
+    tokio::time::sleep(consensus_propagation_wait()).await;
+    let height_after = rpc_client.latest_block().await?.block.header.height.value();
+    assert!(
+        height_after > height_before,
+        "chain should still produce blocks after validator removal (height {} → {})",
+        height_before,
+        height_after
+    );
+    eprintln!(
+        "[phase 3] chain still live: height {} → {}",
+        height_before, height_after
+    );
+
+    Ok(())
+}
+
+/// Verifies that submitting a config with an empty validators field is a no-op.
+///
+/// The `sync_validators_from_config` function treats `validators: vec![]` as
+/// "not managed by config" and leaves the active validator set untouched.
+/// This is a regression test for a bug where an empty validators field would
+/// remove all validators, halting consensus.
+#[tokio::test]
+#[cfg(feature = "integration")]
+async fn test_admin_reconfig_empty_validators_is_noop() -> color_eyre::Result<()> {
+    let (cometbft_bin, felidae_bin) = find_binaries()?;
+
+    let mut network = TestNetwork::create(3).await?;
+    network.start(
+        cometbft_bin.to_str().unwrap(),
+        felidae_bin.to_str().unwrap(),
+    )?;
+    network.wait_ready(network_startup_timeout()).await?;
+
+    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+
+    // Get CometBFT's initial validator set
+    let initial_cometbft_vals = query_cometbft_validators(&rpc_client).await?;
+    assert_eq!(initial_cometbft_vals.len(), 3);
+
+    // Submit a reconfig with empty validators (the default)
+    let current_config = query_config(&felidae_bin, &network.query_url())?;
+    assert!(current_config.validators.is_empty());
+
+    let new_config = Config {
+        version: current_config.version + 1,
+        admins: current_config.admins.clone(),
+        oracles: OracleConfig {
+            observation_timeout: Duration::from_secs(700),
+            ..current_config.oracles.clone()
+        },
+        onion: current_config.onion.clone(),
+        validators: vec![], // explicitly empty
+    };
+
+    eprintln!("[test] submitting reconfig with empty validators");
+    submit_admin_reconfig(&network, &rpc_client, new_config).await?;
+
+    let target_version = current_config.version + 1;
+    poll_until(
+        consensus_propagation_wait_long(),
+        poll_interval(),
+        "config version incremented after empty-validators reconfig",
+        || Ok(query_config(&felidae_bin, &network.query_url())?.version >= target_version),
+    )
+    .await?;
+
+    // Verify the config was updated (observation_timeout changed)
+    let updated_config = query_config(&felidae_bin, &network.query_url())?;
+    assert_eq!(
+        updated_config.oracles.observation_timeout,
+        Duration::from_secs(700),
+        "observation_timeout should be updated"
+    );
+
+    // CometBFT should still have exactly 3 validators — empty validators is a no-op
+    let cometbft_vals_after = query_cometbft_validators(&rpc_client).await?;
+    assert_eq!(
+        cometbft_vals_after.len(),
+        3,
+        "CometBFT should still have 3 validators after empty-validators reconfig"
+    );
+    assert_eq!(
+        cometbft_vals_after, initial_cometbft_vals,
+        "validator set should be unchanged"
+    );
+
+    // Verify chain is still producing blocks
+    let height_before = rpc_client.latest_block().await?.block.header.height.value();
+    tokio::time::sleep(consensus_propagation_wait()).await;
+    let height_after = rpc_client.latest_block().await?.block.header.height.value();
+    assert!(
+        height_after > height_before,
+        "chain should still produce blocks"
+    );
+
+    eprintln!("[test] confirmed: empty validators is a no-op, chain still live");
 
     Ok(())
 }

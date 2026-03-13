@@ -79,3 +79,9 @@ dev:
   rm -rf "{{testnet_dir}}"
   cargo run --bin felidae-deployer -- create-network --directory "{{testnet_dir}}" --num-validators 1
   cargo run --bin felidae-deployer -- run-network --directory "{{testnet_dir}}" --dev --process-compose
+
+# Run all project linters
+lint:
+  cargo check --all-features --all-targets
+  cargo fmt --all --check
+  just nix-lint
