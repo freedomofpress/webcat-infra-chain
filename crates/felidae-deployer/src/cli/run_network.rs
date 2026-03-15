@@ -93,6 +93,17 @@ impl Run for RunNetwork {
                     .initialize()
                     .wrap_err("failed to initialize temporary network")?;
 
+                // Inject felidae config so the temp network has working admin/oracle keys
+                let felidae_config = network
+                    .generate_felidae_config(
+                        std::time::Duration::from_secs(1), // oracle delay
+                        std::time::Duration::from_secs(0), // admin delay
+                    )
+                    .wrap_err("failed to generate felidae config")?;
+                network
+                    .inject_genesis_app_state(&felidae_config)
+                    .wrap_err("failed to inject genesis app_state")?;
+
                 info!(
                     "Temporary network initialized with {} nodes",
                     network.nodes.len()

@@ -1,6 +1,7 @@
 //! Create network command implementation.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::{Parser, ValueEnum};
 use color_eyre::eyre::Context;
@@ -53,6 +54,14 @@ pub struct CreateNetwork {
     /// This effectively controls the block interval. Examples: "1s", "500ms", "2s".
     #[arg(long, alias = "blocks-every", default_value = "1s")]
     pub timeout_commit: String,
+
+    /// Delay before pending admin config changes take effect (e.g. "0s", "30s", "5m").
+    #[arg(long, default_value = "0s", value_parser = humantime::parse_duration)]
+    pub admin_delay: Duration,
+
+    /// Delay before pending oracle observations become canonical (e.g. "1s", "30s").
+    #[arg(long, default_value = "1s", value_parser = humantime::parse_duration)]
+    pub oracle_delay: Duration,
 }
 
 impl Run for CreateNetwork {
@@ -96,6 +105,18 @@ impl Run for CreateNetwork {
 
         info!("Initializing {} nodes...", network.nodes.len());
         network.initialize()?;
+
+        // Generate felidae config (admin keys, oracle keys, voting parameters)
+        // and inject it into the genesis app_state so the chain starts with
+        // working admin/oracle infrastructure.
+        let felidae_config =
+            network.generate_felidae_config(self.oracle_delay, self.admin_delay)?;
+        network.inject_genesis_app_state(&felidae_config)?;
+        info!(
+            "Injected felidae config into genesis (admins={}, oracles={})",
+            felidae_config.admins.authorized.len(),
+            felidae_config.oracles.authorized.len(),
+        );
 
         // Generate process-compose.yaml for optional use with process-compose
         // Always include oracle servers for validators
