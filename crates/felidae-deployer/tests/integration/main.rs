@@ -84,5 +84,6 @@ pub mod helpers;
 
 mod admin_tests;
 mod cli_tests;
+mod join_tests;
 mod oracle_tests;
 mod query_tests;

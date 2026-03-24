@@ -631,7 +631,7 @@ fn initialize_node(node: &mut WebcatNode) -> Result<()> {
 }
 
 /// Generate a CometBFT node_key.json and return (json_content, node_id).
-fn generate_node_key() -> Result<(String, String)> {
+pub fn generate_node_key() -> Result<(String, String)> {
     let secret_bytes: [u8; 32] = rand::random();
     let signing_key = SigningKey::from_bytes(&secret_bytes);
     let verifying_key = signing_key.verifying_key();
@@ -718,7 +718,7 @@ fn generate_felidae_keys(node: &WebcatNode) -> Result<()> {
 }
 
 /// Generate config.toml for a node.
-fn generate_config_toml(
+pub fn generate_config_toml(
     node: &WebcatNode,
     persistent_peers: &str,
     timeout_commit: &str,

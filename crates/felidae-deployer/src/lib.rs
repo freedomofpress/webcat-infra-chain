@@ -18,6 +18,7 @@
 //! network.initialize().expect("failed to initialize network");
 //! ```
 
+pub mod join;
 pub mod network;
 pub mod node;
 pub mod ports;
