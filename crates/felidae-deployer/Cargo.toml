@@ -37,6 +37,8 @@ rand_core = { workspace = true }
 chrono = "0.4"
 bytes = { workspace = true }
 felidae-types = { path = "../felidae-types" }
+reqwest = { workspace = true }
+url = "2"
 
 [features]
 integration = []
