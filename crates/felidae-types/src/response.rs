@@ -71,3 +71,19 @@ pub struct PendingConfig {
     /// The proposed new configuration
     pub config: Config,
 }
+
+/// Response structure from the `/chain-info` query endpoint.
+///
+/// Contains basic information about the running chain, derived entirely
+/// from Felidae application state (no CometBFT RPC required).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainInfo {
+    /// The chain identifier (e.g., "felidae-test")
+    pub chain_id: String,
+    /// Current block height
+    pub block_height: u64,
+    /// Timestamp of the latest committed block
+    pub block_time: Time,
+    /// The application state root hash (hex-encoded)
+    pub app_hash: String,
+}
