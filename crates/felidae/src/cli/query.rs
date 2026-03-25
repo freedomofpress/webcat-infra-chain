@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use felidae_types::response::{AdminVote, OracleVote, PendingConfig, PendingObservation};
+use felidae_types::response::{
+    AdminVote, ChainInfo, OracleVote, PendingConfig, PendingObservation,
+};
 use felidae_types::transaction::Config as ChainConfig;
 use reqwest::Url;
 
@@ -24,6 +26,8 @@ pub struct Query {
 
 #[derive(clap::Subcommand)]
 pub enum QueryCommand {
+    /// Query basic chain info (height, chain ID, block time, app hash).
+    ChainInfo(ChainInfoCmd),
     /// Query canonical domain→hash mappings.
     Snapshot(Snapshot),
     /// Query active oracle votes in the vote queue.
@@ -42,6 +46,7 @@ impl Run for Query {
     async fn run(self) -> color_eyre::Result<()> {
         let query_url = self.query_url;
         match self.command {
+            QueryCommand::ChainInfo(cmd) => cmd.run(query_url).await,
             QueryCommand::Snapshot(cmd) => cmd.run(query_url).await,
             QueryCommand::EnrollmentVotes(cmd) => cmd.run(query_url).await,
             QueryCommand::EnrollmentPending(cmd) => cmd.run(query_url).await,
@@ -49,6 +54,35 @@ impl Run for Query {
             QueryCommand::AdminPending(cmd) => cmd.run(query_url).await,
             QueryCommand::Config(cmd) => cmd.run(query_url).await,
         }
+    }
+}
+
+#[derive(clap::Args)]
+pub struct ChainInfoCmd {
+    /// Emit output as JSON.
+    #[clap(long)]
+    pub json: bool,
+}
+
+impl ChainInfoCmd {
+    async fn run(self, query_url: Url) -> color_eyre::Result<()> {
+        let info: ChainInfo = reqwest::Client::new()
+            .get(query_url.join("/chain-info")?)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+
+        if self.json {
+            println!("{}", serde_json::to_string(&info)?);
+        } else {
+            println!("Chain ID:     {}", info.chain_id);
+            println!("Block Height: {}", info.block_height);
+            println!("Block Time:   {}", info.block_time);
+            println!("App Hash:     {}", info.app_hash);
+        }
+        Ok(())
     }
 }
 

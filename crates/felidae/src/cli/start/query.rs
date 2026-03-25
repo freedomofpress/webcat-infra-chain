@@ -4,7 +4,9 @@ use cnidarium::{StateDelta, StateRead, Storage};
 use color_eyre::{Report, eyre::eyre};
 use felidae_state::Vote;
 use felidae_state::{State, Substore};
-use felidae_types::response::{AdminVote, OracleVote, PendingConfig, PendingObservation};
+use felidae_types::response::{
+    AdminVote, ChainInfo, OracleVote, PendingConfig, PendingObservation,
+};
 use felidae_types::transaction::{Domain, Empty};
 use fqdn::FQDN;
 use futures::StreamExt;
@@ -13,6 +15,44 @@ use serde::Serialize;
 use tracing::debug;
 
 pub fn app(storage: Storage) -> Router {
+    let chain_info = {
+        let storage = storage.clone();
+        move || async move {
+            let snapshot = storage.latest_snapshot();
+            let state = State::new(StateDelta::new(snapshot.clone()));
+
+            let get_info = async {
+                let block_height = state.block_height().await?;
+                let chain_id = state.chain_id().await?;
+                let block_time = state.block_time().await?;
+                let app_hash = snapshot
+                    .root_hash()
+                    .await
+                    .map_err(|e| eyre!("failed to get app hash: {}", e))?;
+
+                Ok::<_, Report>(ChainInfo {
+                    chain_id: chain_id.0,
+                    block_height: block_height.value(),
+                    block_time,
+                    app_hash: hex::encode(app_hash.0.as_slice()),
+                })
+            };
+
+            match get_info.await {
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    [("Content-Type", "text/plain")],
+                    Body::from(e.to_string()),
+                ),
+                Ok(info) => (
+                    StatusCode::OK,
+                    [("Content-Type", "application/json")],
+                    Body::from(serde_json::to_string_pretty(&info).unwrap()),
+                ),
+            }
+        }
+    };
+
     let config = {
         let storage = storage.clone();
         move || async move {
@@ -455,6 +495,12 @@ pub fn app(storage: Storage) -> Router {
                 let response = RoutesResponse {
                     endpoints: vec![
                         EndpointInfo {
+                            path: "/chain-info".to_string(),
+                            description:
+                                "Get basic chain info (height, chain ID, block time, app hash)"
+                                    .to_string(),
+                        },
+                        EndpointInfo {
                             path: "/config".to_string(),
                             description: "Get the current chain configuration".to_string(),
                         },
@@ -512,6 +558,7 @@ pub fn app(storage: Storage) -> Router {
                 )
             }),
         )
+        .route("/chain-info", get(move || async { chain_info().await }))
         .route("/config", get(move || async { config().await }))
         .route("/oracles", get(move || async { oracles().await }))
         .route(
