@@ -11,8 +11,10 @@ use getrandom::getrandom;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 use super::{Server, observe_domain, zone};
@@ -45,13 +47,15 @@ struct ObserveResponse {
     tx_hash: Option<String>,
 }
 
-#[derive(Clone)]
 struct AppState {
     node: Url,
     chain: Option<String>,
     homedir: Option<std::path::PathBuf>,
     pow_secret: String,
     pow_difficulty: u8,
+    /// Tracks domains with in-flight observations to prevent concurrent
+    /// duplicate requests from crashing the oracle (see #122).
+    inflight_domains: Mutex<HashSet<String>>,
 }
 
 pub async fn run(server: Server) -> Result<(), Report> {
@@ -78,6 +82,7 @@ pub async fn run(server: Server) -> Result<(), Report> {
         homedir,
         pow_secret,
         pow_difficulty,
+        inflight_domains: Mutex::new(HashSet::new()),
     });
 
     let app = Router::new()
@@ -325,16 +330,49 @@ async fn handle_observe(
         "parsed observation request, starting observation"
     );
 
-    // Perform the observation
-    match observe_domain(
+    // Guard against concurrent observations for the same domain (#122).
+    // If an observation is already in-flight, reject the duplicate request
+    // immediately rather than sending a second transaction that will fail.
+    let domain_key = domain.to_string();
+    {
+        let mut inflight = state.inflight_domains.lock().await;
+        if !inflight.insert(domain_key.clone()) {
+            info!(
+                domain = %domain,
+                "rejected duplicate observation request: already in-flight"
+            );
+            return Err((
+                StatusCode::CONFLICT,
+                Json(ObserveResponse {
+                    success: false,
+                    message: format!(
+                        "an observation for {} is already in progress, please try again shortly",
+                        domain
+                    ),
+                    tx_hash: None,
+                }),
+            ));
+        }
+    }
+
+    // Perform the observation, removing the in-flight guard when done
+    // regardless of outcome.
+    let result = observe_domain(
         domain.clone(),
         zone.clone(),
         state.node.clone(),
         state.chain.clone(),
         state.homedir.as_deref(),
     )
-    .await
+    .await;
+
+    // Always remove the domain from the in-flight set
     {
+        let mut inflight = state.inflight_domains.lock().await;
+        inflight.remove(&domain_key);
+    }
+
+    match result {
         Ok(()) => {
             info!(
                 domain = %domain,
@@ -354,14 +392,48 @@ async fn handle_observe(
                 error = %e,
                 "observation failed"
             );
+            // Strip ANSI escape sequences from error messages before returning
+            // to avoid leaking terminal control characters to clients.
+            let sanitized = strip_ansi_escapes(&e.to_string());
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ObserveResponse {
                     success: false,
-                    message: format!("observation failed: {}", e),
+                    message: format!("observation failed: {}", sanitized),
                     tx_hash: None,
                 }),
             ))
         }
     }
+}
+
+/// Strip ANSI escape sequences from a string so that error messages
+/// returned to HTTP clients do not contain terminal control characters.
+fn strip_ansi_escapes(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Skip the escape and the CSI sequence that follows (ESC [ ... final_byte)
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume '['
+                // Consume parameter bytes (0x30-0x3F), intermediate bytes (0x20-0x2F),
+                // then the final byte (0x40-0x7E)
+                while let Some(&next) = chars.peek() {
+                    if next.is_ascii() && (0x20..=0x7E).contains(&(next as u8)) {
+                        let consumed = chars.next().unwrap();
+                        // Final byte of CSI sequence
+                        if (0x40..=0x7E).contains(&(consumed as u8)) {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
 }
