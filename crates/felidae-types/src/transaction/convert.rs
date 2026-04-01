@@ -602,14 +602,18 @@ impl TryFrom<proto::Oracle> for Oracle {
             .public_key
             .ok_or_else(|| crate::ParseError::new::<OracleIdentity>("missing".to_string()))?
             .public_key;
-        Ok(Oracle {
+        let endpoint = if value.endpoint.is_empty() {
+            "http://127.0.0.1".to_string()
+        } else {
+            value.endpoint
+        };
+        let oracle = Oracle {
             identity: public_key,
-            endpoint: if value.endpoint.is_empty() {
-                "127.0.0.1".to_string()
-            } else {
-                value.endpoint
-            },
-        })
+            endpoint,
+        };
+        // Validate that the endpoint is a well-formed URL
+        oracle.validate_endpoint()?;
+        Ok(oracle)
     }
 }
 

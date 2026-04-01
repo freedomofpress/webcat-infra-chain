@@ -358,7 +358,7 @@ impl Network {
 
             oracle_configs.push(Oracle {
                 identity: Bytes::from(public_key),
-                endpoint: format!("{}:{}", node.bind_address, node.ports.felidae_oracle),
+                endpoint: format!("http://{}:{}", node.bind_address, node.ports.felidae_oracle),
             });
         }
 

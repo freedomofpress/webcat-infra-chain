@@ -8,6 +8,7 @@ use std::str::FromStr;
 use std::{hash::Hash, ops::Deref, time::Duration};
 use tendermint::block::Height;
 use tendermint::{AppHash, Time};
+use url::Url;
 
 use crate::{SignError, Signer};
 
@@ -119,7 +120,7 @@ impl Config {
                 // Placeholder entry so it's easier to fill out
                 authorized: vec![Oracle {
                     identity: Bytes::from(vec![0u8; 64]),
-                    endpoint: "127.0.0.1".to_string(),
+                    endpoint: "http://127.0.0.1".to_string(),
                 }],
             },
             onion: OnionConfig { enabled: false },
@@ -157,13 +158,24 @@ pub struct OracleConfig {
 pub struct Oracle {
     #[serde_as(as = "Hex")]
     pub identity: Bytes,
-    /// Endpoint (domain name or IP address) for the oracle.
+    /// URL endpoint for the oracle (e.g. `https://oracle.example.com/oracle/`).
     #[serde(default = "default_oracle_endpoint")]
     pub endpoint: String,
 }
 
 fn default_oracle_endpoint() -> String {
-    "127.0.0.1".to_string()
+    "http://127.0.0.1".to_string()
+}
+
+impl Oracle {
+    /// Validate that the oracle's endpoint is a well-formed URL.
+    ///
+    /// Returns the parsed [`Url`] on success, or a [`ParseError`] if the endpoint
+    /// cannot be parsed as a valid URL.
+    pub fn validate_endpoint(&self) -> Result<Url, crate::ParseError> {
+        Url::parse(&self.endpoint)
+            .map_err(|_| crate::ParseError::new::<Oracle>(format!("invalid endpoint URL: {}", self.endpoint)))
+    }
 }
 
 /// Transparent wrapper for the oracle's public key.
@@ -437,7 +449,7 @@ mod tests {
                 enabled: true,
                 authorized: vec![Oracle {
                     identity: Bytes::from_static(&[1u8; 64]),
-                    endpoint: "127.0.0.1".to_string(),
+                    endpoint: "http://127.0.0.1".to_string(),
                 }],
                 voting: VotingConfig {
                     total: Total(5),
@@ -480,7 +492,7 @@ mod tests {
                         enabled: true,
                         authorized: vec![Oracle {
                             identity: Bytes::from_static(&[1u8; 64]),
-                            endpoint: "127.0.0.1".to_string(),
+                            endpoint: "http://127.0.0.1".to_string(),
                         }],
                         voting: VotingConfig {
                             total: Total(5),
@@ -496,5 +508,45 @@ mod tests {
             })],
         };
         assert_snapshot!(serde_json::to_string(&tx).unwrap());
+    }
+
+    #[test]
+    fn test_oracle_validate_endpoint_accepts_valid_urls() {
+        let valid_urls = [
+            "http://127.0.0.1",
+            "https://oracle.example.com/oracle/",
+            "http://127.0.0.1:8081",
+            "https://webcat-sentry-1.freedom.press/oracle/",
+        ];
+        for url in valid_urls {
+            let oracle = Oracle {
+                identity: Bytes::from_static(&[1u8; 64]),
+                endpoint: url.to_string(),
+            };
+            assert!(
+                oracle.validate_endpoint().is_ok(),
+                "expected valid URL: {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_oracle_validate_endpoint_rejects_invalid_urls() {
+        let invalid_urls = [
+            "127.0.0.1",
+            "not-a-url",
+            "127.0.0.1:8081",
+            "",
+        ];
+        for url in invalid_urls {
+            let oracle = Oracle {
+                identity: Bytes::from_static(&[1u8; 64]),
+                endpoint: url.to_string(),
+            };
+            assert!(
+                oracle.validate_endpoint().is_err(),
+                "expected invalid URL: {url}"
+            );
+        }
     }
 }

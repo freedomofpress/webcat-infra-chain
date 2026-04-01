@@ -244,7 +244,7 @@ impl Run for Template {
                 Ok(pubkey) => {
                     template.oracles.authorized = vec![Oracle {
                         identity: Bytes::from(pubkey),
-                        endpoint: "127.0.0.1".to_string(),
+                        endpoint: "http://127.0.0.1".to_string(),
                     }];
                 }
                 Err(e) => {
