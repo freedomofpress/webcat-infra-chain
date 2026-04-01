@@ -46,6 +46,8 @@ pub struct TestNetwork {
     shutdown: Arc<AtomicBool>,
     /// Temporary directory guard; dropped after TestNetwork to ensure cleanup
     _temp_dir: tempfile::TempDir,
+    /// Temporary directories for joined nodes, kept alive for process lifetime
+    _join_dirs: Vec<tempfile::TempDir>,
 }
 
 impl TestNetwork {
@@ -79,6 +81,7 @@ impl TestNetwork {
             processes: HashMap::new(),
             shutdown: Arc::new(AtomicBool::new(false)),
             _temp_dir: temp_dir,
+            _join_dirs: Vec::new(),
         })
     }
 
@@ -87,57 +90,142 @@ impl TestNetwork {
         // Preflight check: verify all ports are available before starting any processes
         self.network.check_ports_available()?;
 
-        for node in &self.network.nodes {
-            // Start CometBFT
-            let cometbft_name = format!("{}-cometbft", node.name);
-            let child = Command::new(cometbft_bin)
-                .args(["start", "--home", &node.cometbft_home().to_string_lossy()])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()?;
-            self.processes.insert(cometbft_name, child);
+        for i in 0..self.network.nodes.len() {
+            self.start_node(i, cometbft_bin, felidae_bin)?;
+        }
 
-            // Start Felidae
-            let felidae_name = format!("{}-felidae", node.name);
-            let felidae_log = std::fs::File::create(node.home_dir.join("felidae.log"))?;
+        Ok(())
+    }
+
+    /// Start processes for a single node by index.
+    ///
+    /// Spawns CometBFT, Felidae, and (for validators) Oracle processes for the
+    /// node at `node_index`. Processes are registered in `self.processes` so
+    /// `Drop` cleans them up.
+    ///
+    /// Use this to bring up a node that was created but not started initially
+    /// (e.g. for "pre-create 4, start 3" test patterns).
+    pub fn start_node(
+        &mut self,
+        node_index: usize,
+        cometbft_bin: &str,
+        felidae_bin: &str,
+    ) -> color_eyre::Result<()> {
+        let node = &self.network.nodes[node_index];
+
+        // Start CometBFT
+        let cometbft_name = format!("{}-cometbft", node.name);
+        let child = Command::new(cometbft_bin)
+            .args(["start", "--home", &node.cometbft_home().to_string_lossy()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        self.processes.insert(cometbft_name, child);
+
+        // Start Felidae
+        let felidae_name = format!("{}-felidae", node.name);
+        let felidae_log = std::fs::File::create(node.home_dir.join("felidae.log"))?;
+        let child = Command::new(felidae_bin)
+            .env("RUST_LOG", "info")
+            .args([
+                "start",
+                "--abci-bind",
+                &node.abci_address(),
+                "--query-bind",
+                &format!("{}:{}", node.bind_address, node.ports.felidae_query),
+                "--homedir",
+                &node.felidae_home().to_string_lossy(),
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::from(felidae_log))
+            .spawn()?;
+        self.processes.insert(felidae_name, child);
+
+        // Start Oracle server for validators
+        if node.role.is_validator() {
+            let oracle_name = format!("{}-oracle", node.name);
             let child = Command::new(felidae_bin)
-                .env("RUST_LOG", "info")
                 .args([
-                    "start",
-                    "--abci-bind",
-                    &node.abci_address(),
-                    "--query-bind",
-                    &format!("{}:{}", node.bind_address, node.ports.felidae_query),
+                    "oracle",
+                    "server",
+                    "--bind",
+                    &format!("{}:{}", node.bind_address, node.ports.felidae_oracle),
+                    "--node",
+                    &format!("http://{}:{}", node.bind_address, node.ports.cometbft_rpc),
                     "--homedir",
                     &node.felidae_home().to_string_lossy(),
                 ])
                 .stdout(Stdio::null())
-                .stderr(Stdio::from(felidae_log))
+                .stderr(Stdio::null())
                 .spawn()?;
-            self.processes.insert(felidae_name, child);
-
-            // Start Oracle server for validators
-            if node.role.is_validator() {
-                let oracle_name = format!("{}-oracle", node.name);
-                let child = Command::new(felidae_bin)
-                    .args([
-                        "oracle",
-                        "server",
-                        "--bind",
-                        &format!("{}:{}", node.bind_address, node.ports.felidae_oracle),
-                        "--node",
-                        &format!("http://{}:{}", node.bind_address, node.ports.cometbft_rpc),
-                        "--homedir",
-                        &node.felidae_home().to_string_lossy(),
-                    ])
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .spawn()?;
-                self.processes.insert(oracle_name, child);
-            }
+            self.processes.insert(oracle_name, child);
         }
 
         Ok(())
+    }
+
+    /// Join a new full node to the running network and start its processes.
+    ///
+    /// Uses `join_network()` with genesis from node 0 and peer discovery from
+    /// the CometBFT RPC. Spawned processes are registered in `self.processes`
+    /// so `Drop` cleans them up automatically.
+    ///
+    /// Returns the `WebcatNode` describing the joined node (ports, paths, etc.).
+    pub async fn join_and_start(
+        &mut self,
+        cometbft_bin: &str,
+        felidae_bin: &str,
+        node_name: &str,
+    ) -> color_eyre::Result<felidae_deployer::node::WebcatNode> {
+        use felidae_deployer::join::{GenesisSource, JoinConfig, PeerSource};
+
+        let join_dir = tempfile::tempdir()?;
+        let join_path = join_dir.path().join(node_name);
+
+        let genesis_file = self.network.nodes[0].genesis_path();
+        let rpc_url: url::Url = self.rpc_url().parse()?;
+
+        let config = JoinConfig {
+            genesis_source: GenesisSource::File(genesis_file),
+            peer_source: PeerSource::CometbftRpc(rpc_url),
+            directory: join_path,
+            find_free_ports: true,
+            node_name: node_name.to_string(),
+        };
+
+        let node = felidae_deployer::join::join_network(config).await?;
+
+        // Start CometBFT for the joined node
+        let cometbft_name = format!("{}-cometbft", node_name);
+        let child = Command::new(cometbft_bin)
+            .args(["start", "--home", &node.cometbft_home().to_string_lossy()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        self.processes.insert(cometbft_name, child);
+
+        // Start Felidae for the joined node
+        let felidae_name = format!("{}-felidae", node_name);
+        let child = Command::new(felidae_bin)
+            .env("RUST_LOG", "info")
+            .args([
+                "start",
+                "--abci-bind",
+                &node.abci_address(),
+                "--query-bind",
+                &format!("{}:{}", node.bind_address, node.ports.felidae_query),
+                "--homedir",
+                &node.felidae_home().to_string_lossy(),
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        self.processes.insert(felidae_name, child);
+
+        // Keep the tempdir alive so the joined node's files aren't deleted
+        self._join_dirs.push(join_dir);
+
+        Ok(node)
     }
 
     /// Wait for the network to be ready (blocks are being produced).

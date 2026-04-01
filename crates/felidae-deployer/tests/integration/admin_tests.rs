@@ -372,21 +372,21 @@ async fn test_admin_reconfig_full_quorum_success() -> color_eyre::Result<()> {
     Ok(())
 }
 
-/// Tests the full validator onboarding and offboarding lifecycle.
+/// Tests adding and removing a validator via admin reconfiguration at the
+/// config + CometBFT level using a dummy pubkey (no real backing node).
 ///
-/// This test exercises adding and removing a validator via admin reconfiguration
-/// on a 3-validator network, verifying that both the felidae config and CometBFT's
-/// active validator set are updated correctly.
+/// This is a fast check that the config propagation path correctly updates
+/// both the felidae config and CometBFT's active validator set. For a full
+/// end-to-end test with a real node, see `test_validator_onboarding_with_real_node`.
 ///
 /// # Phases
 ///
 /// 0. **Setup**: Start 3-validator network, verify initial state
-/// 1. **Declare genesis validators**: Populate config.validators with the 3 genesis validators
-/// 2. **Onboard 4th validator**: Add a dummy validator with power 5
-/// 3. **Offboard 4th validator**: Remove it, verify chain continues
+/// 1. **Add 4th validator**: Submit config with genesis validators + dummy key
+/// 2. **Remove 4th validator**: Revert to genesis validators, verify chain continues
 #[tokio::test]
 #[cfg(feature = "integration")]
-async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()> {
+async fn test_admin_validator_config_add_remove() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
     let mut network = TestNetwork::create(3).await?;
@@ -416,30 +416,34 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
         3,
         "CometBFT should have 3 genesis validators"
     );
-    eprintln!(
-        "[phase 0] CometBFT has {} validators",
-        initial_cometbft_vals.len()
-    );
 
     // Read the 3 genesis validator pubkeys from priv_validator_key.json files
     let genesis_validators = read_genesis_validator_pubkeys(&network)?;
     assert_eq!(genesis_validators.len(), 3);
+
+    // ── Phase 1: Add a 4th validator (dummy key) ──
+
+    let new_pubkey = generate_ed25519_pubkey();
     eprintln!(
-        "[phase 0] read {} genesis validator pubkeys",
-        genesis_validators.len()
+        "[phase 1] generated new validator pubkey: {}",
+        hex::encode(&new_pubkey)
     );
 
-    // ── Phase 1: Declare genesis validators in config ──
+    let mut phase1_validators = genesis_validators.clone();
+    phase1_validators.push(Validator {
+        public_key: new_pubkey.clone().into(),
+        power: 5,
+    });
 
     let phase1_config = Config {
         version: initial_config.version + 1,
         admins: initial_config.admins.clone(),
         oracles: initial_config.oracles.clone(),
         onion: initial_config.onion.clone(),
-        validators: genesis_validators.clone(),
+        validators: phase1_validators,
     };
 
-    eprintln!("[phase 1] submitting config with 3 genesis validators");
+    eprintln!("[phase 1] submitting config with 4 validators");
     submit_admin_reconfig(&network, &rpc_client, phase1_config).await?;
 
     let target_version = initial_config.version + 1;
@@ -454,42 +458,44 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
     let config_after_phase1 = query_config(&felidae_bin, &network.query_url())?;
     assert_eq!(
         config_after_phase1.validators.len(),
-        3,
-        "config should have 3 validators"
+        4,
+        "config should have 4 validators"
     );
 
-    // CometBFT should still have exactly 3 validators (no-op sync)
+    // Poll CometBFT until it sees the 4th validator
+    poll_until_async(
+        consensus_propagation_wait_long(),
+        poll_interval(),
+        "phase 1: CometBFT sees 4 validators",
+        || async {
+            let vals = query_cometbft_validators(&rpc_client).await?;
+            Ok(vals.len() == 4)
+        },
+    )
+    .await?;
+
     let cometbft_vals_phase1 = query_cometbft_validators(&rpc_client).await?;
-    assert_eq!(
-        cometbft_vals_phase1.len(),
-        3,
-        "CometBFT should still have 3 validators after declaring genesis set"
-    );
-    eprintln!("[phase 1] confirmed: 3 validators in config and CometBFT");
+    assert_eq!(cometbft_vals_phase1.len(), 4);
 
-    // ── Phase 2: Onboard a 4th validator ──
+    // Verify the new validator has power 5
+    let new_val_entry = cometbft_vals_phase1
+        .iter()
+        .find(|(key, _)| key == &new_pubkey)
+        .expect("new validator should be in CometBFT validator set");
+    assert_eq!(new_val_entry.1, 5, "new validator should have power 5");
+    eprintln!("[phase 1] confirmed: 4th validator added with power 5");
 
-    let new_pubkey = generate_ed25519_pubkey();
-    eprintln!(
-        "[phase 2] generated new validator pubkey: {}",
-        hex::encode(&new_pubkey)
-    );
-
-    let mut phase2_validators = genesis_validators.clone();
-    phase2_validators.push(Validator {
-        public_key: new_pubkey.clone().into(),
-        power: 5,
-    });
+    // ── Phase 2: Remove the 4th validator ──
 
     let phase2_config = Config {
         version: config_after_phase1.version + 1,
         admins: config_after_phase1.admins.clone(),
         oracles: config_after_phase1.oracles.clone(),
         onion: config_after_phase1.onion.clone(),
-        validators: phase2_validators,
+        validators: genesis_validators.clone(),
     };
 
-    eprintln!("[phase 2] submitting config with 4 validators");
+    eprintln!("[phase 2] submitting config with 3 validators (removing 4th)");
     submit_admin_reconfig(&network, &rpc_client, phase2_config).await?;
 
     let target_version = config_after_phase1.version + 1;
@@ -504,62 +510,6 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
     let config_after_phase2 = query_config(&felidae_bin, &network.query_url())?;
     assert_eq!(
         config_after_phase2.validators.len(),
-        4,
-        "config should have 4 validators"
-    );
-
-    // Poll CometBFT until it sees the 4th validator (update takes effect after FinalizeBlock)
-    poll_until_async(
-        consensus_propagation_wait_long(),
-        poll_interval(),
-        "phase 2: CometBFT sees 4 validators",
-        || async {
-            let vals = query_cometbft_validators(&rpc_client).await?;
-            Ok(vals.len() == 4)
-        },
-    )
-    .await?;
-
-    let cometbft_vals_phase2 = query_cometbft_validators(&rpc_client).await?;
-    assert_eq!(
-        cometbft_vals_phase2.len(),
-        4,
-        "CometBFT should have 4 validators"
-    );
-
-    // Verify the new validator has power 5
-    let new_val_entry = cometbft_vals_phase2
-        .iter()
-        .find(|(key, _)| key == &new_pubkey)
-        .expect("new validator should be in CometBFT validator set");
-    assert_eq!(new_val_entry.1, 5, "new validator should have power 5");
-    eprintln!("[phase 2] confirmed: 4th validator onboarded with power 5");
-
-    // ── Phase 3: Offboard the 4th validator ──
-
-    let phase3_config = Config {
-        version: config_after_phase2.version + 1,
-        admins: config_after_phase2.admins.clone(),
-        oracles: config_after_phase2.oracles.clone(),
-        onion: config_after_phase2.onion.clone(),
-        validators: genesis_validators.clone(),
-    };
-
-    eprintln!("[phase 3] submitting config with 3 validators (removing 4th)");
-    submit_admin_reconfig(&network, &rpc_client, phase3_config).await?;
-
-    let target_version = config_after_phase2.version + 1;
-    poll_until(
-        consensus_propagation_wait_long(),
-        poll_interval(),
-        "phase 3: config version incremented",
-        || Ok(query_config(&felidae_bin, &network.query_url())?.version >= target_version),
-    )
-    .await?;
-
-    let config_after_phase3 = query_config(&felidae_bin, &network.query_url())?;
-    assert_eq!(
-        config_after_phase3.validators.len(),
         3,
         "config should have 3 validators"
     );
@@ -568,7 +518,7 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
     poll_until_async(
         consensus_propagation_wait_long(),
         poll_interval(),
-        "phase 3: CometBFT back to 3 validators",
+        "phase 2: CometBFT back to 3 validators",
         || async {
             let vals = query_cometbft_validators(&rpc_client).await?;
             Ok(vals.len() == 3)
@@ -576,13 +526,13 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
     )
     .await?;
 
-    let cometbft_vals_phase3 = query_cometbft_validators(&rpc_client).await?;
+    let cometbft_vals_phase2 = query_cometbft_validators(&rpc_client).await?;
     assert_eq!(
-        cometbft_vals_phase3.len(),
+        cometbft_vals_phase2.len(),
         3,
         "CometBFT should be back to 3 validators"
     );
-    eprintln!("[phase 3] confirmed: 4th validator removed");
+    eprintln!("[phase 2] confirmed: 4th validator removed");
 
     // Verify the chain is still producing blocks
     let height_before = rpc_client.latest_block().await?.block.header.height.value();
@@ -595,7 +545,164 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
         height_after
     );
     eprintln!(
-        "[phase 3] chain still live: height {} → {}",
+        "[phase 2] chain still live: height {} → {}",
+        height_before, height_after
+    );
+
+    Ok(())
+}
+
+/// Tests the full validator onboarding lifecycle with a real node.
+///
+/// Pre-creates a 4-node network but only starts 3. Then onboards the 4th
+/// validator via admin reconfiguration, starts its processes, and verifies
+/// the chain produces blocks with all 4 validators active.
+///
+/// This exercises the real operator workflow: infrastructure pre-provisioned,
+/// admin promotes validator, node joins consensus.
+///
+/// # Phases
+///
+/// 0. **Setup**: Create 4-node network, start only nodes 0-2
+/// 1. **Declare validators**: Admin reconfig with all 4 genesis validator pubkeys
+/// 2. **Start 4th node**: Bring up CometBFT + Felidae for node 3
+/// 3. **Verify**: Chain produces blocks with 4 active validators
+#[tokio::test]
+#[cfg(feature = "integration")]
+async fn test_validator_onboarding_with_real_node() -> color_eyre::Result<()> {
+    let (cometbft_bin, felidae_bin) = find_binaries()?;
+
+    // Create a 4-node network but only start nodes 0-2
+    let mut network = TestNetwork::create(4).await?;
+    network.network.check_ports_available()?;
+    for i in 0..3 {
+        network.start_node(
+            i,
+            cometbft_bin.to_str().unwrap(),
+            felidae_bin.to_str().unwrap(),
+        )?;
+    }
+    network.wait_ready(network_startup_timeout()).await?;
+
+    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+
+    // ── Phase 0: Verify initial state (3 validators in CometBFT) ──
+
+    let initial_config = query_config(&felidae_bin, &network.query_url())?;
+    assert!(
+        initial_config.validators.is_empty(),
+        "initial config should have no validators field"
+    );
+
+    let initial_cometbft_vals = query_cometbft_validators(&rpc_client).await?;
+    assert_eq!(
+        initial_cometbft_vals.len(),
+        4,
+        "CometBFT genesis should have 4 validators (even though node 3 is not running)"
+    );
+    eprintln!(
+        "[phase 0] CometBFT has {} validators in genesis, 3 nodes running",
+        initial_cometbft_vals.len()
+    );
+
+    // Read all 4 genesis validator pubkeys
+    let genesis_validators = read_genesis_validator_pubkeys(&network)?;
+    assert_eq!(genesis_validators.len(), 4);
+    eprintln!("[phase 0] read 4 genesis validator pubkeys");
+
+    // ── Phase 1: Declare all 4 validators in config ──
+
+    let phase1_config = Config {
+        version: initial_config.version + 1,
+        admins: initial_config.admins.clone(),
+        oracles: initial_config.oracles.clone(),
+        onion: initial_config.onion.clone(),
+        validators: genesis_validators.clone(),
+    };
+
+    eprintln!("[phase 1] submitting config with 4 genesis validators");
+    submit_admin_reconfig(&network, &rpc_client, phase1_config).await?;
+
+    let target_version = initial_config.version + 1;
+    poll_until(
+        consensus_propagation_wait_long(),
+        poll_interval(),
+        "phase 1: config version incremented",
+        || Ok(query_config(&felidae_bin, &network.query_url())?.version >= target_version),
+    )
+    .await?;
+
+    let config_after_phase1 = query_config(&felidae_bin, &network.query_url())?;
+    assert_eq!(
+        config_after_phase1.validators.len(),
+        4,
+        "config should have 4 validators"
+    );
+    eprintln!("[phase 1] config now declares 4 validators");
+
+    // ── Phase 2: Start the 4th node ──
+
+    eprintln!("[phase 2] starting node 3");
+    network.start_node(
+        3,
+        cometbft_bin.to_str().unwrap(),
+        felidae_bin.to_str().unwrap(),
+    )?;
+
+    // Construct query URL for the 4th node
+    let node3 = &network.network.nodes[3];
+    let node3_query_url = format!("http://{}:{}", node3.bind_address, node3.ports.felidae_query);
+    let node3_rpc_url = format!("http://{}:{}", node3.bind_address, node3.ports.cometbft_rpc);
+
+    // Wait for the 4th node to sync (it should catch up via block sync)
+    poll_until(
+        Duration::from_secs(60),
+        poll_interval(),
+        "node 3 syncs and serves queries",
+        || {
+            match query_config(&felidae_bin, &node3_query_url) {
+                Ok(config) => {
+                    eprintln!(
+                        "[phase 2] node 3 config version: {} (target: {})",
+                        config.version, config_after_phase1.version
+                    );
+                    Ok(config.version >= config_after_phase1.version)
+                }
+                Err(_) => Ok(false),
+            }
+        },
+    )
+    .await?;
+    eprintln!("[phase 2] node 3 is synced");
+
+    // ── Phase 3: Verify chain liveness with 4 validators ──
+
+    let node3_rpc = HttpClient::new(node3_rpc_url.as_str())?;
+
+    // Verify CometBFT still has 4 active validators
+    poll_until_async(
+        consensus_propagation_wait_long(),
+        poll_interval(),
+        "CometBFT has 4 validators after node 3 joins",
+        || async {
+            let vals = query_cometbft_validators(&node3_rpc).await?;
+            Ok(vals.len() == 4)
+        },
+    )
+    .await?;
+
+    // Verify blocks are still being produced
+    let height_before = rpc_client.latest_block().await?.block.header.height.value();
+    tokio::time::sleep(consensus_propagation_wait()).await;
+    let height_after = rpc_client.latest_block().await?.block.header.height.value();
+    assert!(
+        height_after > height_before,
+        "chain should produce blocks with 4 validators (height {} → {})",
+        height_before,
+        height_after
+    );
+    eprintln!(
+        "[phase 3] chain live with 4 validators: height {} → {}",
         height_before, height_after
     );
 

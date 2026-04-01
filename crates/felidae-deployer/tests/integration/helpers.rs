@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::process::Command;
 use std::time::Duration;
 
-use felidae_types::response::{AdminVote, OracleVote, PendingObservation};
+use felidae_types::response::{AdminVote, ChainInfo, OracleVote, PendingObservation};
 use felidae_types::transaction::Config;
 use tendermint_rpc::{Client, HttpClient, Paging};
 
@@ -308,6 +308,16 @@ pub fn query_snapshot(
     let output = run_query_command(felidae_bin, "snapshot", query_url, &[])?;
     let snapshot: HashMap<String, String> = serde_json::from_str(&output)?;
     Ok(snapshot)
+}
+
+/// Queries `felidae query chain-info --json` and parses the result.
+pub fn query_chain_info(
+    felidae_bin: &std::path::Path,
+    query_url: &str,
+) -> color_eyre::Result<ChainInfo> {
+    let output = run_query_command(felidae_bin, "chain-info", query_url, &["--json"])?;
+    let info: ChainInfo = serde_json::from_str(&output)?;
+    Ok(info)
 }
 
 /// Queries the chain config via CLI.
