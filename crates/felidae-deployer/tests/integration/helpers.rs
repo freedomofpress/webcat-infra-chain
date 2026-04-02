@@ -286,3 +286,39 @@ pub fn query_config(felidae_bin: &std::path::Path, query_url: &str) -> color_eyr
     let config: Config = serde_json::from_str(&output)?;
     Ok(config)
 }
+
+// =============================================================================
+// ORACLE HELPERS
+// =============================================================================
+
+/// Calls observe_domain_inner to perform enrollment observation
+pub async fn run_oracle_observe(
+    domain: &str,
+    zone: &str,
+    node_url: &str,
+    chain: Option<&str>,
+    homedir: &std::path::Path,
+    enrollment_json: &str,
+) -> color_eyre::Result<()> {
+    use felidae::cli::oracle::observe_domain_inner;
+    use reqwest::Url;
+
+    let domain = domain.parse()?;
+    let zone = zone.parse()?;
+    let node: Url = node_url.parse()?;
+
+    eprintln!(
+        "[run_oracle_observe] domain={} zone={} node={}",
+        domain, zone, node_url,
+    );
+
+    observe_domain_inner(
+        domain,
+        zone,
+        node,
+        chain.map(str::to_owned),
+        Some(homedir),
+        enrollment_json.to_owned(),
+    )
+    .await
+}

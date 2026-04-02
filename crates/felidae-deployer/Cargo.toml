@@ -42,6 +42,7 @@ felidae-types = { path = "../felidae-types" }
 integration = []
 
 [dev-dependencies]
+felidae = { path = "../felidae" }
 felidae-oracle = { path = "../felidae-oracle" }
 felidae-admin = { path = "../felidae-admin" }
 tendermint-rpc = { workspace = true }

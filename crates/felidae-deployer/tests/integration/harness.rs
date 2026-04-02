@@ -51,6 +51,13 @@ pub struct TestNetwork {
 impl TestNetwork {
     /// Create and initialize a new test network with the specified number of validators.
     pub async fn create(num_validators: usize) -> color_eyre::Result<Self> {
+        return Self::create_with_block_time(num_validators, crate::constants::block_time()).await;
+    }
+
+    pub async fn create_with_block_time(
+        num_validators: usize,
+        block_time: Duration,
+    ) -> color_eyre::Result<Self> {
         let temp_dir = tempfile::tempdir()?;
         let directory = temp_dir.path().to_path_buf();
 
@@ -59,7 +66,7 @@ impl TestNetwork {
             num_validators,
             use_sentries: false,
             directory,
-            timeout_commit: crate::constants::timeout_commit_str(),
+            timeout_commit: format!("{}s", block_time.as_secs()),
             ..Default::default()
         };
 

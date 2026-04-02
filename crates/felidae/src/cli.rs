@@ -22,7 +22,7 @@ pub enum Options {
 // One module per top-level subcommand
 mod admin;
 mod debug;
-mod oracle;
+pub mod oracle;
 mod query;
 mod reset;
 mod start;

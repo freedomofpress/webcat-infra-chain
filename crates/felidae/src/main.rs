@@ -1,13 +1,8 @@
-#[macro_use]
-extern crate tracing;
-
 use clap::Parser as _;
 use std::io::IsTerminal as _;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt as _, util::SubscriberInitExt as _};
 
-use crate::cli::Run as _;
-
-mod cli;
+use felidae::cli::{self, Run as _};
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
