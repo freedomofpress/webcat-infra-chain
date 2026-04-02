@@ -259,7 +259,18 @@ async fn observe_domain(
     // Submit the transaction to the node:
     let tx_bytes = hex::decode(&tx)
         .map_err(|e| color_eyre::eyre::eyre!("failed to decode transaction hex: {}", e))?;
-    let broadcast_result = rpc_client.broadcast_tx_sync(tx_bytes).await?;
+    let broadcast_result = match rpc_client.broadcast_tx_sync(tx_bytes).await {
+        Ok(res) => res,
+        Err(e) => {
+            if e.to_string().contains("tx already in cache") {
+                // This error message means that the tx has already been successfully submitted
+                // Return success to make requests idempotent
+                info!(tx = %tx, "transaction already in cache, returning success");
+                return Ok(());
+            }
+            return Err(e.into());
+        }
+    };
 
     // Check if the transaction was rejected:
     if broadcast_result.code.is_err() {

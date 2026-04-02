@@ -248,6 +248,47 @@ async fn handle_pow_challenge(
     }))
 }
 
+/// Converts an internal observation error to a user-facing message.
+///
+/// Error chain may contain information (file paths, backtraces) that should never
+/// reach end-users. This functions matches known patterns and returns a pre-defined
+/// error string, or a generic fallback error message.
+fn format_observation_error(e: &color_eyre::Report) -> String {
+    // Format the full chain for internal pattern matching only —
+    // this string is never sent to users.
+    let diagnostic = format!("{e}");
+
+    if diagnostic.contains("tx already exists in cache") {
+        "Observation already submitted — your request is being processed.".to_string()
+    } else if diagnostic.contains("not a current oracle") {
+        "This oracle is not authorized to submit observations.".to_string()
+    } else if diagnostic.contains("blockstamp is too old")
+        || diagnostic.contains("observation timeout")
+    {
+        "Submission timed out. Please try again.".to_string()
+    } else if diagnostic.contains("blockstamp is in the future") {
+        "Submission failed due to a timing issue. Please try again.".to_string()
+    } else if diagnostic.contains("cannot vote to delete") {
+        "This domain is not enrolled and cannot be unenrolled.".to_string()
+    } else if diagnostic.contains("would exceed max enrolled subdomains") {
+        "The subdomain limit for this domain has been reached.".to_string()
+    } else if diagnostic.contains("is not a subdomain of")
+        || diagnostic.contains("must be a strict subdomain")
+    {
+        "The domain is not valid for enrollment under its zone.".to_string()
+    } else if diagnostic.contains("transaction rejected")
+        || diagnostic.contains("transaction failed")
+    {
+        "Observation was rejected by the network.".to_string()
+    } else if diagnostic.contains("invalid domain") || diagnostic.contains("failed to infer zone") {
+        "The domain name is invalid.".to_string()
+    } else if diagnostic.contains("timeout") || diagnostic.contains("connection") {
+        "Network error communicating with the chain. Please try again.".to_string()
+    } else {
+        "Observation failed. Please try again later.".to_string()
+    }
+}
+
 async fn handle_observe(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ObserveRequest>,
@@ -358,7 +399,7 @@ async fn handle_observe(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ObserveResponse {
                     success: false,
-                    message: format!("observation failed: {}", e),
+                    message: format_observation_error(&e),
                     tx_hash: None,
                 }),
             ))
