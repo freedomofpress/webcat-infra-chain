@@ -82,16 +82,6 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             }
         }
 
-        // Validate that all oracle endpoints are well-formed URLs:
-        for (i, oracle) in oracles.iter().enumerate() {
-            oracle.validate_endpoint().map_err(|e| {
-                color_eyre::eyre::eyre!(
-                    "oracle at index {i} has an invalid endpoint URL '{}': {e}",
-                    oracle.endpoint
-                )
-            })?;
-        }
-
         Ok(())
     }
 

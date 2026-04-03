@@ -46,7 +46,7 @@ fn test_config(oracle: &Bytes, obs_timeout_secs: u64, max_subdomains: u64) -> Co
             observation_timeout: Duration::from_secs(obs_timeout_secs),
             authorized: vec![Oracle {
                 identity: oracle.clone(),
-                endpoint: "http://127.0.0.1".to_string(),
+                endpoint: url::Url::parse("http://127.0.0.1").unwrap(),
             }],
         },
         onion: OnionConfig { enabled: false },

@@ -602,18 +602,17 @@ impl TryFrom<proto::Oracle> for Oracle {
             .public_key
             .ok_or_else(|| crate::ParseError::new::<OracleIdentity>("missing".to_string()))?
             .public_key;
-        let endpoint = if value.endpoint.is_empty() {
-            "http://127.0.0.1".to_string()
+        let endpoint_str = if value.endpoint.is_empty() {
+            "http://127.0.0.1"
         } else {
-            value.endpoint
+            &value.endpoint
         };
-        let oracle = Oracle {
+        let endpoint = url::Url::parse(endpoint_str)
+            .map_err(|_| crate::ParseError::new::<Oracle>(format!("invalid endpoint URL: {}", endpoint_str)))?;
+        Ok(Oracle {
             identity: public_key,
             endpoint,
-        };
-        // Validate that the endpoint is a well-formed URL
-        oracle.validate_endpoint()?;
-        Ok(oracle)
+        })
     }
 }
 
@@ -623,7 +622,7 @@ impl From<Oracle> for proto::Oracle {
             public_key: Some(proto::OracleIdentity {
                 public_key: oracle.identity,
             }),
-            endpoint: oracle.endpoint,
+            endpoint: oracle.endpoint.to_string(),
         }
     }
 }
