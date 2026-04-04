@@ -42,8 +42,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             }
         }
         self.mark_validators_voted(voting_validators).await?;
-
-        // TODO: Jail inactive validators?
+        self.jail_inactive_validators().await?;
 
         // Tombstone byzantine validators
         for Misbehavior {
