@@ -124,10 +124,10 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     ) -> Result<(), Report> {
         // Go through the list of active validators, taking the address (first 20 bytes of the
         // SHA-256 hash of the public key) as and checking if it matches the given address:
-        let active_validators = self.active_validators().await?;
         let mut bad_pub_key = None;
-        for Update { pub_key, .. } in active_validators {
-            // Compute the address of this validator:
+        // We search all validators (not just active ones) since misbehavior evidence can arrive
+        // for validators that are Jailed or AdminRemoved.
+        for pub_key in &self.all_validators().await? {
             let mut context = Sha256::new();
             context.update(pub_key.to_bytes());
             let pub_key_hash: [u8; 32] = context.finalize().into();
@@ -135,24 +135,49 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
 
             // If the address matches, we've found the bad validator:
             if validator_address == bad_address {
-                bad_pub_key = Some(pub_key);
+                bad_pub_key = Some(*pub_key);
                 break;
             }
         }
 
-        if let Some(bad_pub_key) = bad_pub_key {
-            info!(
-                pub_key = hex::encode(bad_pub_key.to_bytes()),
-                "tombstoning validator",
-            );
-        } else {
+        let Some(bad_pub_key) = bad_pub_key else {
             warn!(
-                "could not find validator with address {}; it may have already been tombstoned",
-                hex::encode(bad_address)
+                address = hex::encode(bad_address),
+                "could not find validator to tombstone; it may have already been tombstoned",
             );
+            return Ok(());
+        };
+
+        let pub_key_hex = hex::encode(bad_pub_key.to_bytes());
+
+        if self.validator_status(&bad_pub_key).await? == Some(ValidatorStatus::Tombstoned) {
+            warn!(pub_key = pub_key_hex, "validator is already tombstoned");
+            return Ok(());
         }
 
+        info!(pub_key = pub_key_hex, "tombstoning validator");
+        self.store.put(
+            Internal,
+            &format!("current/validators/{}", pub_key_hex),
+            Power::from(0u32),
+        );
+        self.set_validator_status(&bad_pub_key, ValidatorStatus::Tombstoned);
+
         Ok(())
+    }
+
+    /// Get all validators in state, regardless of power or status.
+    pub(crate) async fn all_validators(&self) -> Result<Vec<tendermint::PublicKey>, Report> {
+        let mut pub_keys = vec![];
+        let mut stream = Box::pin(self.store.prefix::<Power>(Internal, "current/validators/"));
+        while let Some(Ok((key, _power))) = stream.next().await {
+            let pub_key_bytes = hex::decode(key.trim_start_matches("current/validators/"))?;
+            pub_keys.push(
+                tendermint::PublicKey::from_raw_ed25519(&pub_key_bytes)
+                    .ok_or_eyre("invalid ed25519 public key")?,
+            );
+        }
+        Ok(pub_keys)
     }
 
     /// Get all active validators.
