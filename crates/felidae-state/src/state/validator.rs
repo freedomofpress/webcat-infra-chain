@@ -2,6 +2,48 @@ use std::collections::BTreeMap;
 
 use super::*;
 
+/// The status of a validator.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ValidatorStatus {
+    /// Validator is active and participating in consensus.
+    Active,
+    /// Validator was removed from the `Config` by admins.
+    AdminRemoved,
+    /// Validator was temporarily removed for excessive downtime.
+    Jailed,
+    /// Validator was permanently banned for equivocation (double-signing).
+    Tombstoned,
+}
+
+impl From<ValidatorStatus> for u32 {
+    fn from(status: ValidatorStatus) -> Self {
+        match status {
+            ValidatorStatus::Active => 0,
+            ValidatorStatus::AdminRemoved => 1,
+            ValidatorStatus::Jailed => 2,
+            ValidatorStatus::Tombstoned => 3,
+        }
+    }
+}
+
+impl TryFrom<u32> for ValidatorStatus {
+    type Error = Report;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(ValidatorStatus::Active),
+            1 => Ok(ValidatorStatus::AdminRemoved),
+            2 => Ok(ValidatorStatus::Jailed),
+            3 => Ok(ValidatorStatus::Tombstoned),
+            _ => bail!("unknown validator status: {}", value),
+        }
+    }
+}
+
+impl felidae_proto::DomainType for ValidatorStatus {
+    type Proto = u32;
+}
+
 impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     /// Declare a new validator by its address.
     pub(crate) async fn declare_validator(&mut self, validator: Update) -> Result<(), Report> {
@@ -25,16 +67,51 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             );
         }
 
+        let pub_key_hex = hex::encode(validator.pub_key.to_bytes());
         self.store.put(
             Internal,
-            &format!(
-                "current/validators/{}",
-                hex::encode(validator.pub_key.to_bytes())
-            ),
+            &format!("current/validators/{}", pub_key_hex),
             validator.power,
+        );
+        self.store.put(
+            Internal,
+            &format!("current/validator_status/{}", pub_key_hex),
+            ValidatorStatus::Active,
         );
 
         Ok(())
+    }
+
+    /// Get the status of a validator by its public key bytes.
+    pub(crate) async fn validator_status(
+        &self,
+        pub_key: &tendermint::PublicKey,
+    ) -> Result<Option<ValidatorStatus>, Report> {
+        self.store
+            .get(
+                Internal,
+                &format!(
+                    "current/validator_status/{}",
+                    hex::encode(pub_key.to_bytes())
+                ),
+            )
+            .await
+    }
+
+    /// Set the status of a validator by its public key bytes.
+    pub(crate) fn set_validator_status(
+        &mut self,
+        pub_key: &tendermint::PublicKey,
+        status: ValidatorStatus,
+    ) {
+        self.store.put(
+            Internal,
+            &format!(
+                "current/validator_status/{}",
+                hex::encode(pub_key.to_bytes())
+            ),
+            status,
+        );
     }
 
     /// Tombstone a validator by its address.
