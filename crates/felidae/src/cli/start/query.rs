@@ -279,7 +279,7 @@ pub fn app(storage: Storage) -> Router {
                     #[derive(Serialize)]
                     struct OracleInfo {
                         identity: String,
-                        endpoint: String,
+                        endpoint: url::Url,
                     }
                     let oracles: Vec<OracleInfo> = config
                         .oracles
@@ -287,7 +287,7 @@ pub fn app(storage: Storage) -> Router {
                         .into_iter()
                         .map(|oracle| OracleInfo {
                             identity: hex::encode(oracle.identity),
-                            endpoint: oracle.endpoint.to_string(),
+                            endpoint: oracle.endpoint,
                         })
                         .collect();
                     (
