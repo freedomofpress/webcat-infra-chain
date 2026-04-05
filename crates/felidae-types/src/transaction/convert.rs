@@ -607,8 +607,9 @@ impl TryFrom<proto::Oracle> for Oracle {
         } else {
             &value.endpoint
         };
-        let endpoint = url::Url::parse(endpoint_str)
-            .map_err(|_| crate::ParseError::new::<Oracle>(format!("invalid endpoint URL: {}", endpoint_str)))?;
+        let endpoint = url::Url::parse(endpoint_str).map_err(|_| {
+            crate::ParseError::new::<Oracle>(format!("invalid endpoint URL: {}", endpoint_str))
+        })?;
         Ok(Oracle {
             identity: public_key,
             endpoint,

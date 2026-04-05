@@ -159,7 +159,10 @@ pub struct Oracle {
     #[serde_as(as = "Hex")]
     pub identity: Bytes,
     /// URL endpoint for the oracle (e.g. `https://oracle.example.com/oracle/`).
-    #[serde(default = "default_oracle_endpoint", deserialize_with = "deserialize_endpoint")]
+    #[serde(
+        default = "default_oracle_endpoint",
+        deserialize_with = "deserialize_endpoint"
+    )]
     pub endpoint: Url,
 }
 
@@ -537,18 +540,16 @@ mod tests {
             );
             let oracle: Result<Oracle, _> = serde_json::from_str(&json);
             assert!(oracle.is_ok(), "expected valid URL to deserialize: {url}");
-            assert_eq!(oracle.unwrap().endpoint.as_str().trim_end_matches('/'), url.trim_end_matches('/'));
+            assert_eq!(
+                oracle.unwrap().endpoint.as_str().trim_end_matches('/'),
+                url.trim_end_matches('/')
+            );
         }
     }
 
     #[test]
     fn test_oracle_deserialize_rejects_invalid_urls() {
-        let invalid_urls = [
-            "127.0.0.1",
-            "not-a-url",
-            "127.0.0.1:8081",
-            "",
-        ];
+        let invalid_urls = ["127.0.0.1", "not-a-url", "127.0.0.1:8081", ""];
         for url in invalid_urls {
             let json = format!(
                 r#"{{"identity":"{}","endpoint":"{}"}}"#,

@@ -358,7 +358,11 @@ impl Network {
 
             oracle_configs.push(Oracle {
                 identity: Bytes::from(public_key),
-                endpoint: url::Url::parse(&format!("http://{}:{}", node.bind_address, node.ports.felidae_oracle)).expect("valid oracle endpoint URL"),
+                endpoint: url::Url::parse(&format!(
+                    "http://{}:{}",
+                    node.bind_address, node.ports.felidae_oracle
+                ))
+                .expect("valid oracle endpoint URL"),
             });
         }
 
