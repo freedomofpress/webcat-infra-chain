@@ -603,7 +603,7 @@ impl TryFrom<proto::Oracle> for Oracle {
             .ok_or_else(|| crate::ParseError::new::<OracleIdentity>("missing".to_string()))?
             .public_key;
         let endpoint_str = if value.endpoint.is_empty() {
-            "http://127.0.0.1"
+            "http://127.0.0.1:8081"
         } else {
             &value.endpoint
         };

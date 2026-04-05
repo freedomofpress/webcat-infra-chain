@@ -120,7 +120,7 @@ impl Config {
                 // Placeholder entry so it's easier to fill out
                 authorized: vec![Oracle {
                     identity: Bytes::from(vec![0u8; 64]),
-                    endpoint: Url::parse("http://127.0.0.1").unwrap(),
+                    endpoint: Url::parse("http://127.0.0.1:8081").unwrap(),
                 }],
             },
             onion: OnionConfig { enabled: false },
@@ -181,7 +181,7 @@ impl Ord for Oracle {
 }
 
 fn default_oracle_endpoint() -> Url {
-    Url::parse("http://127.0.0.1").expect("default oracle endpoint is a valid URL")
+    Url::parse("http://127.0.0.1:8081").expect("default oracle endpoint is a valid URL")
 }
 
 fn deserialize_endpoint<'de, D>(deserializer: D) -> Result<Url, D::Error>
@@ -463,7 +463,7 @@ mod tests {
                 enabled: true,
                 authorized: vec![Oracle {
                     identity: Bytes::from_static(&[1u8; 64]),
-                    endpoint: Url::parse("http://127.0.0.1").unwrap(),
+                    endpoint: Url::parse("http://127.0.0.1:8081").unwrap(),
                 }],
                 voting: VotingConfig {
                     total: Total(5),
@@ -506,7 +506,7 @@ mod tests {
                         enabled: true,
                         authorized: vec![Oracle {
                             identity: Bytes::from_static(&[1u8; 64]),
-                            endpoint: Url::parse("http://127.0.0.1").unwrap(),
+                            endpoint: Url::parse("http://127.0.0.1:8081").unwrap(),
                         }],
                         voting: VotingConfig {
                             total: Total(5),
