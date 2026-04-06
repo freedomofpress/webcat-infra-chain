@@ -279,7 +279,7 @@ pub fn app(storage: Storage) -> Router {
                     #[derive(Serialize)]
                     struct OracleInfo {
                         identity: String,
-                        endpoint: String,
+                        endpoint: url::Url,
                     }
                     let oracles: Vec<OracleInfo> = config
                         .oracles

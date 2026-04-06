@@ -1155,6 +1155,7 @@ dependencies = [
  "tower-abci",
  "tracing",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
@@ -1286,6 +1287,7 @@ dependencies = [
  "tokio",
  "tower 0.5.2",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -1319,6 +1321,7 @@ dependencies = [
  "serde_with",
  "tendermint",
  "thiserror 2.0.16",
+ "url",
 ]
 
 [[package]]

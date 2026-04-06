@@ -8,6 +8,7 @@ use std::str::FromStr;
 use std::{hash::Hash, ops::Deref, time::Duration};
 use tendermint::block::Height;
 use tendermint::{AppHash, Time};
+use url::Url;
 
 use crate::{SignError, Signer};
 
@@ -119,7 +120,7 @@ impl Config {
                 // Placeholder entry so it's easier to fill out
                 authorized: vec![Oracle {
                     identity: Bytes::from(vec![0u8; 64]),
-                    endpoint: "127.0.0.1".to_string(),
+                    endpoint: Url::parse("http://127.0.0.1:8081").unwrap(),
                 }],
             },
             onion: OnionConfig { enabled: false },
@@ -153,17 +154,42 @@ pub struct OracleConfig {
 }
 
 #[serde_as]
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Oracle {
     #[serde_as(as = "Hex")]
     pub identity: Bytes,
-    /// Endpoint (domain name or IP address) for the oracle.
-    #[serde(default = "default_oracle_endpoint")]
-    pub endpoint: String,
+    /// URL endpoint for the oracle (e.g. `https://oracle.example.com/oracle/`).
+    #[serde(
+        default = "default_oracle_endpoint",
+        deserialize_with = "deserialize_endpoint"
+    )]
+    pub endpoint: Url,
 }
 
-fn default_oracle_endpoint() -> String {
-    "127.0.0.1".to_string()
+impl PartialOrd for Oracle {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Oracle {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.identity
+            .cmp(&other.identity)
+            .then_with(|| self.endpoint.as_str().cmp(other.endpoint.as_str()))
+    }
+}
+
+fn default_oracle_endpoint() -> Url {
+    Url::parse("http://127.0.0.1:8081").expect("default oracle endpoint is a valid URL")
+}
+
+fn deserialize_endpoint<'de, D>(deserializer: D) -> Result<Url, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    Url::parse(&s).map_err(serde::de::Error::custom)
 }
 
 /// Transparent wrapper for the oracle's public key.
@@ -437,7 +463,7 @@ mod tests {
                 enabled: true,
                 authorized: vec![Oracle {
                     identity: Bytes::from_static(&[1u8; 64]),
-                    endpoint: "127.0.0.1".to_string(),
+                    endpoint: Url::parse("http://127.0.0.1:8081").unwrap(),
                 }],
                 voting: VotingConfig {
                     total: Total(5),
@@ -480,7 +506,7 @@ mod tests {
                         enabled: true,
                         authorized: vec![Oracle {
                             identity: Bytes::from_static(&[1u8; 64]),
-                            endpoint: "127.0.0.1".to_string(),
+                            endpoint: Url::parse("http://127.0.0.1:8081").unwrap(),
                         }],
                         voting: VotingConfig {
                             total: Total(5),
@@ -496,5 +522,45 @@ mod tests {
             })],
         };
         assert_snapshot!(serde_json::to_string(&tx).unwrap());
+    }
+
+    #[test]
+    fn test_oracle_deserialize_accepts_valid_urls() {
+        let valid_urls = [
+            "http://127.0.0.1",
+            "https://oracle.example.com/oracle/",
+            "http://127.0.0.1:8081",
+            "https://webcat-sentry-1.freedom.press/oracle/",
+        ];
+        for url in valid_urls {
+            let json = format!(
+                r#"{{"identity":"{}","endpoint":"{}"}}"#,
+                "01".repeat(64),
+                url
+            );
+            let oracle: Result<Oracle, _> = serde_json::from_str(&json);
+            assert!(oracle.is_ok(), "expected valid URL to deserialize: {url}");
+            assert_eq!(
+                oracle.unwrap().endpoint.as_str().trim_end_matches('/'),
+                url.trim_end_matches('/')
+            );
+        }
+    }
+
+    #[test]
+    fn test_oracle_deserialize_rejects_invalid_urls() {
+        let invalid_urls = ["127.0.0.1", "not-a-url", "127.0.0.1:8081", ""];
+        for url in invalid_urls {
+            let json = format!(
+                r#"{{"identity":"{}","endpoint":"{}"}}"#,
+                "01".repeat(64),
+                url
+            );
+            let oracle: Result<Oracle, _> = serde_json::from_str(&json);
+            assert!(
+                oracle.is_err(),
+                "expected invalid URL to fail deserialization: {url}"
+            );
+        }
     }
 }
