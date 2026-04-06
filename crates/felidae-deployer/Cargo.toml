@@ -44,6 +44,7 @@ url = "2"
 integration = []
 
 [dev-dependencies]
+felidae = { path = "../felidae" }
 felidae-oracle = { path = "../felidae-oracle" }
 felidae-admin = { path = "../felidae-admin" }
 tendermint-rpc = { workspace = true }

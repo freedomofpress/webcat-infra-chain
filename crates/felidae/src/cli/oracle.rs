@@ -141,25 +141,12 @@ async fn observe_domain(
         "observe_domain: starting observation"
     );
 
-    // Load the oracle keypair:
-    let keypair = keypair(homedir).await?;
-    debug!("observe_domain: loaded oracle keypair");
-
-    // Create a Tendermint RPC client:
-    let rpc_url = tendermint_rpc::Url::try_from(node.clone())
-        .map_err(|e| color_eyre::eyre::eyre!("invalid RPC URL: {}", e))?;
-    debug!(rpc_url = %rpc_url, "observe_domain: creating RPC client");
-    let rpc_client = HttpClient::new(rpc_url)
-        .map_err(|e| color_eyre::eyre::eyre!("failed to create RPC client: {}", e))?;
-    debug!("observe_domain: RPC client created");
-
     // We need reqwest for the enrollment endpoint:
     let http_client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .connect_timeout(Duration::from_secs(5))
         .build()
         .map_err(|e| color_eyre::eyre::eyre!("failed to create HTTP client: {}", e))?;
-    debug!("observe_domain: HTTP client created");
 
     // Fetch the hash from the well-known endpoint of the domain/zone:
     let enrollment_url = format!(
@@ -214,6 +201,45 @@ async fn observe_domain(
         info!(domain = %domain, "no enrollment found");
     }
 
+    observe_domain_inner(
+        domain,
+        zone,
+        node,
+        chain,
+        homedir,
+        enrollment_string.unwrap_or_default(),
+    )
+    .await
+}
+
+pub async fn observe_domain_inner(
+    domain: FQDN,
+    zone: FQDN,
+    node: Url,
+    chain: Option<String>,
+    homedir: Option<&std::path::Path>,
+    enrollment_string: String,
+) -> Result<(), color_eyre::Report> {
+    info!(
+        domain = %domain,
+        zone = %zone,
+        node = %node,
+        chain = ?chain,
+        "building and submitting witness transaction"
+    );
+
+    // Load the oracle keypair:
+    let keypair = keypair(homedir).await?;
+    debug!("loaded oracle keypair");
+
+    // Create a Tendermint RPC client:
+    let rpc_url = tendermint_rpc::Url::try_from(node.clone())
+        .map_err(|e| color_eyre::eyre::eyre!("invalid RPC URL: {}", e))?;
+    debug!(rpc_url = %rpc_url, "creating RPC client");
+    let rpc_client = HttpClient::new(rpc_url)
+        .map_err(|e| color_eyre::eyre::eyre!("failed to create RPC client: {}", e))?;
+    debug!("RPC client created");
+
     // Get the latest block. The app_hash in the latest block's header is the
     // app_hash of the previous block (the last finalized block).
     let block_result = rpc_client.latest_block().await?;
@@ -253,13 +279,24 @@ async fn observe_domain(
         last_block_height,
         domain.to_string(),
         zone.to_string(),
-        enrollment_string.unwrap_or_default(),
+        enrollment_string,
     )?;
 
     // Submit the transaction to the node:
     let tx_bytes = hex::decode(&tx)
         .map_err(|e| color_eyre::eyre::eyre!("failed to decode transaction hex: {}", e))?;
-    let broadcast_result = rpc_client.broadcast_tx_sync(tx_bytes).await?;
+    let broadcast_result = match rpc_client.broadcast_tx_sync(tx_bytes).await {
+        Ok(res) => res,
+        Err(e) => {
+            if e.to_string().contains("tx already exists in cache") {
+                // This error message means that the tx has already been successfully submitted
+                // Return success to make requests idempotent
+                info!(tx = %tx, "transaction already in cache, returning success");
+                return Ok(());
+            }
+            return Err(e.into());
+        }
+    };
 
     // Check if the transaction was rejected:
     if broadcast_result.code.is_err() {

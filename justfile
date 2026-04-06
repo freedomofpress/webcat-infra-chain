@@ -29,6 +29,10 @@ test:
 integration block_time="2":
     FELIDAE_BLOCK_TIME_SECS={{block_time}} cargo nextest run -p felidae-deployer --features integration --no-fail-fast --test-threads 1
 
+# Run a single integration test by name (e.g. just integration-one test_oracle_quorum_reached)
+integration-one test block_time="2":
+    FELIDAE_BLOCK_TIME_SECS={{block_time}} cargo nextest run -p felidae-deployer --features integration --test-threads 1 -E 'test({{test}})'
+
 # Build WASM package for felidae-oracle
 build-wasm:
     cd crates/felidae-oracle && wasm-pack build --target web --out-dir pkg

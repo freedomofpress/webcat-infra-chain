@@ -2,7 +2,7 @@ use axum::{
     Router,
     extract::{Query, State},
     http::StatusCode,
-    response::Json,
+    response::{IntoResponse, Json},
     routing::{get, post},
 };
 use color_eyre::Report;
@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use thiserror::Error;
 use tracing::{debug, info, warn};
 
 use super::{Server, observe_domain, zone};
@@ -43,6 +44,106 @@ struct ObserveResponse {
     message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     tx_hash: Option<String>,
+}
+
+/// User-facing errors that can occur during an observation request. Used to
+/// convert internal errors to user-visible message and HTTP status code.
+#[derive(Error, Debug)]
+pub enum ObserveError {
+    #[error("Domain parameter is required")]
+    MissingDomainParameter,
+    #[error("Invalid or expired PoW token")]
+    InvalidPoWToken,
+    #[error("Invalid domain")]
+    InvalidDomain,
+    #[error("Failed to infer zone from domain")]
+    ZoneInferenceFailed,
+    #[error("Observation already submitted — your request is being processed.")]
+    AlreadySubmitted,
+    #[error("This oracle is not authorized to submit observations.")]
+    OracleNotAuthorized,
+    #[error("Submission timed out. Please try again.")]
+    SubmissionTimeout,
+    #[error("Submission failed due to a timing issue. Please try again.")]
+    BlockstampInFuture,
+    #[error("This domain is not enrolled and cannot be unenrolled.")]
+    CannotUnenrollNotEnrolled,
+    #[error("The subdomain limit for this domain has been reached.")]
+    SubdomainLimitExceeded,
+    #[error("The domain is not valid for enrollment under its zone.")]
+    InvalidDomainForZone,
+    #[error("Observation was rejected by the network.")]
+    NetworkRejected,
+    #[error("Network error communicating with the chain. Please try again.")]
+    NetworkError,
+    #[error("Observation failed. Please try again later.")]
+    ObservationFailed,
+}
+
+impl ObserveError {
+    fn status_code(&self) -> StatusCode {
+        match self {
+            Self::MissingDomainParameter => StatusCode::BAD_REQUEST,
+            Self::InvalidPoWToken => StatusCode::FORBIDDEN,
+            Self::InvalidDomain => StatusCode::BAD_REQUEST,
+            Self::ZoneInferenceFailed => StatusCode::BAD_REQUEST,
+            Self::AlreadySubmitted => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::OracleNotAuthorized => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::SubmissionTimeout => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::BlockstampInFuture => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::CannotUnenrollNotEnrolled => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::SubdomainLimitExceeded => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::InvalidDomainForZone => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::NetworkRejected => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::NetworkError => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::ObservationFailed => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+
+impl IntoResponse for ObserveError {
+    fn into_response(self) -> axum::response::Response {
+        let body = Json(ObserveResponse {
+            success: false,
+            message: self.to_string(),
+            tx_hash: None,
+        });
+        (self.status_code(), body).into_response()
+    }
+}
+
+fn observation_error(e: &Report) -> ObserveError {
+    let diagnostic = format!("{e}");
+
+    if diagnostic.contains("tx already exists in cache") {
+        ObserveError::AlreadySubmitted
+    } else if diagnostic.contains("not a current oracle") {
+        ObserveError::OracleNotAuthorized
+    } else if diagnostic.contains("blockstamp is too old")
+        || diagnostic.contains("observation timeout")
+    {
+        ObserveError::SubmissionTimeout
+    } else if diagnostic.contains("blockstamp is in the future") {
+        ObserveError::BlockstampInFuture
+    } else if diagnostic.contains("cannot vote to delete") {
+        ObserveError::CannotUnenrollNotEnrolled
+    } else if diagnostic.contains("would exceed max enrolled subdomains") {
+        ObserveError::SubdomainLimitExceeded
+    } else if diagnostic.contains("is not a subdomain of")
+        || diagnostic.contains("must be a strict subdomain")
+    {
+        ObserveError::InvalidDomainForZone
+    } else if diagnostic.contains("transaction rejected")
+        || diagnostic.contains("transaction failed")
+    {
+        ObserveError::NetworkRejected
+    } else if diagnostic.contains("invalid domain") || diagnostic.contains("failed to infer zone") {
+        ObserveError::InvalidDomain
+    } else if diagnostic.contains("timeout") || diagnostic.contains("connection") {
+        ObserveError::NetworkError
+    } else {
+        ObserveError::ObservationFailed
+    }
 }
 
 #[derive(Clone)]
@@ -216,17 +317,10 @@ fn validate_pow_token(token: &PoWToken, domain: &str, secret: &str, difficulty: 
 async fn handle_pow_challenge(
     State(state): State<Arc<AppState>>,
     Query(params): Query<std::collections::HashMap<String, String>>,
-) -> Result<Json<PoWChallengeResponse>, (StatusCode, Json<ObserveResponse>)> {
-    let domain = params.get("domain").ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ObserveResponse {
-                success: false,
-                message: "domain parameter is required".to_string(),
-                tx_hash: None,
-            }),
-        )
-    })?;
+) -> Result<Json<PoWChallengeResponse>, ObserveError> {
+    let domain = params
+        .get("domain")
+        .ok_or(ObserveError::MissingDomainParameter)?;
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -251,7 +345,7 @@ async fn handle_pow_challenge(
 async fn handle_observe(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ObserveRequest>,
-) -> Result<Json<ObserveResponse>, (StatusCode, Json<ObserveResponse>)> {
+) -> Result<Json<ObserveResponse>, ObserveError> {
     // Log incoming request
     info!(
         raw_domain = %req.domain,
@@ -270,54 +364,23 @@ async fn handle_observe(
         state.pow_difficulty,
     ) {
         warn!(domain = %req.domain, "PoW validation failed");
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ObserveResponse {
-                success: false,
-                message: "Invalid or expired PoW token".to_string(),
-                tx_hash: None,
-            }),
-        ));
+        return Err(ObserveError::InvalidPoWToken);
     }
     info!(domain = %req.domain, "PoW token validated successfully");
 
     // Parse domain
-    let domain = match req.domain.parse::<FQDN>() {
-        Ok(d) => {
-            debug!(parsed_domain = %d, "successfully parsed domain");
-            d
-        }
-        Err(e) => {
-            warn!(raw_domain = %req.domain, error = %e, "failed to parse domain");
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ObserveResponse {
-                    success: false,
-                    message: format!("invalid domain: {}", e),
-                    tx_hash: None,
-                }),
-            ));
-        }
-    };
+    let domain = req.domain.parse::<FQDN>().map_err(|e| {
+        warn!(raw_domain = %req.domain, error = %e, "failed to parse domain");
+        ObserveError::InvalidDomain
+    })?;
+    debug!(parsed_domain = %domain, "successfully parsed domain");
 
     // Infer zone from domain using Mozilla Public Suffix List (PSL)
-    let zone = match zone::infer_zone(&domain) {
-        Ok(z) => {
-            debug!(inferred_zone = %z, "successfully inferred zone");
-            z
-        }
-        Err(e) => {
-            warn!(domain = %domain, error = %e, "failed to infer zone");
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ObserveResponse {
-                    success: false,
-                    message: format!("failed to infer zone from domain: {}", e),
-                    tx_hash: None,
-                }),
-            ));
-        }
-    };
+    let zone = zone::infer_zone(&domain).map_err(|e| {
+        warn!(domain = %domain, error = %e, "failed to infer zone");
+        ObserveError::ZoneInferenceFailed
+    })?;
+    debug!(inferred_zone = %zone, "successfully inferred zone");
 
     info!(
         domain = %domain,
@@ -326,7 +389,7 @@ async fn handle_observe(
     );
 
     // Perform the observation
-    match observe_domain(
+    observe_domain(
         domain.clone(),
         zone.clone(),
         state.node.clone(),
@@ -334,34 +397,15 @@ async fn handle_observe(
         state.homedir.as_deref(),
     )
     .await
-    {
-        Ok(()) => {
-            info!(
-                domain = %domain,
-                zone = %zone,
-                "observation submitted successfully"
-            );
-            Ok(Json(ObserveResponse {
-                success: true,
-                message: "observation submitted successfully".to_string(),
-                tx_hash: None, // TODO: could return tx hash if we modify observe_domain?
-            }))
-        }
-        Err(e) => {
-            warn!(
-                domain = %domain,
-                zone = %zone,
-                error = %e,
-                "observation failed"
-            );
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ObserveResponse {
-                    success: false,
-                    message: format!("observation failed: {}", e),
-                    tx_hash: None,
-                }),
-            ))
-        }
-    }
+    .map_err(|e| {
+        warn!(domain = %domain, zone = %zone, error = %e, "observation failed");
+        observation_error(&e)
+    })?;
+
+    info!(domain = %domain, zone = %zone, "observation submitted successfully");
+    Ok(Json(ObserveResponse {
+        success: true,
+        message: "observation submitted successfully".to_string(),
+        tx_hash: None,
+    }))
 }

@@ -16,7 +16,7 @@ use crate::constants::{
 use crate::harness::TestNetwork;
 use crate::helpers::{
     poll_until, query_config, query_enrollment_pending, query_enrollment_votes, query_snapshot,
-    run_query_command, submit_observation,
+    run_oracle_observe, run_query_command, submit_observation,
 };
 
 /// Verifies that a 3-validator network can successfully bootstrap and produce blocks.
@@ -809,6 +809,51 @@ async fn test_subdomain_limit_enforcement() -> color_eyre::Result<()> {
     );
 
     eprintln!("[test] subdomain limit correctly enforced");
+
+    Ok(())
+}
+
+/// Verifies that duplicate enrollments can successfully submit in the same block
+#[tokio::test]
+#[cfg(feature = "integration")]
+async fn test_repeated_enrollment() -> color_eyre::Result<()> {
+    use std::time::Duration;
+
+    let (cometbft_bin, felidae_bin) = find_binaries()?;
+
+    // Create test network with long block time so that observations are submitted
+    // to the same block
+    let mut network = TestNetwork::create_with_block_time(3, Duration::from_secs(10)).await?;
+    network.start(
+        cometbft_bin.to_str().unwrap(),
+        felidae_bin.to_str().unwrap(),
+    )?;
+    network.wait_ready(Duration::from_secs(120)).await?;
+
+    let node_url = network.rpc_url();
+    let homedir = network.network.nodes[0].felidae_home();
+    let enrollment = test_enrollment_json();
+
+    run_oracle_observe(
+        TEST_DOMAIN_WEBCAT.0,
+        TEST_DOMAIN_WEBCAT.1,
+        &node_url,
+        None,
+        &homedir,
+        &enrollment,
+    )
+    .await?;
+
+    // Submit the same observation again
+    run_oracle_observe(
+        TEST_DOMAIN_WEBCAT.0,
+        TEST_DOMAIN_WEBCAT.1,
+        &node_url,
+        None,
+        &homedir,
+        &enrollment,
+    )
+    .await?;
 
     Ok(())
 }

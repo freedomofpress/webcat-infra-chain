@@ -6,6 +6,9 @@ license.workspace = true
 # set felidae as default binary for the workspace
 default-run = "felidae"
 
+[lib]
+path = "src/lib.rs"
+
 [dependencies]
 felidae-types = { path = "../felidae-types" }
 felidae-state = { path = "../felidae-state" }
@@ -37,3 +40,4 @@ prost = { workspace = true }
 addr = { workspace = true }
 sha2 = { workspace = true }
 getrandom = { workspace = true }
+thiserror.workspace = true
