@@ -8,7 +8,7 @@ pub(crate) enum ValidatorStatus {
     /// Validator is active and participating in consensus.
     Active,
     /// Validator was removed from the `Config` by admins.
-    AdminRemoved,
+    Inactive,
     /// Validator was temporarily removed for excessive downtime.
     Jailed,
     /// Validator was permanently banned for equivocation (double-signing).
@@ -19,7 +19,7 @@ impl From<ValidatorStatus> for u32 {
     fn from(status: ValidatorStatus) -> Self {
         match status {
             ValidatorStatus::Active => 0,
-            ValidatorStatus::AdminRemoved => 1,
+            ValidatorStatus::Inactive => 1,
             ValidatorStatus::Jailed => 2,
             ValidatorStatus::Tombstoned => 3,
         }
@@ -32,7 +32,7 @@ impl TryFrom<u32> for ValidatorStatus {
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(ValidatorStatus::Active),
-            1 => Ok(ValidatorStatus::AdminRemoved),
+            1 => Ok(ValidatorStatus::Inactive),
             2 => Ok(ValidatorStatus::Jailed),
             3 => Ok(ValidatorStatus::Tombstoned),
             _ => bail!("unknown validator status: {}", value),
@@ -147,7 +147,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     ///
     /// This handles state transitions from:
     /// - Active       --> Tombstoned
-    /// - AdminRemoved --> Tombstoned
+    /// - Inactive --> Tombstoned
     /// - Jailed       --> Tombstoned
     pub(crate) async fn tombstone_validator(
         &mut self,
@@ -160,7 +160,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         // SHA-256 hash of the public key) as and checking if it matches the given address:
         let mut bad_pub_key = None;
         // We search all validators (not just active ones) since misbehavior evidence can arrive
-        // for validators that are Jailed or AdminRemoved.
+        // for validators that are Jailed or Inactive.
         for pub_key in &self.all_validators().await? {
             let mut context = Sha256::new();
             context.update(pub_key.to_bytes());
@@ -235,9 +235,9 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     /// Sync validators from config to state.
     ///
     /// This handles state transitions from:
-    /// - Active       --> AdminRemoved  (validator absent from new Config)
-    /// - AdminRemoved --> Active        (validator re-added to Config)
-    /// - Jailed       --> AdminRemoved  (validator absent from new Config while jailed)
+    /// - Active       --> Inactive  (validator absent from new Config)
+    /// - Inactive     --> Active        (validator re-added to Config)
+    /// - Jailed       --> Inactive  (validator absent from new Config while jailed)
     pub(crate) async fn sync_validators_from_config(
         &mut self,
         config_validators: &[felidae_types::transaction::Validator],
@@ -274,7 +274,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                     // Validator predates status tracking — backfill as Active.
                     // Validators with power > 0 are correctly Active. Validators with power = 0
                     // (removed by the old sync code before status tracking was added) will be
-                    // corrected to AdminRemoved by the "absent from Config" loop below.
+                    // corrected to Inactive by the "absent from Config" loop below.
                     self.set_validator_status(pub_key, ValidatorStatus::Active);
                     ValidatorStatus::Active
                 }
@@ -330,8 +330,8 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                     // Already active so no change.
                     debug!(pub_key = pub_key_hex, "validator already active, skipping");
                 }
-                Some(ValidatorStatus::AdminRemoved) => {
-                    // Re-activated by admins - transition from AdminRemoved back to Active.
+                Some(ValidatorStatus::Inactive) => {
+                    // Re-activated by admins - transition from Inactive back to Active.
                     info!(
                         pub_key = pub_key_hex,
                         power = config_power.value(),
@@ -371,26 +371,26 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             let pub_key_hex = hex::encode(pub_key.to_bytes());
             match status {
                 ValidatorStatus::Active => {
-                    // Removed by admins - transition from Active to AdminRemoved.
+                    // Removed by admins - transition from Active to Inactive.
                     info!(pub_key = pub_key_hex, "removing validator");
                     self.store.put(
                         Internal,
                         &format!("current/validators/{}", pub_key_hex),
                         Power::from(0u32),
                     );
-                    self.set_validator_status(pub_key, ValidatorStatus::AdminRemoved);
+                    self.set_validator_status(pub_key, ValidatorStatus::Inactive);
                     updates.push(Update {
                         pub_key: *pub_key,
                         power: Power::from(0u32),
                     });
                 }
                 ValidatorStatus::Jailed => {
-                    // Removed from Config while jailed - transition from Jailed to AdminRemoved.
+                    // Removed from Config while jailed - transition from Jailed to Inactive.
                     // Power is already 0 so no CometBFT update needed.
                     info!(pub_key = pub_key_hex, "removing jailed validator");
-                    self.set_validator_status(pub_key, ValidatorStatus::AdminRemoved);
+                    self.set_validator_status(pub_key, ValidatorStatus::Inactive);
                 }
-                ValidatorStatus::AdminRemoved | ValidatorStatus::Tombstoned => {
+                ValidatorStatus::Inactive | ValidatorStatus::Tombstoned => {
                     // Already inactive so no change.
                 }
             }
