@@ -281,16 +281,26 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             };
         }
 
+        // Determine the uniform validator power from the current active set.
+        // All validators must have equal power; if none are active yet, fall back to 1.
+        let uniform_power = state_validators
+            .values()
+            .find_map(|(_, power, status)| {
+                if power.value() > 0 && *status == ValidatorStatus::Active {
+                    Some(*power)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| Power::from(1u32));
+
         // Build a map of config validators by public key bytes.
         let mut config_validators_map = BTreeMap::new();
         for validator in config_validators {
             let pub_key_bytes: Vec<u8> = validator.public_key.to_vec();
             let pub_key = tendermint::PublicKey::from_raw_ed25519(&pub_key_bytes)
                 .ok_or_eyre("invalid ed25519 public key in config")?;
-            // Power validation is done in `check_config` and bails if larger than u32::MAX,
-            // so we can safely convert here from a u32.
-            let power = Power::from(validator.power as u32);
-            config_validators_map.insert(pub_key_bytes, (pub_key, power));
+            config_validators_map.insert(pub_key_bytes, (pub_key, uniform_power));
         }
 
         let mut updates: Vec<Update> = Vec::new();
