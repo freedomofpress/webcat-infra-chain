@@ -151,7 +151,6 @@ pub struct Admin {
 pub struct Validator {
     #[serde_as(as = "Hex")]
     pub public_key: Bytes,
-    pub power: u64,
 }
 
 #[serde_as]

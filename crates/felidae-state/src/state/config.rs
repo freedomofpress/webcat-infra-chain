@@ -83,19 +83,8 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             }
         }
 
-        // Validate validators field (primarily check the power is not too large)
+        // Validate that no validator has an all-zero public key (placeholder entry):
         for (i, validator) in validators.iter().enumerate() {
-            // Validate that power doesn't exceed `u32::MAX`
-            if validator.power > u32::MAX as u64 {
-                bail!(
-                    "validator at index {} has power {} which exceeds maximum {}",
-                    i,
-                    validator.power,
-                    u32::MAX
-                );
-            }
-
-            // Validate that public key is not all zeros (placeholder entry)
             if Self::is_all_zeros(&validator.public_key) {
                 bail!(
                     "validator at index {} has an all-zero public key (placeholder not replaced)",

@@ -601,11 +601,8 @@ impl TryFrom<proto::Validator> for Validator {
     type Error = crate::ParseError;
 
     fn try_from(value: proto::Validator) -> Result<Self, Self::Error> {
-        let power = u64::try_from(value.power)
-            .map_err(|_| crate::ParseError::new::<u64>("invalid power".to_string()))?;
         Ok(Validator {
             public_key: value.public_key,
-            power,
         })
     }
 }
@@ -614,7 +611,6 @@ impl From<Validator> for proto::Validator {
     fn from(validator: Validator) -> Self {
         proto::Validator {
             public_key: validator.public_key,
-            power: i64::try_from(validator.power).unwrap_or(i64::MAX),
         }
     }
 }
