@@ -123,15 +123,25 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             }
         }
 
-        // Declare the initial validator set:
+        // Declare the initial validator set, overriding genesis powers with BASE_VALIDATOR_POWER:
         for validator in request.validators.iter() {
-            self.declare_validator(validator.clone()).await?;
+            self.declare_validator(validator.pub_key).await?;
         }
+
+        // Build the response validator set with our canonical power, not the genesis file's power.
+        let validators = request
+            .validators
+            .iter()
+            .map(|v| Update {
+                pub_key: v.pub_key,
+                power: Power::from(BASE_VALIDATOR_POWER),
+            })
+            .collect();
 
         Ok(response::InitChain {
             // TODO: permit changing consensus params?
             consensus_params: Some(request.consensus_params),
-            validators: request.validators,
+            validators,
             app_hash,
         })
     }
