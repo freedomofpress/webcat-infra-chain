@@ -841,4 +841,58 @@ mod tests {
             Some(ValidatorStatus::Active)
         );
     }
+
+    #[tokio::test]
+    async fn test_active_to_inactive_via_config_sync() {
+        // If a validator is absent from the new Config validator list, it should transition
+        // from Active to Inactive with power=0 returned as an update.
+        // This also adds a new validator which should transition to be the only active validator.
+        let (store, _dir) = setup_state_with_validator(ValidatorConfig::default()).await;
+
+        let pub_key = test_pub_key();
+        // A second key that will be the only entry in the new config, displacing test_pub_key.
+        let other_key =
+            tendermint::PublicKey::from_raw_ed25519(&[2u8; 32]).expect("valid ed25519 key");
+        let other_validator = felidae_types::transaction::Validator {
+            public_key: Bytes::copy_from_slice(&other_key.to_bytes()),
+        };
+
+        let mut state = store.state.write().await;
+
+        // Sync with a config that only contains other_key - test_pub_key is absent.
+        // Note: sync_validators_from_config treats an empty slice as "unmanaged" and is a no-op,
+        // so we must pass a non-empty list.
+        let updates = state
+            .sync_validators_from_config(&[other_validator])
+            .await
+            .expect("sync_validators_from_config");
+
+        // There should be two updates: power=0 for the removed validator and
+        // power=BASE_VALIDATOR_POWER for the newly added one.
+        let removed = updates
+            .iter()
+            .find(|u| u.pub_key == pub_key)
+            .expect("update for removed validator");
+        assert_eq!(
+            removed.power,
+            Power::from(0u32),
+            "removed validator should have power=0"
+        );
+
+        assert_eq!(
+            state.validator_status(&pub_key).await.unwrap(),
+            Some(ValidatorStatus::Inactive)
+        );
+
+        // The newly added validator should be Active with BASE_VALIDATOR_POWER power.
+        let added = updates
+            .iter()
+            .find(|u| u.pub_key == other_key)
+            .expect("update for added validator");
+        assert_eq!(added.power, Power::from(BASE_VALIDATOR_POWER));
+        assert_eq!(
+            state.validator_status(&other_key).await.unwrap(),
+            Some(ValidatorStatus::Active)
+        );
+    }
 }
