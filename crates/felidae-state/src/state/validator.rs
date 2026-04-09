@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use bitvec::prelude::*;
+
 use super::*;
 
 /// The status of a validator.
@@ -44,34 +46,90 @@ impl felidae_proto::DomainType for ValidatorStatus {
     type Proto = u32;
 }
 
-/// Count of consecutive blocks a validator has been absent from consensus.
+/// Sliding-window uptime tracker for a validator.
 ///
-/// Stored at `current/validator_absence/{pub_key_hex}`. Reset to zero when the validator
-/// votes or is jailed.
-#[derive(Clone, Debug, Default)]
-struct AbsenceCount(u64);
+/// Stored at `current/validator_uptime/{pub_key_hex}`. Uses a bitvec ring buffer where
+/// `1` = signed and `0` = missed. Initialized with all `1`s as a grace period.
+///
+/// Note that this `Uptime` struct was taken from:
+/// https://github.com/penumbra-zone/penumbra/blob/36a31c17974c23a7e84cc02c64f0062ae57e79b1/crates/core/component/stake/src/uptime.rs#L20-L29
+///
+/// Binary encoding (little-endian):
+///   bytes [0..8]  — `as_of_block_height` (u64)
+///   bytes [8..12] — `window_len` (u32)
+///   bytes [12..]  — bitvec data (ceil(window_len / 8) bytes)
+#[derive(Clone, Debug)]
+struct Uptime {
+    as_of_block_height: u64,
+    bits: BitVec<u8, Lsb0>,
+}
 
-impl From<AbsenceCount> for u64 {
-    fn from(c: AbsenceCount) -> Self {
-        c.0
+impl Uptime {
+    fn new(initial_block_height: u64, window_len: usize) -> Self {
+        Self {
+            as_of_block_height: initial_block_height,
+            bits: bitvec![u8, Lsb0; 1; window_len],
+        }
+    }
+
+    fn mark_signed(&mut self, height: u64, signed: bool) {
+        if height != self.as_of_block_height + 1 {
+            // This indicates a bug — heights should always be sequential. Log it but don't
+            // bail, since propagating this error would cause a chain halt.
+            error!(
+                expected = self.as_of_block_height + 1,
+                got = height,
+                "uptime tracker received non-sequential height; ring buffer index will be incorrect"
+            );
+        }
+        let index = (height as usize) % self.bits.len();
+        self.bits.set(index, signed);
+        self.as_of_block_height = height;
+    }
+
+    fn num_missed_blocks(&self) -> usize {
+        self.bits.iter_zeros().len()
+    }
+
+    fn window_len(&self) -> usize {
+        self.bits.len()
     }
 }
 
-impl TryFrom<u64> for AbsenceCount {
+impl From<Uptime> for Bytes {
+    fn from(mut uptime: Uptime) -> Self {
+        let window_len = uptime.bits.len() as u32;
+        uptime.bits.set_uninitialized(true);
+        let bitvec_bytes = uptime.bits.into_vec();
+        let mut buf = Vec::with_capacity(12 + bitvec_bytes.len());
+        buf.extend_from_slice(&uptime.as_of_block_height.to_le_bytes());
+        buf.extend_from_slice(&window_len.to_le_bytes());
+        buf.extend_from_slice(&bitvec_bytes);
+        Bytes::from(buf)
+    }
+}
+
+impl TryFrom<Bytes> for Uptime {
     type Error = Report;
-    fn try_from(v: u64) -> Result<Self, Self::Error> {
-        Ok(AbsenceCount(v))
+
+    fn try_from(b: Bytes) -> Result<Self, Self::Error> {
+        if b.len() < 12 {
+            bail!("uptime data too short: {} bytes", b.len());
+        }
+        let as_of_block_height = u64::from_le_bytes(b[0..8].try_into()?);
+        let window_len = u32::from_le_bytes(b[8..12].try_into()?) as usize;
+        let mut bits = BitVec::<u8, Lsb0>::from_vec(b[12..].to_vec());
+        bits.truncate(window_len);
+        Ok(Uptime {
+            as_of_block_height,
+            bits,
+        })
     }
 }
 
-impl felidae_proto::DomainType for AbsenceCount {
-    type Proto = u64;
+impl felidae_proto::DomainType for Uptime {
+    type Proto = Bytes;
 }
-
-/// Number of consecutive absent blocks before a validator is jailed.
-///
-/// TODO: Make this configurable via `Config`.
-const CONSECUTIVE_ABSENCE_JAIL_THRESHOLD: u64 = 1_000;
 
 impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     /// Declare a new validator by its address.
@@ -106,6 +164,15 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             Internal,
             &format!("current/validator_status/{}", pub_key_hex),
             ValidatorStatus::Active,
+        );
+
+        // Initialize the uptime tracker with a grace-period window (all 1s).
+        let window_len = self.config().await?.validator_config.uptime_window as usize;
+        let current_height = self.block_height().await.ok().map_or(0, |h| h.value());
+        self.store.put(
+            Internal,
+            &format!("current/validator_uptime/{}", pub_key_hex),
+            Uptime::new(current_height, window_len),
         );
 
         Ok(())
@@ -250,6 +317,8 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             return Ok(vec![]);
         }
 
+        let config = self.config().await?;
+
         // Collect all state validators with their power and status, including those with power 0
         // (e.g. tombstoned or jailed validators) — we need their status to decide what to do.
         let mut state_validators: BTreeMap<
@@ -343,6 +412,14 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                         *config_power,
                     );
                     self.set_validator_status(pub_key, ValidatorStatus::Active);
+                    // Reset uptime to a fresh grace period.
+                    let window_len = config.validator_config.uptime_window as usize;
+                    let current_height = self.block_height().await.ok().map_or(0, |h| h.value());
+                    self.store.put(
+                        Internal,
+                        &format!("current/validator_uptime/{}", pub_key_hex),
+                        Uptime::new(current_height, window_len),
+                    );
                     updates.push(Update {
                         pub_key: *pub_key,
                         power: *config_power,
@@ -399,12 +476,16 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         Ok(updates)
     }
 
-    /// Record validator uptime for the current block, incrementing or resetting each active
-    /// validator's consecutive absence count.
+    /// Record validator uptime for the given block height.
+    ///
+    /// `voted_addresses` is the set of validator addresses (first 20 bytes of SHA-256 of pubkey)
+    /// that signed the previous block as reported by CometBFT in `FinalizeBlock`.
     pub(crate) async fn mark_validators_voted(
         &mut self,
+        height: u64,
         voted_addresses: BTreeSet<[u8; 20]>,
     ) -> Result<(), Report> {
+        let window_len = self.config().await?.validator_config.uptime_window as usize;
         let active_validators = self.active_validators().await?;
         for Update { pub_key, .. } in active_validators {
             // Compute the address of this validator (first 20 bytes of SHA-256 of pub key):
@@ -414,52 +495,59 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             let validator_address: [u8; 20] =
                 pub_key_hash[0..20].try_into().expect("slice is 20 bytes");
 
-            let pub_key_hex = hex::encode(pub_key.to_bytes());
-            let absence_key = format!("current/validator_absence/{}", pub_key_hex);
-
-            if voted_addresses.contains(&validator_address) {
-                debug!(
-                    pub_key = pub_key_hex,
-                    "validator voted, resetting absence count"
-                );
-                self.store.put(Internal, &absence_key, AbsenceCount(0));
+            // At height 1 there is no previous commit, so CometBFT reports no signers.
+            // Mark everyone as signed to avoid an unfair miss at genesis.
+            let signed = if height == 1 {
+                true
             } else {
-                let current: AbsenceCount = self
-                    .store
-                    .get(Internal, &absence_key)
-                    .await?
-                    .unwrap_or_default();
-                let new_count = AbsenceCount(current.0 + 1);
-                debug!(
-                    pub_key = pub_key_hex,
-                    absences = new_count.0,
-                    "validator absent"
-                );
-                self.store.put(Internal, &absence_key, new_count);
+                voted_addresses.contains(&validator_address)
+            };
+            let pub_key_hex = hex::encode(pub_key.to_bytes());
+            let uptime_key = format!("current/validator_uptime/{}", pub_key_hex);
+
+            let mut uptime: Uptime = self
+                .store
+                .get(Internal, &uptime_key)
+                .await?
+                .unwrap_or_else(|| Uptime::new(height.saturating_sub(1), window_len));
+
+            // If the window size changed in config, reset to a fresh grace-period tracker.
+            if uptime.window_len() != window_len {
+                uptime = Uptime::new(height.saturating_sub(1), window_len);
             }
+
+            debug!(
+                pub_key = pub_key_hex,
+                height,
+                signed,
+                missed = uptime.num_missed_blocks(),
+                "recording validator vote"
+            );
+            uptime.mark_signed(height, signed);
+            self.store.put(Internal, &uptime_key, uptime);
         }
         Ok(())
     }
 
-    /// Jail any active validator that has exceeded the consecutive absence threshold.
+    /// Jail any active validator whose uptime has fallen below the configured threshold.
     ///
     /// Implements transition Active --> Jailed.
     pub(crate) async fn jail_inactive_validators(&mut self) -> Result<(), Report> {
+        let config = self.config().await?;
+        let missed_blocks_max = config.validator_config.missed_blocks_max as usize;
         let active_validators = self.active_validators().await?;
         for Update { pub_key, .. } in active_validators {
             let pub_key_hex = hex::encode(pub_key.to_bytes());
-            let absence_key = format!("current/validator_absence/{}", pub_key_hex);
-            let absences: AbsenceCount = self
-                .store
-                .get(Internal, &absence_key)
-                .await?
-                .unwrap_or_default();
+            let uptime_key = format!("current/validator_uptime/{}", pub_key_hex);
+            let Some(uptime): Option<Uptime> = self.store.get(Internal, &uptime_key).await? else {
+                continue;
+            };
 
-            if absences.0 >= CONSECUTIVE_ABSENCE_JAIL_THRESHOLD {
+            let missed = uptime.num_missed_blocks();
+            if missed > missed_blocks_max {
                 info!(
                     pub_key = pub_key_hex,
-                    absences = absences.0,
-                    "jailing validator for inactivity"
+                    missed, missed_blocks_max, "jailing validator for insufficient uptime"
                 );
                 self.store.put(
                     Internal,
@@ -467,9 +555,15 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                     Power::from(0u32),
                 );
                 self.set_validator_status(&pub_key, ValidatorStatus::Jailed);
-                // Reset the absence count so that if the validator is later re-activated
-                // (transition Jailed --> Active), the count starts fresh.
-                self.store.put(Internal, &absence_key, AbsenceCount(0));
+                // Reset uptime to all-1s so that if the validator is later re-activated
+                // it starts with a fresh grace period.
+                let window_len = uptime.window_len();
+                let current_height = uptime.as_of_block_height;
+                self.store.put(
+                    Internal,
+                    &uptime_key,
+                    Uptime::new(current_height, window_len),
+                );
             }
         }
         Ok(())

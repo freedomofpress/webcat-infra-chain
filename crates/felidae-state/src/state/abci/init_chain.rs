@@ -54,6 +54,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 },
                 onion: OnionConfig { enabled: false },
                 validators: vec![],
+                validator_config: ValidatorConfig::default(),
             }
         } else {
             // Parse the JSON from app_state_bytes and extract the config:

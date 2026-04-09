@@ -4,7 +4,7 @@ use felidae_types::{
     transaction::{
         Admin, AdminConfig, Blockstamp, Config, Delay, Domain, HashObserved, Observation, Observe,
         OnionConfig, Oracle, OracleConfig, OracleIdentity, PrefixOrderDomain, Quorum, Timeout,
-        Total, VotingConfig, Zone,
+        Total, ValidatorConfig, VotingConfig, Zone,
     },
 };
 use prost::bytes::Bytes;
@@ -51,6 +51,7 @@ fn test_config(oracle: &Bytes, obs_timeout_secs: u64, max_subdomains: u64) -> Co
         },
         onion: OnionConfig { enabled: false },
         validators: vec![],
+        validator_config: ValidatorConfig::default(),
     }
 }
 
