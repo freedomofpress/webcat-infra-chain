@@ -1048,4 +1048,56 @@ mod tests {
             Some(ValidatorStatus::Active)
         );
     }
+
+    #[tokio::test]
+    async fn test_jailed_to_tombstoned() {
+        // A jailed validator has power=1 in CometBFT. Tombstoning it should produce a
+        // power=0 update and transition the validator to Tombstoned.
+        let (store, _dir) = setup_state_with_validator(ValidatorConfig {
+            uptime_window: 10,
+            missed_blocks_max: 5,
+            unjail_missed_max: 2,
+        })
+        .await;
+
+        let pub_key = test_pub_key();
+        let address = validator_address(&pub_key);
+
+        let mut state = store.state.write().await;
+
+        // Jail the validator.
+        for height in 3u64..=8 {
+            state
+                .mark_validators_voted(height, BTreeSet::new())
+                .await
+                .expect("mark_validators_voted");
+        }
+        state.jail_inactive_validators().await.expect("jail phase");
+        assert_eq!(
+            state.validator_status(&pub_key).await.unwrap(),
+            Some(ValidatorStatus::Jailed),
+            "precondition: validator should be Jailed"
+        );
+
+        // Tombstone the jailed validator.
+        let update = state
+            .tombstone_validator(Validator {
+                address,
+                power: Power::from(1u32),
+            })
+            .await
+            .expect("tombstone_validator")
+            .expect("should return Some(update) for a jailed validator");
+
+        assert_eq!(update.pub_key, pub_key);
+        assert_eq!(
+            update.power,
+            Power::from(0u32),
+            "tombstoned validator should have power=0 regardless of prior jailed power"
+        );
+        assert_eq!(
+            state.validator_status(&pub_key).await.unwrap(),
+            Some(ValidatorStatus::Tombstoned)
+        );
+    }
 }
