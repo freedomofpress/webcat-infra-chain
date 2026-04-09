@@ -131,34 +131,45 @@ impl felidae_proto::DomainType for Uptime {
     type Proto = Bytes;
 }
 
+/// Uniform voting power assigned to every active validator.
+///
+/// 10^9 keeps jailed validators power of 1 negligible, fits within
+/// `i32::MAX` leaving headroom for any incidental arithmetic, and stays well within
+/// CometBFT's total-power limit of `i64::MAX / 8` even for large validator sets.
+pub(crate) const BASE_VALIDATOR_POWER: u32 = 1_000_000_000;
+
 impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
-    /// Declare a new validator by its address.
-    pub(crate) async fn declare_validator(&mut self, validator: Update) -> Result<(), Report> {
+    /// Declare a new validator by its public key.
+    ///
+    /// Always assigns `BASE_VALIDATOR_POWER`, ignoring any power value carried by the
+    /// genesis `Update` — the genesis file's power is only used for the equal power
+    /// sanity check in init_chain to warn the user that all validators must have the same power.
+    pub(crate) async fn declare_validator(
+        &mut self,
+        pub_key: tendermint::PublicKey,
+    ) -> Result<(), Report> {
         // Check to ensure the validator does not exist already (prevents redeclaring tombstoned
         // validators to set their power back to non-zero):
         let existing: Option<Power> = self
             .store
             .get(
                 Internal,
-                &format!(
-                    "current/validators/{}",
-                    hex::encode(validator.pub_key.to_bytes())
-                ),
+                &format!("current/validators/{}", hex::encode(pub_key.to_bytes())),
             )
             .await?;
         if let Some(existing) = existing {
             bail!(
                 "validator {} already exists with power {}",
-                hex::encode(validator.pub_key.to_bytes()),
+                hex::encode(pub_key.to_bytes()),
                 existing,
             );
         }
 
-        let pub_key_hex = hex::encode(validator.pub_key.to_bytes());
+        let pub_key_hex = hex::encode(pub_key.to_bytes());
         self.store.put(
             Internal,
             &format!("current/validators/{}", pub_key_hex),
-            validator.power,
+            Power::from(BASE_VALIDATOR_POWER),
         );
         self.store.put(
             Internal,
@@ -281,7 +292,10 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         Ok(pub_keys)
     }
 
-    /// Get all active validators.
+    /// Get all validators with non-zero power (Active and Jailed).
+    ///
+    /// Jailed validators carry power=1 rather than being removed from the CometBFT set,
+    /// so they appear here. Use [`validator_status`] to distinguish Active from Jailed.
     pub async fn active_validators(&self) -> Result<Vec<Update>, Report> {
         let mut updates = vec![];
         let mut stream = Box::pin(self.store.prefix::<Power>(Internal, "current/validators/"));
@@ -350,49 +364,28 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             };
         }
 
-        // Determine the uniform validator power from the current active set.
-        // All validators must have equal power; if none are active yet, fall back to 1.
-        let uniform_power = state_validators
-            .values()
-            .find_map(|(_, power, status)| {
-                if power.value() > 0 && *status == ValidatorStatus::Active {
-                    Some(*power)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| Power::from(1u32));
-
         // Build a map of config validators by public key bytes.
         let mut config_validators_map = BTreeMap::new();
         for validator in config_validators {
             let pub_key_bytes: Vec<u8> = validator.public_key.to_vec();
             let pub_key = tendermint::PublicKey::from_raw_ed25519(&pub_key_bytes)
                 .ok_or_eyre("invalid ed25519 public key in config")?;
-            config_validators_map.insert(pub_key_bytes, (pub_key, uniform_power));
+            config_validators_map.insert(pub_key_bytes, pub_key);
         }
 
         let mut updates: Vec<Update> = Vec::new();
 
         // Handle validators present in Config:
-        for (pub_key_bytes, (pub_key, config_power)) in config_validators_map.iter() {
+        for (pub_key_bytes, pub_key) in config_validators_map.iter() {
             let pub_key_hex = hex::encode(pub_key.to_bytes());
             match state_validators.get(pub_key_bytes).map(|(_, _, s)| s) {
                 None => {
-                    // Brand new validator — add it as active.
-                    info!(
-                        pub_key = pub_key_hex,
-                        power = config_power.value(),
-                        "adding new validator"
-                    );
-                    self.declare_validator(Update {
-                        pub_key: *pub_key,
-                        power: *config_power,
-                    })
-                    .await?;
+                    // Brand new validator — add it as active with BASE_VALIDATOR_POWER.
+                    info!(pub_key = pub_key_hex, "adding new validator");
+                    self.declare_validator(*pub_key).await?;
                     updates.push(Update {
                         pub_key: *pub_key,
-                        power: *config_power,
+                        power: Power::from(BASE_VALIDATOR_POWER),
                     });
                 }
                 Some(ValidatorStatus::Active) => {
@@ -401,15 +394,11 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 }
                 Some(ValidatorStatus::Inactive) => {
                     // Re-activated by admins - transition from Inactive back to Active.
-                    info!(
-                        pub_key = pub_key_hex,
-                        power = config_power.value(),
-                        "re-activating validator"
-                    );
+                    info!(pub_key = pub_key_hex, "re-activating validator");
                     self.store.put(
                         Internal,
                         &format!("current/validators/{}", pub_key_hex),
-                        *config_power,
+                        Power::from(BASE_VALIDATOR_POWER),
                     );
                     self.set_validator_status(pub_key, ValidatorStatus::Active);
                     // Reset uptime to a fresh grace period.
@@ -422,12 +411,11 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                     );
                     updates.push(Update {
                         pub_key: *pub_key,
-                        power: *config_power,
+                        power: Power::from(BASE_VALIDATOR_POWER),
                     });
                 }
                 Some(ValidatorStatus::Jailed) => {
-                    // Jailed validators remain jailed
-                    // TODO: implement unjailing
+                    // Jailed validators unjail via uptime recovery.
                     debug!(pub_key = pub_key_hex, "validator is jailed, skipping");
                 }
                 Some(ValidatorStatus::Tombstoned) => {
@@ -463,9 +451,18 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 }
                 ValidatorStatus::Jailed => {
                     // Removed from Config while jailed - transition from Jailed to Inactive.
-                    // Power is already 0 so no CometBFT update needed.
+                    // Set power to 0 so CometBFT removes them from the validator set.
                     info!(pub_key = pub_key_hex, "removing jailed validator");
+                    self.store.put(
+                        Internal,
+                        &format!("current/validators/{}", pub_key_hex),
+                        Power::from(0u32),
+                    );
                     self.set_validator_status(pub_key, ValidatorStatus::Inactive);
+                    updates.push(Update {
+                        pub_key: *pub_key,
+                        power: Power::from(0u32),
+                    });
                 }
                 ValidatorStatus::Inactive | ValidatorStatus::Tombstoned => {
                     // Already inactive so no change.
@@ -529,43 +526,81 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         Ok(())
     }
 
-    /// Jail any active validator whose uptime has fallen below the configured threshold.
+    /// Check all validators' uptime and update jailing status.
     ///
-    /// Implements transition Active --> Jailed.
-    pub(crate) async fn jail_inactive_validators(&mut self) -> Result<(), Report> {
-        let config = self.config().await?;
-        let missed_blocks_max = config.validator_config.missed_blocks_max as usize;
-        let active_validators = self.active_validators().await?;
-        for Update { pub_key, .. } in active_validators {
+    /// Implements:
+    /// - Active --> Jailed: power drops to 1 (not 0) so CometBFT still delivers their
+    ///   votes, allowing them to continue tracking uptime, enabling
+    ///   them to unjail automatically once their uptime recovers.
+    /// - Jailed --> Active: once missed_blocks falls back within the threshold the
+    ///   validator is unjailed and restored to BASE_VALIDATOR_POWER.
+    pub(crate) async fn jail_inactive_validators(&mut self) -> Result<Vec<Update>, Report> {
+        let missed_blocks_max = self.config().await?.validator_config.missed_blocks_max as usize;
+        let all_pub_keys = self.all_validators().await?;
+        let mut updates = vec![];
+
+        for pub_key in all_pub_keys {
             let pub_key_hex = hex::encode(pub_key.to_bytes());
-            let uptime_key = format!("current/validator_uptime/{}", pub_key_hex);
-            let Some(uptime): Option<Uptime> = self.store.get(Internal, &uptime_key).await? else {
+            let Some(status) = self.validator_status(&pub_key).await? else {
                 continue;
             };
 
-            let missed = uptime.num_missed_blocks();
-            if missed > missed_blocks_max {
-                info!(
-                    pub_key = pub_key_hex,
-                    missed, missed_blocks_max, "jailing validator for insufficient uptime"
-                );
-                self.store.put(
-                    Internal,
-                    &format!("current/validators/{}", pub_key_hex),
-                    Power::from(0u32),
-                );
-                self.set_validator_status(&pub_key, ValidatorStatus::Jailed);
-                // Reset uptime to all-1s so that if the validator is later re-activated
-                // it starts with a fresh grace period.
-                let window_len = uptime.window_len();
-                let current_height = uptime.as_of_block_height;
-                self.store.put(
-                    Internal,
-                    &uptime_key,
-                    Uptime::new(current_height, window_len),
-                );
+            match status {
+                ValidatorStatus::Active => {
+                    let uptime_key = format!("current/validator_uptime/{}", pub_key_hex);
+                    let Some(uptime): Option<Uptime> =
+                        self.store.get(Internal, &uptime_key).await?
+                    else {
+                        continue;
+                    };
+                    let missed = uptime.num_missed_blocks();
+                    if missed > missed_blocks_max {
+                        info!(
+                            pub_key = pub_key_hex,
+                            missed, missed_blocks_max, "jailing validator for insufficient uptime"
+                        );
+                        // Power drops to 1, not 0 so we still get votes for uptime tracking.
+                        self.store.put(
+                            Internal,
+                            &format!("current/validators/{}", pub_key_hex),
+                            Power::from(1u32),
+                        );
+                        self.set_validator_status(&pub_key, ValidatorStatus::Jailed);
+                        updates.push(Update {
+                            pub_key,
+                            power: Power::from(1u32),
+                        });
+                    }
+                }
+                ValidatorStatus::Jailed => {
+                    let uptime_key = format!("current/validator_uptime/{}", pub_key_hex);
+                    let Some(uptime): Option<Uptime> =
+                        self.store.get(Internal, &uptime_key).await?
+                    else {
+                        continue;
+                    };
+                    let missed = uptime.num_missed_blocks();
+                    if missed <= missed_blocks_max {
+                        info!(
+                            pub_key = pub_key_hex,
+                            missed, missed_blocks_max, "unjailing validator; uptime has recovered"
+                        );
+                        self.store.put(
+                            Internal,
+                            &format!("current/validators/{}", pub_key_hex),
+                            Power::from(BASE_VALIDATOR_POWER),
+                        );
+                        self.set_validator_status(&pub_key, ValidatorStatus::Active);
+                        updates.push(Update {
+                            pub_key,
+                            power: Power::from(BASE_VALIDATOR_POWER),
+                        });
+                    }
+                }
+                ValidatorStatus::Inactive | ValidatorStatus::Tombstoned => {}
             }
         }
-        Ok(())
+
+        Ok(updates)
     }
 }

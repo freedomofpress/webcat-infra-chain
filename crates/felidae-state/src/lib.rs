@@ -104,5 +104,6 @@ mod state {
     /// Utility functions.
     mod util;
 
+    pub(crate) use validator::BASE_VALIDATOR_POWER;
     pub use voting::Vote;
 }
