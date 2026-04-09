@@ -12,7 +12,7 @@ use ed25519_dalek::SigningKey;
 use felidae_types::KeyPair;
 use felidae_types::transaction::{
     Admin, AdminConfig, Config, Delay, OnionConfig, Oracle, OracleConfig, Quorum, Timeout, Total,
-    VotingConfig,
+    ValidatorConfig, VotingConfig,
 };
 use p256::SecretKey;
 use pkcs8::EncodePrivateKey;
@@ -412,6 +412,7 @@ impl Network {
             },
             onion: OnionConfig { enabled: false },
             validators: vec![],
+            validator_config: ValidatorConfig::default(),
         })
     }
 

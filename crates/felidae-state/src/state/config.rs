@@ -38,6 +38,11 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 enabled: _, // Can be enabled or not
             },
             validators,
+            validator_config:
+                ValidatorConfig {
+                    uptime_window,
+                    missed_blocks_max,
+                },
         }: &Config,
     ) -> Result<(), Report> {
         // Ensure the version is greater than the current version:
@@ -91,6 +96,18 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                     i
                 );
             }
+        }
+
+        // Validate uptime config:
+        if *uptime_window == 0 {
+            bail!("validator_config.uptime_window must be non-zero");
+        }
+        if *missed_blocks_max >= *uptime_window {
+            bail!(
+                "validator_config.missed_blocks_max ({}) must be less than uptime_window ({})",
+                missed_blocks_max,
+                uptime_window,
+            );
         }
 
         Ok(())
