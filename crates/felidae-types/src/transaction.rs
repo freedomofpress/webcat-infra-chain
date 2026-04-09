@@ -103,6 +103,9 @@ pub struct ValidatorConfig {
     pub uptime_window: u64,
     /// Maximum missed blocks in the window before a validator is jailed.
     pub missed_blocks_max: u64,
+    /// Maximum missed blocks in the window before a jailed validator is unjailed.
+    /// Must be strictly less than `missed_blocks_max` to prevent oscillation.
+    pub unjail_missed_max: u64,
 }
 
 impl Default for ValidatorConfig {
@@ -110,6 +113,7 @@ impl Default for ValidatorConfig {
         Self {
             uptime_window: 10_000,
             missed_blocks_max: 500,
+            unjail_missed_max: 250,
         }
     }
 }
