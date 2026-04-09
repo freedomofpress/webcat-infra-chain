@@ -18,7 +18,7 @@ use felidae_types::{
         Action, Admin, AdminConfig, AuthenticatedTx, Blockstamp, ChainId, Config, Delay, Domain,
         Empty, HashObserved, Observation, Observe, OnionConfig, OracleConfig, OracleIdentity,
         OracleVoteValue, PrefixOrderDomain, Quorum, Reconfigure, Timeout, Total, Transaction,
-        VotingConfig,
+        ValidatorConfig, VotingConfig,
     },
 };
 use futures::{Stream, StreamExt};

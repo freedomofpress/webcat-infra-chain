@@ -261,6 +261,7 @@ impl TryFrom<proto::Config> for Config {
             oracle_config,
             onion_config,
             validators,
+            validator_config,
         } = value;
 
         let version = version
@@ -284,12 +285,18 @@ impl TryFrom<proto::Config> for Config {
             .map(TryInto::try_into)
             .collect::<Result<_, _>>()?;
 
+        let validator_config = validator_config
+            .map(TryInto::try_into)
+            .transpose()?
+            .unwrap_or_default();
+
         Ok(Config {
             version,
             admins: admin_config,
             oracles: oracle_config,
             onion: onion_config,
             validators,
+            validator_config,
         })
     }
 }
@@ -302,6 +309,7 @@ impl From<Config> for proto::Config {
             oracles: oracle_config,
             onion: onion_config,
             validators,
+            validator_config,
         } = config;
         proto::Config {
             version: version.into(),
@@ -309,6 +317,35 @@ impl From<Config> for proto::Config {
             oracle_config: Some(oracle_config.into()),
             onion_config: Some(onion_config.into()),
             validators: validators.into_iter().map(Into::into).collect(),
+            validator_config: Some(validator_config.into()),
+        }
+    }
+}
+
+impl TryFrom<proto::config::ValidatorConfig> for ValidatorConfig {
+    type Error = crate::ParseError;
+
+    fn try_from(value: proto::config::ValidatorConfig) -> Result<Self, Self::Error> {
+        let uptime_window = value
+            .uptime_window
+            .try_into()
+            .map_err(|_| crate::ParseError::new::<u64>("invalid uptime_window".to_string()))?;
+        let missed_blocks_max = value
+            .missed_blocks_max
+            .try_into()
+            .map_err(|_| crate::ParseError::new::<u64>("invalid missed_blocks_max".to_string()))?;
+        Ok(ValidatorConfig {
+            uptime_window,
+            missed_blocks_max,
+        })
+    }
+}
+
+impl From<ValidatorConfig> for proto::config::ValidatorConfig {
+    fn from(config: ValidatorConfig) -> Self {
+        proto::config::ValidatorConfig {
+            uptime_window: config.uptime_window as i64,
+            missed_blocks_max: config.missed_blocks_max as i64,
         }
     }
 }
