@@ -233,7 +233,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             address: bad_address,
             ..
         }: Validator,
-    ) -> Result<(), Report> {
+    ) -> Result<Option<Update>, Report> {
         // Go through the list of active validators, taking the address (first 20 bytes of the
         // SHA-256 hash of the public key) as and checking if it matches the given address:
         let mut bad_pub_key = None;
@@ -257,14 +257,14 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 address = hex::encode(bad_address),
                 "could not find validator to tombstone; it may have already been tombstoned",
             );
-            return Ok(());
+            return Ok(None);
         };
 
         let pub_key_hex = hex::encode(bad_pub_key.to_bytes());
 
         if self.validator_status(&bad_pub_key).await? == Some(ValidatorStatus::Tombstoned) {
             warn!(pub_key = pub_key_hex, "validator is already tombstoned");
-            return Ok(());
+            return Ok(None);
         }
 
         info!(pub_key = pub_key_hex, "tombstoning validator");
@@ -275,7 +275,10 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         );
         self.set_validator_status(&bad_pub_key, ValidatorStatus::Tombstoned);
 
-        Ok(())
+        Ok(Some(Update {
+            pub_key: bad_pub_key,
+            power: Power::from(0u32),
+        }))
     }
 
     /// Get all validators in state, regardless of power or status.
