@@ -30,6 +30,7 @@ message Config {
     message ValidatorConfig {
         int64 uptime_window = 1;
         int64 missed_blocks_max = 2;
+        int64 unjail_missed_max = 3;
     }
 
     AdminConfig admin_config = 1;
