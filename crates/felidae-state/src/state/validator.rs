@@ -895,4 +895,62 @@ mod tests {
             Some(ValidatorStatus::Active)
         );
     }
+
+    #[tokio::test]
+    async fn test_jailed_to_inactive_via_config_sync() {
+        // A jailed validator (power=1) that is removed from the Config should transition to
+        // Inactive with power=0.
+        let (store, _dir) = setup_state_with_validator(ValidatorConfig {
+            uptime_window: 10,
+            missed_blocks_max: 5,
+            unjail_missed_max: 2,
+        })
+        .await;
+
+        let pub_key = test_pub_key();
+        let other_key =
+            tendermint::PublicKey::from_raw_ed25519(&[2u8; 32]).expect("valid ed25519 key");
+        let other_validator = felidae_types::transaction::Validator {
+            public_key: Bytes::copy_from_slice(&other_key.to_bytes()),
+        };
+
+        let mut state = store.state.write().await;
+
+        // Jail test_pub_key by simulating missed blocks.
+        for height in 3u64..=8 {
+            state
+                .mark_validators_voted(height, BTreeSet::new())
+                .await
+                .expect("mark_validators_voted");
+        }
+        state.jail_inactive_validators().await.expect("jail phase");
+        assert_eq!(
+            state.validator_status(&pub_key).await.unwrap(),
+            Some(ValidatorStatus::Jailed),
+            "precondition: validator should be Jailed"
+        );
+
+        // Now sync with a config that doesn't include test_pub_key.
+        let updates = state
+            .sync_validators_from_config(&[other_validator])
+            .await
+            .expect("sync_validators_from_config");
+
+        // The jailed validator should appear in the updates with power=0 so CometBFT
+        // removes it from the validator set (it was sitting at power=1 while jailed).
+        let removed = updates
+            .iter()
+            .find(|u| u.pub_key == pub_key)
+            .expect("update for jailed and removed validator");
+        assert_eq!(
+            removed.power,
+            Power::from(0u32),
+            "removed jailed validator should have power=0"
+        );
+
+        assert_eq!(
+            state.validator_status(&pub_key).await.unwrap(),
+            Some(ValidatorStatus::Inactive)
+        );
+    }
 }
