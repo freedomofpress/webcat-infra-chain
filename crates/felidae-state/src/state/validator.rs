@@ -998,4 +998,54 @@ mod tests {
             "tombstoning an already tombstoned validator should return None"
         );
     }
+
+    #[tokio::test]
+    async fn test_inactive_to_active_via_config_sync() {
+        // A validator that was removed (Inactive) should be reactivated when it reappears
+        // in the Config, with power back up to BASE_VALIDATOR_POWER.
+        let (store, _dir) = setup_state_with_validator(ValidatorConfig::default()).await;
+
+        let pub_key = test_pub_key();
+        let other_key =
+            tendermint::PublicKey::from_raw_ed25519(&[2u8; 32]).expect("valid ed25519 key");
+        let our_validator = felidae_types::transaction::Validator {
+            public_key: Bytes::copy_from_slice(&pub_key.to_bytes()),
+        };
+        let other_validator = felidae_types::transaction::Validator {
+            public_key: Bytes::copy_from_slice(&other_key.to_bytes()),
+        };
+
+        let mut state = store.state.write().await;
+
+        // First sync: test_pub_key is absent from the config, so it transitions to Inactive.
+        state
+            .sync_validators_from_config(&[other_validator.clone()])
+            .await
+            .expect("sync 1");
+        assert_eq!(
+            state.validator_status(&pub_key).await.unwrap(),
+            Some(ValidatorStatus::Inactive),
+            "precondition: should be Inactive after first sync"
+        );
+
+        // Second sync: readd test_pub_key alongside the other validator.
+        let updates = state
+            .sync_validators_from_config(&[our_validator, other_validator])
+            .await
+            .expect("sync 2: readd test_pub_key");
+
+        let reactivated = updates
+            .iter()
+            .find(|u| u.pub_key == pub_key)
+            .expect("update for reactivated validator");
+        assert_eq!(
+            reactivated.power,
+            Power::from(BASE_VALIDATOR_POWER),
+            "reactivated validator should be restored to BASE_VALIDATOR_POWER"
+        );
+        assert_eq!(
+            state.validator_status(&pub_key).await.unwrap(),
+            Some(ValidatorStatus::Active)
+        );
+    }
 }
