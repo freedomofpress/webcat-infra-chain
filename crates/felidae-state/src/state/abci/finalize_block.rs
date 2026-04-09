@@ -41,7 +41,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 voting_validators.insert(validator.address);
             }
         }
-        self.mark_validators_voted(voting_validators).await?;
+        self.mark_validators_voted(height.value(), voting_validators).await?;
         self.jail_inactive_validators().await?;
 
         // Tombstone byzantine validators

@@ -1273,6 +1273,7 @@ dependencies = [
 name = "felidae-state"
 version = "0.3.5"
 dependencies = [
+ "bitvec",
  "cnidarium",
  "color-eyre",
  "felidae-proto",
