@@ -1100,4 +1100,50 @@ mod tests {
             Some(ValidatorStatus::Tombstoned)
         );
     }
+
+    #[tokio::test]
+    async fn test_inactive_to_tombstoned() {
+        // Misbehavior evidence can arrive for a validator that was already removed from the
+        // config (Inactive, power=0). tombstone_validator searches all_validators(), not just
+        // active ones, so it should still find the validator and return a power=0 update.
+        let (store, _dir) = setup_state_with_validator(ValidatorConfig::default()).await;
+
+        let pub_key = test_pub_key();
+        let address = validator_address(&pub_key);
+        let other_key =
+            tendermint::PublicKey::from_raw_ed25519(&[2u8; 32]).expect("valid ed25519 key");
+        let other_validator = felidae_types::transaction::Validator {
+            public_key: Bytes::copy_from_slice(&other_key.to_bytes()),
+        };
+
+        let mut state = store.state.write().await;
+
+        // Drive test_pub_key to Inactive via config sync.
+        state
+            .sync_validators_from_config(&[other_validator])
+            .await
+            .expect("sync");
+        assert_eq!(
+            state.validator_status(&pub_key).await.unwrap(),
+            Some(ValidatorStatus::Inactive),
+            "precondition: validator should be Inactive"
+        );
+
+        // Evidence arrives for the now inactive validator.
+        let update = state
+            .tombstone_validator(Validator {
+                address,
+                power: Power::from(0u32),
+            })
+            .await
+            .expect("tombstone_validator")
+            .expect("should return Some(update) for an inactive validator");
+
+        assert_eq!(update.pub_key, pub_key);
+        assert_eq!(update.power, Power::from(0u32));
+        assert_eq!(
+            state.validator_status(&pub_key).await.unwrap(),
+            Some(ValidatorStatus::Tombstoned)
+        );
+    }
 }
