@@ -42,6 +42,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 ValidatorConfig {
                     uptime_window,
                     missed_blocks_max,
+                    unjail_missed_max,
                 },
         }: &Config,
     ) -> Result<(), Report> {
@@ -107,6 +108,14 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 "validator_config.missed_blocks_max ({}) must be less than uptime_window ({})",
                 missed_blocks_max,
                 uptime_window,
+            );
+        }
+        if *unjail_missed_max >= *missed_blocks_max {
+            bail!(
+                "validator_config.unjail_missed_max ({}) must be less than missed_blocks_max ({}) \
+                 to prevent oscillation at the jail threshold",
+                unjail_missed_max,
+                missed_blocks_max,
             );
         }
 
