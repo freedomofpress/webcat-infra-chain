@@ -629,6 +629,14 @@ mod tests {
         tendermint::PublicKey::from_raw_ed25519(&[1u8; 32]).expect("valid ed25519 key")
     }
 
+    /// Compute the CometBFT validator address for a public key.
+    fn validator_address(pub_key: &tendermint::PublicKey) -> [u8; 20] {
+        let mut ctx = Sha256::new();
+        ctx.update(pub_key.to_bytes());
+        let hash: [u8; 32] = ctx.finalize().into();
+        hash[0..20].try_into().expect("slice is 20 bytes")
+    }
+
     fn test_config(validator_config: ValidatorConfig) -> Config {
         Config {
             version: 1,
@@ -738,5 +746,99 @@ mod tests {
             .expect("status should be set");
         // And now we should be Jailed.
         assert_eq!(status, ValidatorStatus::Jailed);
+    }
+
+    #[tokio::test]
+    async fn test_jailed_to_active_on_uptime_recovery() {
+        // window=10, jail threshold=5, unjail threshold=2.
+        //
+        // Phase 1: jail by missing heights 3-8 (6 misses).
+        // Phase 2: recover by signing heights 9-16.
+        //   Heights 9-12 overwrite indices that were already 1 (grace period), no change.
+        //   Heights 13-16 overwrite the 0s at indices 3-6, dropping missed from 6 down to 2.
+        //   At missed=2 == unjail_missed_max the validator should be unjailed.
+        let (store, _dir) = setup_state_with_validator(ValidatorConfig {
+            uptime_window: 10,
+            missed_blocks_max: 5,
+            unjail_missed_max: 2,
+        })
+        .await;
+
+        let pub_key = test_pub_key();
+        let address = validator_address(&pub_key);
+        let mut state = store.state.write().await;
+
+        // Phase 1: miss enough blocks to trigger jailing.
+        for height in 3u64..=8 {
+            state
+                .mark_validators_voted(height, BTreeSet::new())
+                .await
+                .expect("mark_validators_voted");
+        }
+        state
+            .jail_inactive_validators()
+            .await
+            .expect("jail phase 1");
+        assert_eq!(
+            state.validator_status(&pub_key).await.unwrap(),
+            Some(ValidatorStatus::Jailed),
+            "should be Jailed after phase 1"
+        );
+
+        // Phase 2: sign every block during recovery.
+        // The jailed validator still appears in active_validators (power=1 > 0),
+        // so its uptime continues to be tracked.
+        let voted = BTreeSet::from([address]);
+        for height in 9u64..=15 {
+            state
+                .mark_validators_voted(height, voted.clone())
+                .await
+                .expect("mark_validators_voted");
+        }
+
+        // At height 15 we have 3 misses remaining - still above unjail_missed_max=2, so
+        // calling jail_inactive_validators here must NOT unjail the validator.
+        let updates = state
+            .jail_inactive_validators()
+            .await
+            .expect("jail_inactive_validators mid-recovery");
+        assert!(
+            updates.is_empty(),
+            "should not unjail while still above unjail_missed_max"
+        );
+        assert_eq!(
+            state.validator_status(&pub_key).await.unwrap(),
+            Some(ValidatorStatus::Jailed),
+            "should still be Jailed at 3 missed"
+        );
+
+        // One more signed block brings missed down to 2 == unjail_missed_max.
+        state
+            .mark_validators_voted(16, voted)
+            .await
+            .expect("mark_validators_voted height 16");
+
+        let updates = state
+            .jail_inactive_validators()
+            .await
+            .expect("jail_inactive_validators after full recovery");
+
+        assert_eq!(
+            updates.len(),
+            1,
+            "expected exactly one power update on unjail"
+        );
+        let update = &updates[0];
+        assert_eq!(update.pub_key, pub_key);
+        assert_eq!(
+            update.power,
+            Power::from(BASE_VALIDATOR_POWER),
+            "unjailed validator should be restored to BASE_VALIDATOR_POWER"
+        );
+
+        assert_eq!(
+            state.validator_status(&pub_key).await.unwrap(),
+            Some(ValidatorStatus::Active)
+        );
     }
 }
