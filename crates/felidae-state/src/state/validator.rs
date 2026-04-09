@@ -953,4 +953,49 @@ mod tests {
             Some(ValidatorStatus::Inactive)
         );
     }
+
+    #[tokio::test]
+    async fn test_active_to_tombstoned() {
+        // Tombstoning an active validator should immediately set power=0 and return an update.
+        // A second tombstone call for the same validator should be a no op (returns None).
+        let (store, _dir) = setup_state_with_validator(ValidatorConfig::default()).await;
+
+        let pub_key = test_pub_key();
+        let address = validator_address(&pub_key);
+
+        let mut state = store.state.write().await;
+
+        let update = state
+            .tombstone_validator(Validator {
+                address,
+                power: Power::from(BASE_VALIDATOR_POWER),
+            })
+            .await
+            .expect("tombstone_validator");
+
+        let update = update.expect("first tombstone should return Some(update)");
+        assert_eq!(update.pub_key, pub_key);
+        assert_eq!(
+            update.power,
+            Power::from(0u32),
+            "tombstoned validator should have power=0"
+        );
+        assert_eq!(
+            state.validator_status(&pub_key).await.unwrap(),
+            Some(ValidatorStatus::Tombstoned)
+        );
+
+        // Calling tombstone again should be a no op - its already tombstoned.
+        let second = state
+            .tombstone_validator(Validator {
+                address,
+                power: Power::from(0u32),
+            })
+            .await
+            .expect("second tombstone_validator");
+        assert!(
+            second.is_none(),
+            "tombstoning an already tombstoned validator should return None"
+        );
+    }
 }
