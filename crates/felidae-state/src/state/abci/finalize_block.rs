@@ -41,8 +41,9 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 voting_validators.insert(validator.address);
             }
         }
-        self.mark_validators_voted(height.value(), voting_validators).await?;
-        self.jail_inactive_validators().await?;
+        self.mark_validators_voted(height.value(), voting_validators)
+            .await?;
+        let jail_updates = self.jail_inactive_validators().await?;
 
         // Tombstone byzantine validators
         for Misbehavior {
@@ -146,6 +147,8 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         // full set.  Returning the full active set would cause duplicates when a newly
         // added validator appears in both active_validators() and validator_changes,
         // which CometBFT rejects ("duplicate entry").
+        // Jail/unjail power changes are also included here.
+        validator_changes.extend(jail_updates);
         let validator_updates = validator_changes;
 
         Ok(response::FinalizeBlock {
