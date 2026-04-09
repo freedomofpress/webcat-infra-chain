@@ -535,7 +535,9 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     /// - Jailed --> Active: once missed_blocks falls back within the threshold the
     ///   validator is unjailed and restored to BASE_VALIDATOR_POWER.
     pub(crate) async fn jail_inactive_validators(&mut self) -> Result<Vec<Update>, Report> {
-        let missed_blocks_max = self.config().await?.validator_config.missed_blocks_max as usize;
+        let validator_config = self.config().await?.validator_config;
+        let missed_blocks_max = validator_config.missed_blocks_max as usize;
+        let unjail_missed_max = validator_config.unjail_missed_max as usize;
         let all_pub_keys = self.all_validators().await?;
         let mut updates = vec![];
 
@@ -580,10 +582,10 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                         continue;
                     };
                     let missed = uptime.num_missed_blocks();
-                    if missed <= missed_blocks_max {
+                    if missed <= unjail_missed_max {
                         info!(
                             pub_key = pub_key_hex,
-                            missed, missed_blocks_max, "unjailing validator; uptime has recovered"
+                            missed, unjail_missed_max, "unjailing validator; uptime has recovered"
                         );
                         self.store.put(
                             Internal,

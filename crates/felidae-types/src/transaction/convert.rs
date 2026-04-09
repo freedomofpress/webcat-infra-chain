@@ -334,9 +334,14 @@ impl TryFrom<proto::config::ValidatorConfig> for ValidatorConfig {
             .missed_blocks_max
             .try_into()
             .map_err(|_| crate::ParseError::new::<u64>("invalid missed_blocks_max".to_string()))?;
+        let unjail_missed_max = value
+            .unjail_missed_max
+            .try_into()
+            .map_err(|_| crate::ParseError::new::<u64>("invalid unjail_missed_max".to_string()))?;
         Ok(ValidatorConfig {
             uptime_window,
             missed_blocks_max,
+            unjail_missed_max,
         })
     }
 }
@@ -346,6 +351,7 @@ impl From<ValidatorConfig> for proto::config::ValidatorConfig {
         proto::config::ValidatorConfig {
             uptime_window: config.uptime_window as i64,
             missed_blocks_max: config.missed_blocks_max as i64,
+            unjail_missed_max: config.unjail_missed_max as i64,
         }
     }
 }
