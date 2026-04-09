@@ -609,3 +609,134 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         Ok(updates)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use felidae_types::transaction::{
+        Admin, AdminConfig, Delay, OnionConfig, OracleConfig, Quorum, Timeout, Total,
+        ValidatorConfig, VotingConfig,
+    };
+    use prost::bytes::Bytes;
+    use tempfile::TempDir;
+    use tendermint::block::Height;
+
+    use super::*;
+    use crate::Store;
+
+    fn test_pub_key() -> tendermint::PublicKey {
+        tendermint::PublicKey::from_raw_ed25519(&[1u8; 32]).expect("valid ed25519 key")
+    }
+
+    fn test_config(validator_config: ValidatorConfig) -> Config {
+        Config {
+            version: 1,
+            admins: AdminConfig {
+                voting: VotingConfig {
+                    total: Total(1),
+                    quorum: Quorum(1),
+                    timeout: Timeout(Duration::from_secs(3600)),
+                    delay: Delay(Duration::from_secs(0)),
+                },
+                authorized: vec![Admin {
+                    identity: Bytes::from(vec![0xabu8; 64]),
+                }],
+            },
+            oracles: OracleConfig {
+                enabled: false,
+                voting: VotingConfig {
+                    total: Total(1),
+                    quorum: Quorum(1),
+                    timeout: Timeout(Duration::from_secs(3600)),
+                    delay: Delay(Duration::from_secs(0)),
+                },
+                max_enrolled_subdomains: 10,
+                observation_timeout: Duration::from_secs(300),
+                authorized: vec![],
+            },
+            onion: OnionConfig { enabled: false },
+            validators: vec![],
+            validator_config,
+        }
+    }
+
+    /// Set up state with a config and a single declared validator at height 2.
+    ///
+    /// Returns the `(Store, TempDir)` pair; the `TempDir` must be kept alive for the test.
+    async fn setup_state_with_validator(validator_config: ValidatorConfig) -> (Store, TempDir) {
+        let temp_dir = TempDir::new().expect("failed to create temp dir");
+        let store = Store::init(temp_dir.path().to_path_buf())
+            .await
+            .expect("failed to create store");
+
+        let pub_key = test_pub_key();
+        {
+            let mut state = store.state.write().await;
+            state
+                .set_config(test_config(validator_config))
+                .await
+                .expect("set_config");
+            // Start at height 2 so the height 1 special case does not affect the first vote.
+            // (height 1 is the genesis block, so no votes are expected yet).
+            state
+                .set_block_height(Height::from(2u32))
+                .await
+                .expect("set_block_height");
+            state
+                .declare_validator(pub_key)
+                .await
+                .expect("declare_validator");
+        }
+        (store, temp_dir)
+    }
+
+    #[tokio::test]
+    async fn test_active_to_jailed_on_excessive_misses() {
+        // window=10, jail threshold=5 - missing 6 consecutive blocks should trigger jailing.
+        let (store, _dir) = setup_state_with_validator(ValidatorConfig {
+            uptime_window: 10,
+            missed_blocks_max: 5,
+            unjail_missed_max: 2,
+        })
+        .await;
+
+        let pub_key = test_pub_key();
+        let mut state = store.state.write().await;
+
+        // Simulate 6 blocks where the validator does not vote.
+        // An empty voted_addresses set means no validator signed.
+        for height in 3u64..=8 {
+            state
+                .mark_validators_voted(height, BTreeSet::new())
+                .await
+                .expect("mark_validators_voted");
+        }
+
+        // The validator has 6 misses > missed_blocks_max of 5, so it should be jailed.
+        let updates = state
+            .jail_inactive_validators()
+            .await
+            .expect("jail_inactive_validators");
+
+        assert_eq!(updates.len(), 1, "expected exactly one power update");
+        let update = &updates[0];
+        assert_eq!(
+            update.pub_key, pub_key,
+            "update should be for our validator"
+        );
+        assert_eq!(
+            update.power,
+            Power::from(1u32),
+            "jailed validator power should be 1, not 0"
+        );
+
+        let status = state
+            .validator_status(&pub_key)
+            .await
+            .expect("validator_status")
+            .expect("status should be set");
+        // And now we should be Jailed.
+        assert_eq!(status, ValidatorStatus::Jailed);
+    }
+}
