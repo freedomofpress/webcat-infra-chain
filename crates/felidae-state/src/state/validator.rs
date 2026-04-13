@@ -136,7 +136,7 @@ impl felidae_proto::DomainType for Uptime {
 /// 10^9 keeps jailed validators power of 1 negligible, fits within
 /// `i32::MAX` leaving headroom for any incidental arithmetic, and stays well within
 /// CometBFT's total-power limit of `i64::MAX / 8` even for large validator sets.
-pub(crate) const BASE_VALIDATOR_POWER: u32 = 1_000_000_000;
+pub const BASE_VALIDATOR_POWER: u32 = 1_000_000_000;
 
 impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     /// Declare a new validator by its public key.
