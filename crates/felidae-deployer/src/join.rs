@@ -133,6 +133,17 @@ pub async fn join_network(config: JoinConfig) -> Result<WebcatNode> {
     // See GH131 for more info.
     fs::write(node.genesis_path(), &genesis_raw).wrap_err("failed to write genesis.json")?;
 
+    // Generate a priv_validator_key up front. A joined node boots as a full
+    // node (its pubkey is not in the genesis validator set), but having a
+    // consensus key pre-provisioned means the node can later be promoted to
+    // validator status via an admin reconfiguration without any manual key
+    // wrangling — the pubkey is discoverable at `priv_validator_key_path()`.
+    // Without this, CometBFT would auto-generate the key at first start,
+    // forcing callers to either race the daemon or restart the node.
+    let (priv_validator_key_json, _pub_key) = crate::network::generate_priv_validator_key()?;
+    fs::write(node.priv_validator_key_path(), priv_validator_key_json)
+        .wrap_err("failed to write priv_validator_key.json")?;
+
     // Initialize priv_validator_state (empty, since this is a full node).
     let priv_validator_state = r#"{
   "height": "0",

@@ -411,6 +411,7 @@ impl Network {
                 authorized: oracle_configs,
             },
             onion: OnionConfig { enabled: false },
+            validators: vec![],
         })
     }
 
@@ -614,7 +615,7 @@ fn initialize_node(node: &mut WebcatNode) -> Result<()> {
 
     // For validators, generate priv_validator_key
     if node.role.is_validator() {
-        let priv_validator_key = generate_priv_validator_key()?;
+        let (priv_validator_key, _pub_key) = generate_priv_validator_key()?;
         let mut file = fs::File::create(node.priv_validator_key_path())?;
         file.write_all(priv_validator_key.as_bytes())?;
 
@@ -665,8 +666,14 @@ pub fn generate_node_key() -> Result<(String, String)> {
     Ok((serde_json::to_string_pretty(&node_key)?, node_id))
 }
 
-/// Generate a CometBFT priv_validator_key.json.
-fn generate_priv_validator_key() -> Result<String> {
+/// Generate a CometBFT `priv_validator_key.json` body.
+///
+/// Returns `(json_string, pub_key_bytes)` where `json_string` is ready to be
+/// written to a node's `config/priv_validator_key.json` and `pub_key_bytes` is
+/// the raw 32-byte Ed25519 public key — suitable for inclusion in a felidae
+/// `Config.validators` entry when promoting a newly-joined node to validator
+/// status.
+pub fn generate_priv_validator_key() -> Result<(String, Vec<u8>)> {
     let secret_bytes: [u8; 32] = rand::random();
     let signing_key = SigningKey::from_bytes(&secret_bytes);
     let verifying_key = signing_key.verifying_key();
@@ -678,7 +685,7 @@ fn generate_priv_validator_key() -> Result<String> {
     let address = hex::encode_upper(&hash[..20]);
 
     let priv_key_bytes = signing_key.to_bytes();
-    let pub_key_bytes = verifying_key.to_bytes();
+    let pub_key_bytes = verifying_key.to_bytes().to_vec();
 
     let mut full_key = Vec::with_capacity(64);
     full_key.extend_from_slice(&priv_key_bytes);
@@ -696,7 +703,10 @@ fn generate_priv_validator_key() -> Result<String> {
         }
     });
 
-    Ok(serde_json::to_string_pretty(&priv_validator_key)?)
+    Ok((
+        serde_json::to_string_pretty(&priv_validator_key)?,
+        pub_key_bytes,
+    ))
 }
 
 /// Generate felidae admin and oracle keys as PKCS#8-encoded ECDSA-P256 keys.
