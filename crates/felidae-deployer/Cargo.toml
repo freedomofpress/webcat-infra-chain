@@ -47,6 +47,7 @@ integration = []
 felidae = { path = "../felidae" }
 felidae-oracle = { path = "../felidae-oracle" }
 felidae-admin = { path = "../felidae-admin" }
+felidae-state = { path = "../felidae-state" }
 tendermint = { workspace = true }
 tendermint-rpc = { workspace = true }
 reqwest = { workspace = true }
