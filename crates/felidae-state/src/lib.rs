@@ -43,7 +43,7 @@ use store::{
 };
 pub use store::{Store, Substore};
 
-pub use state::Vote;
+pub use state::{BASE_VALIDATOR_POWER, Vote};
 
 /// ABCI service implementation for [`State`].
 mod abci;
@@ -104,6 +104,6 @@ mod state {
     /// Utility functions.
     mod util;
 
-    pub(crate) use validator::BASE_VALIDATOR_POWER;
+    pub use validator::BASE_VALIDATOR_POWER;
     pub use voting::Vote;
 }
