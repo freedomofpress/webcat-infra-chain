@@ -2,6 +2,16 @@
 
 Nothing yet!
 
+# Version 0.3.6 (2026-04-13)
+
+* fix(oracle): handle repeated enrollment requests, #134
+* feat: validate oracle endpoints as URLs, #133
+* feat(deployer): join network logic, #130
+* feat: felidae query chain-info, #130
+* dev: just lint target, #128
+* dev: new debug convert-key subcommand, #128
+* test: generate admin keys during create-network, #128
+
 # Version 0.3.5 (2026-03-02)
 
 * feat: debug utility for comparing apphashes, #113
