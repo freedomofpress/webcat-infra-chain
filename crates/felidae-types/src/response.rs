@@ -87,3 +87,30 @@ pub struct ChainInfo {
     /// The application state root hash (hex-encoded)
     pub app_hash: String,
 }
+
+/// Response structure from the `/validators` query endpoint.
+///
+/// Summarises a single validator's on-chain state: its identity, current
+/// voting power, status, and recent signing behaviour. The `missed_blocks`,
+/// `uptime_window`, `missed_blocks_max`, and `unjail_missed_max` fields
+/// together let a caller render signing uptime as well as compare it against
+/// the thresholds that govern jailing and unjailing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidatorInfo {
+    /// Hex-encoded ed25519 public key identifying the validator.
+    pub identity: String,
+    /// Hex-encoded CometBFT address (first 20 bytes of SHA-256 over the public key).
+    pub address: String,
+    /// Current voting power reported to CometBFT.
+    pub power: u64,
+    /// Validator status: one of `"active"`, `"inactive"`, `"jailed"`, or `"tombstoned"`.
+    pub status: String,
+    /// Number of blocks missed within the current sliding uptime window.
+    pub missed_blocks: u64,
+    /// Size of the sliding uptime window in blocks.
+    pub uptime_window: u64,
+    /// Jail threshold: once missed blocks exceeds this, the validator is jailed.
+    pub missed_blocks_max: u64,
+    /// Unjail threshold: once a jailed validator's missed blocks falls to this, it unjails.
+    pub unjail_missed_max: u64,
+}
