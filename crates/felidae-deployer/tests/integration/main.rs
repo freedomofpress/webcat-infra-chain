@@ -87,3 +87,4 @@ mod cli_tests;
 mod join_tests;
 mod oracle_tests;
 mod query_tests;
+mod validator_query_tests;

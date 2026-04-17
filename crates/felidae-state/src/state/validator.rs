@@ -295,6 +295,69 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         Ok(pub_keys)
     }
 
+    /// Build a list of [`ValidatorInfo`] for every validator tracked on the chain.
+    ///
+    /// This is the data source for the `/validators` query endpoint. The returned entries
+    /// cover validators in every lifecycle state (Active, Inactive, Jailed, Tombstoned);
+    /// callers can filter by [`ValidatorInfo::status`] or by `power` as needed.
+    pub async fn validator_info(
+        &self,
+    ) -> Result<Vec<felidae_types::response::ValidatorInfo>, Report> {
+        let validator_config = self.config().await?.validator_config;
+        let mut result = Vec::new();
+        let mut powers: Vec<(tendermint::PublicKey, Power)> = Vec::new();
+        {
+            let mut stream = Box::pin(self.store.prefix::<Power>(Internal, "current/validators/"));
+            while let Some(Ok((key, power))) = stream.next().await {
+                let pub_key_bytes = hex::decode(key.trim_start_matches("current/validators/"))?;
+                let pub_key = tendermint::PublicKey::from_raw_ed25519(&pub_key_bytes)
+                    .ok_or_eyre("invalid ed25519 public key")?;
+                powers.push((pub_key, power));
+            }
+        }
+        for (pub_key, power) in powers {
+            let pub_key_hex = hex::encode(pub_key.to_bytes());
+            let mut ctx = Sha256::new();
+            ctx.update(pub_key.to_bytes());
+            let hash: [u8; 32] = ctx.finalize().into();
+            let address_hex = hex::encode(&hash[0..20]);
+
+            let status = match self.validator_status(&pub_key).await? {
+                Some(ValidatorStatus::Active) => "active",
+                Some(ValidatorStatus::Inactive) => "inactive",
+                Some(ValidatorStatus::Jailed) => "jailed",
+                Some(ValidatorStatus::Tombstoned) => "tombstoned",
+                // Predates status tracking — treat as active when it still has power.
+                None if power.value() > 0 => "active",
+                None => "inactive",
+            };
+
+            let uptime: Option<Uptime> = self
+                .store
+                .get(
+                    Internal,
+                    &format!("current/validator_uptime/{}", pub_key_hex),
+                )
+                .await?;
+            let (missed_blocks, uptime_window) = match &uptime {
+                Some(u) => (u.num_missed_blocks() as u64, u.window_len() as u64),
+                None => (0, validator_config.uptime_window),
+            };
+
+            result.push(felidae_types::response::ValidatorInfo {
+                identity: pub_key_hex,
+                address: address_hex,
+                power: power.value(),
+                status: status.to_string(),
+                missed_blocks,
+                uptime_window,
+                missed_blocks_max: validator_config.missed_blocks_max,
+                unjail_missed_max: validator_config.unjail_missed_max,
+            });
+        }
+        Ok(result)
+    }
+
     /// Get all validators with non-zero power (Active and Jailed).
     ///
     /// Jailed validators carry power=1 rather than being removed from the CometBFT set,
