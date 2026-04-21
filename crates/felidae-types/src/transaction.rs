@@ -40,6 +40,7 @@ domain_types!(
     Oracle: proto::Oracle,
     OracleIdentity: proto::OracleIdentity,
     OnionConfig: proto::config::OnionConfig,
+    ValidatorConfig: proto::config::ValidatorConfig,
     VotingConfig: proto::config::VotingConfig,
     Validator: proto::Validator,
     Observe: proto::action::Observe,
@@ -92,6 +93,29 @@ pub struct Config {
     pub onion: OnionConfig,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub validators: Vec<Validator>,
+    #[serde(default)]
+    pub validator_config: ValidatorConfig,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct ValidatorConfig {
+    /// Number of blocks in the sliding uptime window.
+    pub uptime_window: u64,
+    /// Maximum missed blocks in the window before a validator is jailed.
+    pub missed_blocks_max: u64,
+    /// Maximum missed blocks in the window before a jailed validator is unjailed.
+    /// Must be strictly less than `missed_blocks_max` to prevent oscillation.
+    pub unjail_missed_max: u64,
+}
+
+impl Default for ValidatorConfig {
+    fn default() -> Self {
+        Self {
+            uptime_window: 10_000,
+            missed_blocks_max: 500,
+            unjail_missed_max: 250,
+        }
+    }
 }
 
 impl Config {
@@ -128,6 +152,7 @@ impl Config {
             },
             onion: OnionConfig { enabled: false },
             validators: vec![],
+            validator_config: ValidatorConfig::default(),
         }
     }
 }
@@ -151,7 +176,6 @@ pub struct Admin {
 pub struct Validator {
     #[serde_as(as = "Hex")]
     pub public_key: Bytes,
-    pub power: u64,
 }
 
 #[serde_as]
@@ -488,6 +512,7 @@ mod tests {
             },
             onion: OnionConfig { enabled: false },
             validators: vec![],
+            validator_config: ValidatorConfig::default(),
         };
         assert_snapshot!(serde_json::to_string(&config).unwrap());
     }
@@ -532,6 +557,7 @@ mod tests {
                     },
                     onion: OnionConfig { enabled: false },
                     validators: vec![],
+                    validator_config: ValidatorConfig::default(),
                 },
             })],
         };

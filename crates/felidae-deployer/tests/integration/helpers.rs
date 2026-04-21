@@ -386,7 +386,6 @@ pub fn read_genesis_validator_pubkeys(
         let pub_key_bytes = read_priv_validator_pubkey(&node.priv_validator_key_path())?;
         validators.push(felidae_types::transaction::Validator {
             public_key: pub_key_bytes.into(),
-            power: 10,
         });
     }
     Ok(validators)
