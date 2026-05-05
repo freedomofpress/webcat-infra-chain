@@ -54,6 +54,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 },
                 onion: OnionConfig { enabled: false },
                 validators: vec![],
+                validator_config: ValidatorConfig::default(),
             }
         } else {
             // Parse the JSON from app_state_bytes and extract the config:
@@ -75,60 +76,72 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         self.set_config(config.clone()).await?;
 
         // If the initial config does have validators (optional),
-        // we need to check that they match the genesis validators.
+        // we need to check that the public keys match the genesis validators exactly.
         if !config.validators.is_empty() {
-            let mut genesis_validators_map = BTreeMap::new();
-            for validator in request.validators.iter() {
-                let pub_key_bytes = validator.pub_key.to_bytes();
-                genesis_validators_map.insert(pub_key_bytes.clone(), validator.power.value());
-            }
+            let genesis_keys: BTreeMap<Vec<u8>, ()> = request
+                .validators
+                .iter()
+                .map(|v| (v.pub_key.to_bytes().to_vec(), ()))
+                .collect();
 
-            let mut config_validators_map = BTreeMap::new();
-            for validator in config.validators.iter() {
-                let pub_key_bytes: Vec<u8> = validator.public_key.to_vec();
-                config_validators_map.insert(pub_key_bytes, validator.power);
-            }
+            let config_keys: BTreeMap<Vec<u8>, ()> = config
+                .validators
+                .iter()
+                .map(|v| (v.public_key.to_vec(), ()))
+                .collect();
 
-            if genesis_validators_map.len() != config_validators_map.len() {
+            if genesis_keys.len() != config_keys.len() {
                 bail!(
                     "genesis has {} validators but config has {} validators",
-                    genesis_validators_map.len(),
-                    config_validators_map.len()
+                    genesis_keys.len(),
+                    config_keys.len()
                 );
             }
 
-            // Check that every genesis validator exists in config with matching power
-            for (pub_key_bytes, genesis_power) in genesis_validators_map.iter() {
-                match config_validators_map.get(pub_key_bytes) {
-                    Some(config_power) => {
-                        if *config_power != *genesis_power {
-                            bail!(
-                                "validator {} has power {} in genesis but {} in config",
-                                hex::encode(pub_key_bytes),
-                                genesis_power,
-                                config_power
-                            );
-                        }
-                    }
-                    None => {
-                        bail!(
-                            "validator {} in genesis is not in config",
-                            hex::encode(pub_key_bytes)
-                        );
-                    }
+            for pub_key_bytes in genesis_keys.keys() {
+                if !config_keys.contains_key(pub_key_bytes) {
+                    bail!(
+                        "validator {} in genesis is not in config",
+                        hex::encode(pub_key_bytes)
+                    );
                 }
             }
         }
 
-        // Declare the initial validator set:
-        for validator in request.validators.iter() {
-            self.declare_validator(validator.clone()).await?;
+        // Ensure all genesis validators have equal power:
+        if let Some(first) = request.validators.first() {
+            let expected_power = first.power;
+            for validator in request.validators.iter().skip(1) {
+                if validator.power != expected_power {
+                    bail!(
+                        "all validators must have equal power at init_chain, but validator {} has power {} while first has power {}",
+                        hex::encode(validator.pub_key.to_bytes()),
+                        validator.power,
+                        expected_power,
+                    );
+                }
+            }
         }
+
+        // Declare the initial validator set, overriding genesis powers with BASE_VALIDATOR_POWER:
+        for validator in request.validators.iter() {
+            self.declare_validator(validator.pub_key).await?;
+        }
+
+        // Build the response validator set with our canonical power, not the genesis file's power.
+        let validators = request
+            .validators
+            .iter()
+            .map(|v| Update {
+                pub_key: v.pub_key,
+                power: Power::from(BASE_VALIDATOR_POWER),
+            })
+            .collect();
 
         Ok(response::InitChain {
             // TODO: permit changing consensus params?
             consensus_params: Some(request.consensus_params),
-            validators: request.validators,
+            validators,
             app_hash,
         })
     }

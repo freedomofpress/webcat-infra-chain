@@ -66,6 +66,7 @@ base64-url = "3.0.2"
 ed25519-dalek = { version = "2.1", features = ["std"] }
 addr = "0.15"
 url = "2"
+bitvec = "1"
 
 # config for 'cargo release'
 [workspace.metadata.release]

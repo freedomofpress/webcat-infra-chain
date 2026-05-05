@@ -1186,6 +1186,7 @@ dependencies = [
  "felidae",
  "felidae-admin",
  "felidae-oracle",
+ "felidae-state",
  "felidae-types",
  "hex",
  "humantime",
@@ -1274,6 +1275,7 @@ dependencies = [
 name = "felidae-state"
 version = "0.3.5"
 dependencies = [
+ "bitvec",
  "cnidarium",
  "color-eyre",
  "felidae-proto",

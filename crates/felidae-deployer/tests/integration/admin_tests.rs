@@ -101,6 +101,7 @@ async fn test_admin_reconfiguration() -> color_eyre::Result<()> {
         },
         onion: current_config.onion.clone(),
         validators: current_config.validators.clone(),
+        validator_config: current_config.validator_config.clone(),
     };
 
     // Submit reconfiguration from all 3 admins to reach quorum.
@@ -181,6 +182,7 @@ async fn test_admin_reconfig_minority_no_update() -> color_eyre::Result<()> {
         },
         onion: current_config.onion.clone(),
         validators: current_config.validators.clone(),
+        validator_config: current_config.validator_config.clone(),
     };
 
     // Submit reconfiguration from only 2 of 3 admins (below quorum of 3)
@@ -299,6 +301,7 @@ async fn test_admin_reconfig_full_quorum_success() -> color_eyre::Result<()> {
         },
         onion: current_config.onion.clone(),
         validators: current_config.validators.clone(),
+        validator_config: current_config.validator_config.clone(),
     };
 
     // Submit reconfiguration from ALL 3 admins (meeting quorum)
@@ -384,7 +387,7 @@ async fn test_admin_reconfig_full_quorum_success() -> color_eyre::Result<()> {
 ///
 /// 0. **Setup**: Start 3-validator network, verify initial state
 /// 1. **Declare genesis validators**: Populate config.validators with the 3 genesis validators
-/// 2. **Onboard 4th validator**: Add a dummy validator with power 5
+/// 2. **Onboard 4th validator**: Add a dummy validator (BASE_VALIDATOR_POWER)
 /// 3. **Offboard 4th validator**: Remove it, verify chain continues
 #[tokio::test]
 #[cfg(feature = "integration")]
@@ -439,6 +442,7 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
         oracles: initial_config.oracles.clone(),
         onion: initial_config.onion.clone(),
         validators: genesis_validators.clone(),
+        validator_config: initial_config.validator_config.clone(),
     };
 
     eprintln!("[phase 1] submitting config with 3 genesis validators");
@@ -480,7 +484,6 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
     let mut phase2_validators = genesis_validators.clone();
     phase2_validators.push(Validator {
         public_key: new_pubkey.clone().into(),
-        power: 5,
     });
 
     let phase2_config = Config {
@@ -489,6 +492,7 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
         oracles: config_after_phase1.oracles.clone(),
         onion: config_after_phase1.onion.clone(),
         validators: phase2_validators,
+        validator_config: config_after_phase1.validator_config.clone(),
     };
 
     eprintln!("[phase 2] submitting config with 4 validators");
@@ -529,13 +533,19 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
         "CometBFT should have 4 validators"
     );
 
-    // Verify the new validator has power 5
+    // Verify the new validator has the canonical active power (BASE_VALIDATOR_POWER).
+    // Felidae assigns a uniform power to every active validator, ignoring any
+    // per-validator power value that might be carried in the config.
     let new_val_entry = cometbft_vals_phase2
         .iter()
         .find(|(key, _)| key == &new_pubkey)
         .expect("new validator should be in CometBFT validator set");
-    assert_eq!(new_val_entry.1, 5, "new validator should have power 5");
-    eprintln!("[phase 2] confirmed: 4th validator onboarded with power 5");
+    assert_eq!(
+        new_val_entry.1,
+        u64::from(felidae_state::BASE_VALIDATOR_POWER),
+        "new validator should have BASE_VALIDATOR_POWER"
+    );
+    eprintln!("[phase 2] confirmed: 4th validator onboarded at BASE_VALIDATOR_POWER");
 
     // ── Phase 3: Offboard the 4th validator ──
 
@@ -545,6 +555,7 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
         oracles: config_after_phase2.oracles.clone(),
         onion: config_after_phase2.onion.clone(),
         validators: genesis_validators.clone(),
+        validator_config: config_after_phase2.validator_config.clone(),
     };
 
     eprintln!("[phase 3] submitting config with 3 validators (removing 4th)");
@@ -641,6 +652,7 @@ async fn test_admin_reconfig_empty_validators_is_noop() -> color_eyre::Result<()
         },
         onion: current_config.onion.clone(),
         validators: vec![], // explicitly empty
+        validator_config: current_config.validator_config.clone(),
     };
 
     eprintln!("[test] submitting reconfig with empty validators");
@@ -831,6 +843,7 @@ async fn test_validator_onboarding_joined_node() -> color_eyre::Result<()> {
         oracles: config_before_seed.oracles.clone(),
         onion: config_before_seed.onion.clone(),
         validators: genesis_validators.clone(),
+        validator_config: config_before_seed.validator_config.clone(),
     };
 
     eprintln!("[phase 4] seeding genesis validators into config");
@@ -861,7 +874,6 @@ async fn test_validator_onboarding_joined_node() -> color_eyre::Result<()> {
     let mut phase5_validators = genesis_validators.clone();
     phase5_validators.push(Validator {
         public_key: new_validator_pubkey.clone().into(),
-        power: 5,
     });
 
     let onboard_config = Config {
@@ -870,6 +882,7 @@ async fn test_validator_onboarding_joined_node() -> color_eyre::Result<()> {
         oracles: config_after_seed.oracles.clone(),
         onion: config_after_seed.onion.clone(),
         validators: phase5_validators,
+        validator_config: config_after_seed.validator_config.clone(),
     };
 
     eprintln!("[phase 5] onboarding newcomer as 4th validator");
@@ -905,8 +918,12 @@ async fn test_validator_onboarding_joined_node() -> color_eyre::Result<()> {
         .iter()
         .find(|(key, _)| key == &new_validator_pubkey)
         .expect("newcomer should appear in CometBFT validator set");
-    assert_eq!(newcomer_entry.1, 5, "newcomer should have power 5");
-    eprintln!("[phase 5] newcomer is in the CometBFT validator set with power 5");
+    assert_eq!(
+        newcomer_entry.1,
+        u64::from(felidae_state::BASE_VALIDATOR_POWER),
+        "newcomer should have BASE_VALIDATOR_POWER"
+    );
+    eprintln!("[phase 5] newcomer is in the CometBFT validator set at BASE_VALIDATOR_POWER");
 
     // ── Phase 6: Post-onboarding assertions ────────────────────────────────
 

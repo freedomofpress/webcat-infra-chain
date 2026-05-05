@@ -38,6 +38,12 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 enabled: _, // Can be enabled or not
             },
             validators,
+            validator_config:
+                ValidatorConfig {
+                    uptime_window,
+                    missed_blocks_max,
+                    unjail_missed_max,
+                },
         }: &Config,
     ) -> Result<(), Report> {
         // Ensure the version is greater than the current version:
@@ -83,25 +89,34 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             }
         }
 
-        // Validate validators field (primarily check the power is not too large)
+        // Validate that no validator has an all-zero public key (placeholder entry):
         for (i, validator) in validators.iter().enumerate() {
-            // Validate that power doesn't exceed `u32::MAX`
-            if validator.power > u32::MAX as u64 {
-                bail!(
-                    "validator at index {} has power {} which exceeds maximum {}",
-                    i,
-                    validator.power,
-                    u32::MAX
-                );
-            }
-
-            // Validate that public key is not all zeros (placeholder entry)
             if Self::is_all_zeros(&validator.public_key) {
                 bail!(
                     "validator at index {} has an all-zero public key (placeholder not replaced)",
                     i
                 );
             }
+        }
+
+        // Validate uptime config:
+        if *uptime_window == 0 {
+            bail!("validator_config.uptime_window must be non-zero");
+        }
+        if *missed_blocks_max >= *uptime_window {
+            bail!(
+                "validator_config.missed_blocks_max ({}) must be less than uptime_window ({})",
+                missed_blocks_max,
+                uptime_window,
+            );
+        }
+        if *unjail_missed_max >= *missed_blocks_max {
+            bail!(
+                "validator_config.unjail_missed_max ({}) must be less than missed_blocks_max ({}) \
+                 to prevent oscillation at the jail threshold",
+                unjail_missed_max,
+                missed_blocks_max,
+            );
         }
 
         Ok(())
