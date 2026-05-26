@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::process::Command;
 use std::time::Duration;
 
-use felidae_types::response::{AdminVote, OracleVote, PendingObservation};
+use felidae_types::response::{AdminVote, OracleVote, PendingObservation, ValidatorInfo};
 use felidae_types::transaction::Config;
 use tendermint_rpc::{Client, HttpClient, Paging};
 
@@ -462,4 +462,53 @@ pub async fn submit_admin_reconfig(
         tokio::time::sleep(crate::constants::inter_tx_delay()).await;
     }
     Ok(())
+}
+
+/// Queries every validator the chain knows about via `felidae query validators
+/// --json`. Returns the parsed list of `ValidatorInfo`.
+pub fn query_all_validators(
+    felidae_bin: &std::path::Path,
+    query_url: &str,
+) -> color_eyre::Result<Vec<ValidatorInfo>> {
+    let output = run_query_command(felidae_bin, "validators", query_url, &["--json"])?;
+    let validators: Vec<ValidatorInfo> = serde_json::from_str(&output)?;
+    Ok(validators)
+}
+
+/// Queries a single validator's info by hex-encoded ed25519 identity (full key
+/// or unambiguous prefix) via `felidae query validators <id> --json`. Returns
+/// `Ok(Some(_))` on success, `Ok(None)` if the route returned 404, and an
+/// error for any other CLI failure.
+pub fn query_validator_info(
+    felidae_bin: &std::path::Path,
+    query_url: &str,
+    id: &str,
+) -> color_eyre::Result<Option<ValidatorInfo>> {
+    let output = Command::new(felidae_bin)
+        .args([
+            "query",
+            "--query-url",
+            query_url,
+            "validators",
+            id,
+            "--json",
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // `error_for_status()` in the CLI surfaces 404 by printing the status
+        // line to stderr. Distinguish "not found" from real errors so callers
+        // can poll for a validator that hasn't been registered yet.
+        if stderr.contains("404") {
+            return Ok(None);
+        }
+        return Err(color_eyre::eyre::eyre!(
+            "felidae query validators {id} failed: {stderr}"
+        ));
+    }
+
+    let stdout = String::from_utf8(output.stdout)?;
+    let validators: Vec<ValidatorInfo> = serde_json::from_str(&stdout)?;
+    Ok(validators.into_iter().next())
 }
