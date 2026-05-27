@@ -1209,4 +1209,129 @@ mod tests {
             Some(ValidatorStatus::Tombstoned)
         );
     }
+
+    #[tokio::test]
+    async fn test_finalize_block_tombstones_then_resync_cannot_resurrect() {
+        // Stand-in for T6 from the validator-lifecycle test plan. Drives the
+        // tombstone path through `finalize_block` (rather than calling
+        // `tombstone_validator` directly) so the ABCI handler's
+        // `misbehavior` → `tombstone_validator` wiring is exercised, then
+        // attempts to readd the tombstoned validator via
+        // `sync_validators_from_config` and asserts the readd is refused.
+        //
+        // Why this lives as a state-level test rather than a CometBFT-in-
+        // the-loop integration test: fabricating real double-sign evidence
+        // requires either two CometBFT processes sharing a private validator
+        // key (flaky), or speaking the raw ABCI protocol to a felidae node
+        // with no CometBFT attached (substantial new harness). The
+        // integration plan ranks T6 MEDIUM; the unit-level call into
+        // `finalize_block` here covers the same code paths that the heavier
+        // setups would, at a fraction of the cost.
+        let (store, _dir) = setup_state_with_validator(ValidatorConfig::default()).await;
+
+        let pub_key = test_pub_key();
+        let address = validator_address(&pub_key);
+        let other_key =
+            tendermint::PublicKey::from_raw_ed25519(&[2u8; 32]).expect("valid ed25519 key");
+        let our_validator = felidae_types::transaction::Validator {
+            public_key: Bytes::copy_from_slice(&pub_key.to_bytes()),
+        };
+        let other_validator = felidae_types::transaction::Validator {
+            public_key: Bytes::copy_from_slice(&other_key.to_bytes()),
+        };
+
+        let mut state = store.state.write().await;
+
+        // ── Phase 1: Drive Active → Tombstoned through finalize_block ──────
+        //
+        // Build a `FinalizeBlock` request whose only meaningful field is a
+        // single `Misbehavior` entry naming our validator's CometBFT
+        // address. All other fields (txs, votes, proposer) are blank — we
+        // are not testing transaction execution or vote tracking here.
+        let proposer = tendermint::account::Id::try_from(vec![0u8; 20]).expect("20-byte address");
+        let request = request::FinalizeBlock {
+            txs: vec![],
+            decided_last_commit: CommitInfo {
+                round: 0u16.into(),
+                votes: vec![],
+            },
+            misbehavior: vec![Misbehavior {
+                kind: tendermint::abci::types::MisbehaviorKind::DuplicateVote,
+                validator: Validator {
+                    address,
+                    power: Power::from(BASE_VALIDATOR_POWER),
+                },
+                height: Height::from(2u32),
+                time: tendermint::Time::unix_epoch(),
+                total_voting_power: Power::from(BASE_VALIDATOR_POWER),
+            }],
+            hash: tendermint::Hash::None,
+            height: Height::from(3u32),
+            time: tendermint::Time::unix_epoch(),
+            next_validators_hash: tendermint::Hash::None,
+            proposer_address: proposer,
+        };
+
+        let response = state.finalize_block(request).await.expect("finalize_block");
+
+        // The tombstone update must surface in the response's validator_updates,
+        // since CometBFT relies on this field to push the validator out of the
+        // active set with power=0.
+        let tombstone_update = response
+            .validator_updates
+            .iter()
+            .find(|u| u.pub_key == pub_key)
+            .expect("finalize_block response should carry a tombstone update");
+        assert_eq!(
+            tombstone_update.power,
+            Power::from(0u32),
+            "tombstone update must be power=0 so CometBFT drops the validator"
+        );
+        assert_eq!(
+            state.validator_status(&pub_key).await.unwrap(),
+            Some(ValidatorStatus::Tombstoned),
+            "validator should be Tombstoned after finalize_block processes misbehavior"
+        );
+
+        // ── Phase 2: Attempt to re-add the tombstoned validator ────────────
+        //
+        // An admin reconfig that lists the tombstoned validator must be a
+        // no-op for that validator: no update should be emitted, and the
+        // status must stay Tombstoned. Including `other_validator` ensures
+        // `sync_validators_from_config` does not short-circuit on the
+        // "empty list = unmanaged" guard.
+        let updates = state
+            .sync_validators_from_config(&[our_validator, other_validator])
+            .await
+            .expect("sync_validators_from_config after tombstone");
+
+        assert!(
+            updates.iter().all(|u| u.pub_key != pub_key),
+            "sync_validators_from_config must not emit any update for a tombstoned validator \
+             (got updates for: {:?})",
+            updates.iter().map(|u| u.pub_key).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            state.validator_status(&pub_key).await.unwrap(),
+            Some(ValidatorStatus::Tombstoned),
+            "tombstoned validator must stay Tombstoned across an admin re-add attempt"
+        );
+
+        // The on-chain power record must also stay at 0 — a future regression
+        // that wrote BASE_VALIDATOR_POWER here would re-arm CometBFT to start
+        // signing on the tombstoned key.
+        let power_after: Option<Power> = state
+            .store
+            .get(
+                Internal,
+                &format!("current/validators/{}", hex::encode(pub_key.to_bytes())),
+            )
+            .await
+            .expect("read validator power");
+        assert_eq!(
+            power_after,
+            Some(Power::from(0u32)),
+            "tombstoned validator's stored power must remain 0"
+        );
+    }
 }
