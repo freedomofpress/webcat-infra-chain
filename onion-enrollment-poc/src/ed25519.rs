@@ -45,10 +45,8 @@ const ED25519_TWO_D: Fq =
 /// y = 4/5 mod p, x is the positive root, lsb(x) = 0, so the high "sign" bit
 /// of byte 31 is 0; the encoding is `[0x58, 0x66, 0x66, …, 0x66]`.
 pub const ED25519_BASE_POINT_ENCODED: [u8; 32] = [
-    0x58, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+    0x58, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
 ];
 
 /// A point on Ed25519, represented in extended twisted-Edwards coordinates.
@@ -170,10 +168,8 @@ impl EdPointVar {
         use ark_ff::BigInteger;
         // L = scalar field order of Curve25519 = order of the prime subgroup.
         let l_bits_le: Vec<bool> = ark_curve25519::Fr::MODULUS.to_bits_le();
-        let l_bits_var: Vec<Boolean<Native>> = l_bits_le
-            .iter()
-            .map(|&b| Boolean::constant(b))
-            .collect();
+        let l_bits_var: Vec<Boolean<Native>> =
+            l_bits_le.iter().map(|&b| Boolean::constant(b)).collect();
         let result = ed_scalar_mul_le(self, &l_bits_var)?;
         // Identity in extended coords: X = 0, Y/Z = 1 ⇒ Y = Z.
         result.x.enforce_equal(&FqVar::zero())?;
@@ -193,7 +189,11 @@ impl EdPointVar {
 
 /// Strongly-unified twisted-Edwards addition for a = −1. Complete: handles
 /// identity, doubling, and `P + (−P)` correctly. 8 non-native multiplications.
-pub fn ed_add(p1: &EdPointVar, p2: &EdPointVar) -> Result<EdPointVar, SynthesisError> {
+fn ed_add_maybe_t(
+    p1: &EdPointVar,
+    p2: &EdPointVar,
+    want_t: bool,
+) -> Result<EdPointVar, SynthesisError> {
     let two_d = FqVar::constant(ED25519_TWO_D);
     let two = FqVar::constant(Fq::from(2u64));
 
@@ -209,17 +209,55 @@ pub fn ed_add(p1: &EdPointVar, p2: &EdPointVar) -> Result<EdPointVar, SynthesisE
     let f = &d - &c;
     let g = &d + &c;
     let h = &b + &a;
+    let t = if want_t { &e * &h } else { FqVar::zero() };
     Ok(EdPointVar {
         x: &e * &f,
         y: &g * &h,
-        t: &e * &h,
+        t,
         z: &f * &g,
     })
+}
+
+pub fn ed_add(p1: &EdPointVar, p2: &EdPointVar) -> Result<EdPointVar, SynthesisError> {
+    ed_add_maybe_t(p1, p2, true)
 }
 
 /// Doubling via the unified addition formula (suboptimal but compact).
 pub fn ed_double(p: &EdPointVar) -> Result<EdPointVar, SynthesisError> {
     ed_add(p, p)
+}
+
+/// Dedicated twisted-Edwards doubling for a = −1 (dbl-2008-hwcd).
+///
+/// Reads only `(X1, Y1, Z1)` — the input's `T` is **not** used — so callers may
+/// pass points whose `T` is stale/unmaterialised (e.g. the output of a previous
+/// T-less doubling). Costs 4 mults + 4 squarings (squaring == mult in the
+/// non-native field) with `want_t = true`; with `want_t = false` it skips the
+/// `T3 = E·H` product (one fewer mult), valid only when the *next* consumer is
+/// another doubling (which ignores `T`), never an `ed_add` (which needs it).
+///
+/// Saves one constant-mult per call vs `ed_double` (one `2d·` term gone) and,
+/// in T-less mode, one variable mult — the basis of optimization #2.
+fn ed_double_dedicated(p: &EdPointVar, want_t: bool) -> Result<EdPointVar, SynthesisError> {
+    let two = FqVar::constant(Fq::from(2u64));
+    let aa = &p.x * &p.x; // A = X1²
+    let bb = &p.y * &p.y; // B = Y1²
+    let cc = &two * &(&p.z * &p.z); // C = 2·Z1²
+    let xy = &p.x + &p.y;
+    let e = &(&xy * &xy) - &aa - &bb; // E = (X1+Y1)² − A − B
+    let g = &bb - &aa; // G = D + B = B − A      (D = a·A = −A)
+    let f = &g - &cc; // F = G − C
+    let h = (&aa + &bb).negate()?; // H = D − B = −A − B
+    let x3 = &e * &f;
+    let y3 = &g * &h;
+    let z3 = &f * &g;
+    let t3 = if want_t { &e * &h } else { FqVar::zero() };
+    Ok(EdPointVar {
+        x: x3,
+        y: y3,
+        z: z3,
+        t: t3,
+    })
 }
 
 /// Variable-base scalar multiplication: returns [scalar] · p, where `scalar`
@@ -258,6 +296,125 @@ pub fn ed_scalar_mul_le(
         }
     }
     Ok(acc)
+}
+
+/// Fixed-window width for [`ed_scalar_mul_le_windowed`]. 256 is divisible by 4,
+/// so windows tile the scalar exactly with no partial top window.
+pub const WINDOW_BITS: usize = 4;
+
+/// Select `table[v]` where `v` is the little-endian integer encoded by
+/// `index_bits_le` (`index_bits_le[k]` has weight 2^k). `table.len()` must be
+/// `2^index_bits_le.len()`. Selects each extended coordinate with the same
+/// position bits, yielding a coherent point.
+fn select_point(
+    index_bits_le: &[Boolean<Native>],
+    table: &[EdPointVar],
+    want_t: bool,
+) -> Result<EdPointVar, SynthesisError> {
+    // `conditionally_select_power_of_two_vector` consumes `position` MSB-first
+    // (position[0] controls the high index bit), so reverse our LE window bits.
+    let position: Vec<Boolean<Native>> = index_bits_le.iter().rev().cloned().collect();
+    let xs: Vec<FqVar> = table.iter().map(|p| p.x.clone()).collect();
+    let ys: Vec<FqVar> = table.iter().map(|p| p.y.clone()).collect();
+    let zs: Vec<FqVar> = table.iter().map(|p| p.z.clone()).collect();
+    let t = if want_t {
+        let ts: Vec<FqVar> = table.iter().map(|p| p.t.clone()).collect();
+        FqVar::conditionally_select_power_of_two_vector(&position, &ts)?
+    } else {
+        FqVar::zero()
+    };
+    Ok(EdPointVar {
+        x: FqVar::conditionally_select_power_of_two_vector(&position, &xs)?,
+        y: FqVar::conditionally_select_power_of_two_vector(&position, &ys)?,
+        z: FqVar::conditionally_select_power_of_two_vector(&position, &zs)?,
+        t,
+    })
+}
+
+fn window_table(p: &EdPointVar) -> Result<Vec<EdPointVar>, SynthesisError> {
+    let table_len = 1usize << WINDOW_BITS;
+    let mut table: Vec<EdPointVar> = Vec::with_capacity(table_len);
+    table.push(EdPointVar::identity()); // [0]·p
+    table.push(p.clone()); // [1]·p
+    for k in 2..table_len {
+        table.push(ed_add(&table[k - 1], p)?); // [k]·p = [k-1]·p + p
+    }
+    Ok(table)
+}
+
+fn ed_scalar_mul_le_windowed_with_table(
+    table: &[EdPointVar],
+    scalar_bits_le: &[Boolean<Native>],
+) -> Result<EdPointVar, SynthesisError> {
+    // Pad to a whole number of windows with high (most-significant) zero bits,
+    // which leaves the scalar's value unchanged.
+    let mut bits = scalar_bits_le.to_vec();
+    while bits.len() % WINDOW_BITS != 0 {
+        bits.push(Boolean::constant(false));
+    }
+    let num_windows = bits.len() / WINDOW_BITS;
+
+    // Most-significant window first. If there are lower windows, this selected
+    // point is consumed only by dedicated doublings, which ignore T.
+    let top = num_windows - 1;
+    let top_is_output = top == 0;
+    let mut acc = select_point(
+        &bits[top * WINDOW_BITS..top * WINDOW_BITS + WINDOW_BITS],
+        table,
+        top_is_output,
+    )?;
+    for win in (0..top).rev() {
+        // WINDOW_BITS doublings. Only the last one needs to materialise T,
+        // because it is immediately consumed by `ed_add_maybe_t`; the rest are
+        // T-less.
+        for i in 0..WINDOW_BITS {
+            let want_t = i + 1 == WINDOW_BITS;
+            acc = ed_double_dedicated(&acc, want_t)?;
+        }
+        let sel = select_point(
+            &bits[win * WINDOW_BITS..win * WINDOW_BITS + WINDOW_BITS],
+            table,
+            true,
+        )?;
+        // The addition output's T is only needed if this is the final output.
+        // The next loop iteration starts with dedicated doublings, which ignore
+        // the input T and re-materialise it before the next addition.
+        acc = ed_add_maybe_t(&acc, &sel, win == 0)?;
+    }
+    Ok(acc)
+}
+
+/// Variable-base scalar multiplication via a fixed `WINDOW_BITS`-wide window:
+/// returns [scalar] · p, with `scalar` given as little-endian bits.
+///
+/// Versus the bit-serial [`ed_scalar_mul_le`], this trades ~`n` conditional
+/// point-adds for ~`n/WINDOW_BITS` table-indexed adds plus a one-time table of
+/// `[0..2^WINDOW_BITS) · p`. The doubling count is unchanged (~`n`), but the add
+/// count drops sharply — the dominant saving for the blinding scalar mults.
+///
+/// Intended for *variable* scalars over a *variable* base. For multiplication by
+/// a compile-time constant scalar (e.g. the subgroup check's `[L]·P`), prefer
+/// [`ed_scalar_mul_le`], whose constant-bit short-circuit is strictly cheaper.
+pub fn ed_scalar_mul_le_windowed(
+    p: &EdPointVar,
+    scalar_bits_le: &[Boolean<Native>],
+) -> Result<EdPointVar, SynthesisError> {
+    // Precompute table[k] = [k]·p for k in 0..2^WINDOW_BITS. Reused across all
+    // windows (and, when both blinding mults share a base, both could share it —
+    // here each call rebuilds its own, which the optimizer keeps cheap).
+    let table = window_table(p)?;
+    ed_scalar_mul_le_windowed_with_table(&table, scalar_bits_le)
+}
+
+pub fn ed_two_scalar_mul_le_windowed_same_base(
+    p: &EdPointVar,
+    lhs_bits_le: &[Boolean<Native>],
+    rhs_bits_le: &[Boolean<Native>],
+) -> Result<(EdPointVar, EdPointVar), SynthesisError> {
+    let table = window_table(p)?;
+    let lhs = ed_scalar_mul_le_windowed_with_table(&table, lhs_bits_le)?;
+    let rhs = ed_scalar_mul_le_windowed_with_table(&table, rhs_bits_le)?;
+    Ok((lhs, rhs))
 }
 
 /// Plaintext Ed25519 affine math — used both by `main.rs` to drive the circuit
@@ -328,6 +485,66 @@ mod tests {
         (0..n).map(|i| (bytes[i / 8] >> (i % 8)) & 1 == 1).collect()
     }
 
+    fn fqw(cs: &ConstraintSystemRef<Native>, v: u64) -> FqVar {
+        FqVar::new_witness(cs.clone(), || Ok(Fq::from(v))).unwrap()
+    }
+
+    /// Probe: does arkworks' lazy `mul_without_reduce` actually save constraints
+    /// for a sum-of-N-products vs the naive `a*b + c*d + ...`? This is the only
+    /// pattern lazy reduction can help, so it bounds the whole technique.
+    #[test]
+    fn lazy_reduction_probe() {
+        for n_terms in [2usize, 4, 8] {
+            // naive: sum of independent reduced products
+            let cs_n = ConstraintSystem::<Native>::new_ref();
+            let mut acc = &fqw(&cs_n, 2) * &fqw(&cs_n, 3);
+            for k in 1..n_terms {
+                acc = &acc + &(&fqw(&cs_n, 2 * k as u64 + 4) * &fqw(&cs_n, 2 * k as u64 + 5));
+            }
+            acc.enforce_equal(&acc).unwrap();
+            cs_n.finalize();
+            let naive = cs_n.num_constraints();
+
+            // lazy: accumulate unreduced products, reduce once at the end
+            let cs_l = ConstraintSystem::<Native>::new_ref();
+            let mut macc = fqw(&cs_l, 2).mul_without_reduce(&fqw(&cs_l, 3)).unwrap();
+            for k in 1..n_terms {
+                let p = fqw(&cs_l, 2 * k as u64 + 4)
+                    .mul_without_reduce(&fqw(&cs_l, 2 * k as u64 + 5))
+                    .unwrap();
+                macc = &macc + &p;
+            }
+            let red = macc.reduce().unwrap();
+            red.enforce_equal(&red).unwrap();
+            cs_l.finalize();
+            let lazy = cs_l.num_constraints();
+
+            eprintln!(
+                "sum of {n_terms} products: naive={naive}  lazy={lazy}  saved={}",
+                naive as i64 - lazy as i64
+            );
+        }
+    }
+
+    /// Probe: cost of one isolated non-native mul, square, and reduction, so we
+    /// can reason about the group-law multiply tree.
+    #[test]
+    fn nonnative_op_costs() {
+        let count = |f: &dyn Fn(&ConstraintSystemRef<Native>)| {
+            let cs = ConstraintSystem::<Native>::new_ref();
+            f(&cs);
+            cs.finalize();
+            cs.num_constraints()
+        };
+        let two_w = count(&|cs| {
+            let _ = &fqw(cs, 7) * &fqw(cs, 11);
+        });
+        let mwr = count(&|cs| {
+            let _ = fqw(cs, 7).mul_without_reduce(&fqw(cs, 11)).unwrap();
+        });
+        eprintln!("one mul(+reduce)={two_w}  mul_without_reduce(no reduce)={mwr}  reduce alone≈{}", two_w as i64 - mwr as i64);
+    }
+
     fn rand_point() -> (Fq, Fq) {
         // 64-bit random scalar, enough to scatter across the group for tests.
         plaintext::scalar_mul(plaintext::generator(), &rand_bits(64))
@@ -359,7 +576,10 @@ mod tests {
         assert_eq!(v3.value_affine().unwrap(), expected);
         cs.finalize();
         assert!(cs.is_satisfied().unwrap());
-        eprintln!("constraints (alloc 2 pts + ed_add): {}", cs.num_constraints());
+        eprintln!(
+            "constraints (alloc 2 pts + ed_add): {}",
+            cs.num_constraints()
+        );
     }
 
     #[test]
@@ -373,7 +593,10 @@ mod tests {
         assert_eq!(v2.value_affine().unwrap(), expected);
         cs.finalize();
         assert!(cs.is_satisfied().unwrap());
-        eprintln!("constraints (alloc 1 pt + ed_double): {}", cs.num_constraints());
+        eprintln!(
+            "constraints (alloc 1 pt + ed_double): {}",
+            cs.num_constraints()
+        );
     }
 
     #[test]
@@ -395,8 +618,8 @@ mod tests {
         eprintln!("constraints (8-bit scalar mul): {}", cs.num_constraints());
     }
 
-    use plaintext::encode_point;
     use ark_ff::{BigInteger, PrimeField};
+    use plaintext::encode_point;
 
     #[test]
     fn encoding_round_trip() {
@@ -424,7 +647,10 @@ mod tests {
         pk_var.enforce_canonical_encoding(&bytes_var).unwrap();
         cs.finalize();
         assert!(cs.is_satisfied().unwrap());
-        eprintln!("constraints (enforce_canonical_encoding): {}", cs.num_constraints());
+        eprintln!(
+            "constraints (enforce_canonical_encoding): {}",
+            cs.num_constraints()
+        );
     }
 
     #[test]
@@ -442,7 +668,10 @@ mod tests {
             .collect();
         pk_var.enforce_canonical_encoding(&bytes_var).unwrap();
         cs.finalize();
-        assert!(!cs.is_satisfied().unwrap(), "should reject mismatched encoding");
+        assert!(
+            !cs.is_satisfied().unwrap(),
+            "should reject mismatched encoding"
+        );
     }
 
     #[test]
@@ -481,6 +710,106 @@ mod tests {
         cs.finalize();
         assert!(cs.is_satisfied().unwrap());
         eprintln!("constraints (subgroup check): {}", cs.num_constraints());
+    }
+
+    #[test]
+    fn dedicated_doubling_matches_plaintext() {
+        for _ in 0..20 {
+            let p = rand_point();
+            let expected = plaintext::double(p);
+
+            let cs = ConstraintSystem::<Native>::new_ref();
+            let v = EdPointVar::new_witness_xy(cs.clone(), p.0, p.1).unwrap();
+
+            // want_t = true: full extended point must equal the reference double,
+            // and T must satisfy the extended-coord invariant T·Z == X·Y.
+            let d = ed_double_dedicated(&v, true).unwrap();
+            assert_eq!(d.value_affine().unwrap(), expected);
+            let (x, y, z, t) = (
+                d.x.value().unwrap(),
+                d.y.value().unwrap(),
+                d.z.value().unwrap(),
+                d.t.value().unwrap(),
+            );
+            assert_eq!(t * z, x * y, "T·Z must equal X·Y");
+
+            // want_t = false: affine (x, y) still correct; T is intentionally junk.
+            let d_not = ed_double_dedicated(&v, false).unwrap();
+            assert_eq!(d_not.value_affine().unwrap(), expected);
+
+            cs.finalize();
+            assert!(cs.is_satisfied().unwrap());
+        }
+    }
+
+    fn run_windowed(p: (Fq, Fq), bits: &[bool]) -> (Fq, Fq) {
+        let cs = ConstraintSystem::<Native>::new_ref();
+        let p_var = EdPointVar::new_witness_xy(cs.clone(), p.0, p.1).unwrap();
+        let bits_var: Vec<Boolean<Native>> = bits
+            .iter()
+            .map(|&b| Boolean::new_witness(cs.clone(), || Ok(b)).unwrap())
+            .collect();
+        let r = ed_scalar_mul_le_windowed(&p_var, &bits_var).unwrap();
+        let out = r.value_affine().unwrap();
+        cs.finalize();
+        assert!(cs.is_satisfied().unwrap());
+        out
+    }
+
+    #[test]
+    fn windowed_matches_plaintext_various_lengths() {
+        // Exercise lengths around and across window boundaries (WINDOW_BITS=4):
+        // exact multiples, off-by-one, and the full 256-bit case.
+        for &len in &[1usize, 3, 4, 5, 8, 15, 16, 17, 63, 64, 65, 128, 255, 256] {
+            let p = rand_point();
+            let bits = rand_bits(len);
+            let expected = plaintext::scalar_mul(p, &bits);
+            assert_eq!(run_windowed(p, &bits), expected, "mismatch at len={len}");
+        }
+    }
+
+    #[test]
+    fn windowed_matches_serial_256bit() {
+        // The windowed and bit-serial gadgets must agree exactly — this is the
+        // invariant the circuit relies on when swapping one for the other.
+        let p = rand_point();
+        let bits = rand_bits(256);
+
+        let cs = ConstraintSystem::<Native>::new_ref();
+        let p_var = EdPointVar::new_witness_xy(cs.clone(), p.0, p.1).unwrap();
+        let bits_var: Vec<Boolean<Native>> = bits
+            .iter()
+            .map(|&b| Boolean::new_witness(cs.clone(), || Ok(b)).unwrap())
+            .collect();
+        let serial = ed_scalar_mul_le(&p_var, &bits_var)
+            .unwrap()
+            .value_affine()
+            .unwrap();
+        let windowed = ed_scalar_mul_le_windowed(&p_var, &bits_var)
+            .unwrap()
+            .value_affine()
+            .unwrap();
+        assert_eq!(serial, windowed);
+    }
+
+    #[test]
+    fn windowed_constraint_count_256bit() {
+        // Report the windowed scalar-mul cost for comparison with the serial one.
+        let p = rand_point();
+        let bits = rand_bits(256);
+        let cs = ConstraintSystem::<Native>::new_ref();
+        let p_var = EdPointVar::new_witness_xy(cs.clone(), p.0, p.1).unwrap();
+        let bits_var: Vec<Boolean<Native>> = bits
+            .iter()
+            .map(|&b| Boolean::new_witness(cs.clone(), || Ok(b)).unwrap())
+            .collect();
+        let _ = ed_scalar_mul_le_windowed(&p_var, &bits_var).unwrap();
+        cs.finalize();
+        assert!(cs.is_satisfied().unwrap());
+        eprintln!(
+            "constraints (256-bit windowed scalar mul): {}",
+            cs.num_constraints()
+        );
     }
 
     #[test]

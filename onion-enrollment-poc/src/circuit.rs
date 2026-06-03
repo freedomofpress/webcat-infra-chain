@@ -1,7 +1,10 @@
 //! Hardened WEBCAT circuit using real Ed25519 + real SHA3-256, with the
-//! subgroup check, the spec-shaped Tor blinding input, the Ed25519 clamping
-//! on `h_tor`, and public-input exposure of the two blinded keys plus the
-//! Tor period parameters.
+//! spec-shaped Tor blinding input, the Ed25519 clamping on `h_tor`, and
+//! public-input exposure of the two blinded keys plus the Tor period
+//! parameters. The prime-order subgroup check on `pk_point` is delegated to
+//! the client (see note in `generate_constraints`): clamping makes the
+//! blinded outputs cofactor-safe, and the browser re-checks torsion on
+//! receipt, so the expensive in-circuit `[L]·pk_point` multiply is omitted.
 //!
 //! # Statement
 //!
@@ -13,10 +16,9 @@
 //! ```text
 //! 1. pk_bytes is the canonical Ed25519 encoding of pk_point.
 //! 2. pk_point lies on the Ed25519 curve.
-//! 3. pk_point is in the prime-order subgroup: [L] * pk_point == identity.
-//! 4. KP_wc_blind  = [clamp(SHA3-256("webcat-blind-v1:" || pk_bytes))]
+//! 3. KP_wc_blind  = [clamp(SHA3-256("webcat-blind-v1:" || pk_bytes))]
 //!                 * pk_point.
-//! 5. KP_hs_blind  = [clamp(SHA3-256(BLIND_STRING || pk_bytes || B || N))]
+//! 4. KP_hs_blind  = [clamp(SHA3-256(BLIND_STRING || pk_bytes || B || N))]
 //!                 * pk_point
 //!    where
 //!      BLIND_STRING = "Derive temporary signing key" || INT_1(0)
@@ -40,8 +42,9 @@ use ark_r1cs_std::uint8::UInt8;
 use ark_r1cs_std::ToBitsGadget;
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 
-use crate::ed25519::{ed_scalar_mul_le, EdPointVar};
+use crate::ed25519::{ed_two_scalar_mul_le_windowed_same_base, EdPointVar};
 use crate::keccak::sha3_256;
+
 
 pub const WEBCAT_PREFIX: &[u8] = b"webcat-blind-v1:";
 /// Tor v3 blinding-factor BLIND_STRING (rend-spec/keyblinding-scheme):
@@ -85,27 +88,33 @@ impl ConstraintSynthesizer<Native> for WebcatCircuit {
         //   4. blind_tor.y      ( "                              " )
         //   5. period_num       (1 native field element, value = period_num as u64)
         //   6. period_length    (1 native field element, value = period_length as u64)
-        let blind_wc_x = ark_r1cs_std::fields::nonnative::NonNativeFieldVar::<Fq, Native>::new_input(
-            cs.clone(), || Ok(self.blind_wc_xy.0),
-        )?;
-        let blind_wc_y = ark_r1cs_std::fields::nonnative::NonNativeFieldVar::<Fq, Native>::new_input(
-            cs.clone(), || Ok(self.blind_wc_xy.1),
-        )?;
-        let blind_tor_x = ark_r1cs_std::fields::nonnative::NonNativeFieldVar::<Fq, Native>::new_input(
-            cs.clone(), || Ok(self.blind_tor_xy.0),
-        )?;
-        let blind_tor_y = ark_r1cs_std::fields::nonnative::NonNativeFieldVar::<Fq, Native>::new_input(
-            cs.clone(), || Ok(self.blind_tor_xy.1),
-        )?;
+        let blind_wc_x =
+            ark_r1cs_std::fields::nonnative::NonNativeFieldVar::<Fq, Native>::new_input(
+                cs.clone(),
+                || Ok(self.blind_wc_xy.0),
+            )?;
+        let blind_wc_y =
+            ark_r1cs_std::fields::nonnative::NonNativeFieldVar::<Fq, Native>::new_input(
+                cs.clone(),
+                || Ok(self.blind_wc_xy.1),
+            )?;
+        let blind_tor_x =
+            ark_r1cs_std::fields::nonnative::NonNativeFieldVar::<Fq, Native>::new_input(
+                cs.clone(),
+                || Ok(self.blind_tor_xy.0),
+            )?;
+        let blind_tor_y =
+            ark_r1cs_std::fields::nonnative::NonNativeFieldVar::<Fq, Native>::new_input(
+                cs.clone(),
+                || Ok(self.blind_tor_xy.1),
+            )?;
         // Period parameters: one native FpVar input per u64, range-checked
         // to fit in 64 bits and re-assembled into 8 big-endian UInt8s for
         // the SHA3 input.
-        let period_num_var = FpVar::<Native>::new_input(
-            cs.clone(), || Ok(Native::from(self.period_num)),
-        )?;
-        let period_length_var = FpVar::<Native>::new_input(
-            cs.clone(), || Ok(Native::from(self.period_length)),
-        )?;
+        let period_num_var =
+            FpVar::<Native>::new_input(cs.clone(), || Ok(Native::from(self.period_num)))?;
+        let period_length_var =
+            FpVar::<Native>::new_input(cs.clone(), || Ok(Native::from(self.period_length)))?;
         let period_num_bytes = fpvar_to_be_bytes_u64(&period_num_var)?;
         let period_length_bytes = fpvar_to_be_bytes_u64(&period_length_var)?;
 
@@ -117,11 +126,19 @@ impl ConstraintSynthesizer<Native> for WebcatCircuit {
             .collect::<Result<_, _>>()?;
 
         // -------- Witness pk_point and bind to pk_bytes --------
-        let pk_point =
-            EdPointVar::new_witness_xy(cs.clone(), self.pubkey_xy.0, self.pubkey_xy.1)?;
+        let pk_point = EdPointVar::new_witness_xy(cs.clone(), self.pubkey_xy.0, self.pubkey_xy.1)?;
         pk_point.enforce_on_curve()?;
         pk_point.enforce_canonical_encoding(&pk_bytes_var)?;
-        pk_point.enforce_in_prime_subgroup()?;
+        // NOTE: the prime-order subgroup check on `pk_point` (≈2.5M constraints,
+        // a full [L]·pk_point multiply) is intentionally NOT enforced here. Both
+        // scalars below are Ed25519-clamped (bits 0,1,2 cleared), so the cofactor
+        // (8) is cleared and `[h]·pk_point` always lands in the prime-order
+        // subgroup regardless of any torsion component in `pk_point`. The blinded
+        // outputs are therefore cofactor-safe as published. The only residual
+        // concern — a malicious enroller committing to a torsion-tainted master
+        // key — is cheaply re-checked client-side: per the spec, the browser
+        // extension performs the torsion check when it receives an onion. Moving
+        // that check off-circuit is the dominant size optimization.
 
         // -------- h_wc = clamp(SHA3-256("webcat-blind-v1:" ‖ pk_bytes)) --------
         let mut wc_input: Vec<UInt8<Native>> =
@@ -142,8 +159,10 @@ impl ConstraintSynthesizer<Native> for WebcatCircuit {
         h_wc_bits[255] = Boolean::constant(false);
 
         // -------- h_tor = clamp(SHA3-256(BLIND_STRING ‖ A ‖ B ‖ N)) per rend-spec --------
-        let mut tor_input: Vec<UInt8<Native>> =
-            TOR_BLIND_STRING.iter().map(|b| UInt8::constant(*b)).collect();
+        let mut tor_input: Vec<UInt8<Native>> = TOR_BLIND_STRING
+            .iter()
+            .map(|b| UInt8::constant(*b))
+            .collect();
         // A = pk_bytes (witness).
         tor_input.extend_from_slice(&pk_bytes_var);
         // B = the Ed25519 base point as the *textual* decimal tuple
@@ -177,9 +196,9 @@ impl ConstraintSynthesizer<Native> for WebcatCircuit {
         h_tor_bits[254] = Boolean::constant(true);
         h_tor_bits[255] = Boolean::constant(false);
 
-        // -------- Two scalar mults --------
-        let pk_wc = ed_scalar_mul_le(&pk_point, &h_wc_bits)?;
-        let pk_tor = ed_scalar_mul_le(&pk_point, &h_tor_bits)?;
+        // -------- Two scalar mults (windowed, variable base, shared table) --------
+        let (pk_wc, pk_tor) =
+            ed_two_scalar_mul_le_windowed_same_base(&pk_point, &h_wc_bits, &h_tor_bits)?;
 
         // -------- Enforce equality with the public blinded keys --------
         // pk_wc has projective (X, Y, Z); blind_wc is affine (Z = 1 implicit):
@@ -222,4 +241,61 @@ fn fpvar_to_be_bytes_u64(v: &FpVar<Native>) -> Result<Vec<UInt8<Native>>, Synthe
     // Reverse for big-endian byte order.
     let be_bytes: Vec<UInt8<Native>> = le_bytes.into_iter().rev().collect();
     Ok(be_bytes)
+}
+
+#[cfg(test)]
+mod measure {
+    //! Synthesis-only constraint counter — no Groth16 setup/prove. Used to size
+    //! optimizations quickly. Witness values are dummy: the constraint *count*
+    //! is independent of assignments.
+    use super::*;
+    use ark_curve25519::Fq;
+    use ark_ff::{One, Zero};
+    use ark_relations::r1cs::ConstraintSystem;
+
+    fn dummy_circuit() -> WebcatCircuit {
+        WebcatCircuit {
+            pubkey_bytes: [0u8; 32],
+            pubkey_xy: (Fq::zero(), Fq::one()),
+            blind_wc_xy: (Fq::zero(), Fq::one()),
+            blind_tor_xy: (Fq::zero(), Fq::one()),
+            period_num: 60_000,
+            period_length: 1440,
+        }
+    }
+
+    #[test]
+    fn measure_constraints() {
+        let cs = ConstraintSystem::<Native>::new_ref();
+        dummy_circuit().generate_constraints(cs.clone()).unwrap();
+        cs.finalize();
+        let n = cs.num_constraints();
+        let domain = (n + cs.num_instance_variables()).next_power_of_two();
+        eprintln!(
+            "MEASURED num_constraints = {n}  | FFT domain = {domain} (2^{})",
+            domain.trailing_zeros()
+        );
+    }
+
+    #[test]
+    #[ignore] // slow (~Groth16 setup); run explicitly with `--ignored`
+    fn measure_setup_pk_size() {
+        use ark_bls12_381::Bls12_381;
+        use ark_groth16::Groth16;
+        use ark_serialize::CanonicalSerialize;
+        use ark_snark::SNARK;
+        let mut rng = rand::thread_rng();
+        let t = std::time::Instant::now();
+        let (pk, _vk) =
+            Groth16::<Bls12_381>::circuit_specific_setup(dummy_circuit(), &mut rng).unwrap();
+        let setup_s = t.elapsed().as_secs_f64();
+        let mut buf = Vec::new();
+        pk.serialize_compressed(&mut buf).unwrap();
+        eprintln!(
+            "MEASURED setup = {:.1}s | pk size = {} bytes ({:.2} GB)",
+            setup_s,
+            buf.len(),
+            buf.len() as f64 / 1e9
+        );
+    }
 }
