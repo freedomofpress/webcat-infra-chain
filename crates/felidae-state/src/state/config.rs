@@ -91,7 +91,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
 
         // Validate that no validator has an all-zero public key (placeholder entry):
         for (i, validator) in validators.iter().enumerate() {
-            if Self::is_all_zeros(&validator.public_key) {
+            if Self::is_all_zeros(&validator.public_key.to_bytes()) {
                 bail!(
                     "validator at index {} has an all-zero public key (placeholder not replaced)",
                     i
