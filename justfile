@@ -33,6 +33,10 @@ integration block_time="2":
 integration-one test block_time="2":
     FELIDAE_BLOCK_TIME_SECS={{block_time}} cargo nextest run -p felidae-deployer --features integration --test-threads 1 -E 'test({{test}})'
 
+# Read-only pre-flight: validate a live deployment's committed configs under strict domain parsing
+live-config-check url:
+    cargo run -q --bin felidae -- debug parse-config --url {{url}}
+
 # Build WASM package for felidae-oracle
 build-wasm:
     cd crates/felidae-oracle && wasm-pack build --target web --out-dir pkg
