@@ -644,16 +644,21 @@ impl TryFrom<proto::Validator> for Validator {
     type Error = crate::ParseError;
 
     fn try_from(value: proto::Validator) -> Result<Self, Self::Error> {
-        Ok(Validator {
-            public_key: value.public_key,
-        })
+        let public_key =
+            tendermint::PublicKey::from_raw_ed25519(&value.public_key).ok_or_else(|| {
+                crate::ParseError::new::<Validator>(format!(
+                    "invalid ed25519 public key: {}",
+                    hex::encode(&value.public_key)
+                ))
+            })?;
+        Ok(Validator { public_key })
     }
 }
 
 impl From<Validator> for proto::Validator {
     fn from(validator: Validator) -> Self {
         proto::Validator {
-            public_key: validator.public_key,
+            public_key: validator.public_key.to_bytes().into(),
         }
     }
 }
@@ -832,11 +837,174 @@ impl From<OracleVoteValue> for proto::OracleVoteValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+    use prost::Message;
 
     #[test]
     fn domain_parse() {
         let domain_str = "com.";
         let domain: FQDN = domain_str.parse().unwrap();
         assert_eq!(domain.to_string(), domain_str);
+    }
+
+    #[test]
+    fn validator_try_from_rejects_bad_length_keys() {
+        for len in [0usize, 31, 33] {
+            let bad = proto::Validator {
+                public_key: vec![1u8; len].into(),
+            };
+            assert!(
+                Validator::try_from(bad).is_err(),
+                "{len}-byte key must be rejected"
+            );
+        }
+        let good = proto::Validator {
+            public_key: vec![1u8; 32].into(),
+        };
+        assert!(Validator::try_from(good).is_ok());
+    }
+
+    #[test]
+    fn config_decodes_from_pre_validator_proto_bytes() {
+        // A Config committed by software predating validator support lacks the
+        // validators and validator_config proto fields entirely (proto3 omits
+        // empty/unset fields, so clearing them reproduces those bytes exactly).
+        // It must decode under the strict parser with empty validators and a
+        // default validator_config — this pins upgrade safety for existing chains.
+        let mut old_proto: proto::Config = Config::template(1).into();
+        old_proto.validators.clear();
+        old_proto.validator_config = None;
+        let old_bytes = old_proto.encode_to_vec();
+
+        let decoded = Config::try_from(
+            proto::Config::decode(old_bytes.as_slice()).expect("proto decode succeeds"),
+        )
+        .expect("pre-validator config bytes must decode under strict parsing");
+        assert!(decoded.validators.is_empty());
+        assert_eq!(decoded.validator_config, ValidatorConfig::default());
+    }
+
+    #[test]
+    fn config_try_from_rejects_bad_validator_key() {
+        // A malformed validator key must be rejected at the proto -> domain boundary
+        // (i.e. at CheckTx), never reaching consensus-critical code.
+        let mut proto_config: proto::Config = Config::template(1).into();
+        proto_config.validators.push(proto::Validator {
+            public_key: vec![1u8; 31].into(),
+        });
+        assert!(Config::try_from(proto_config).is_err());
+    }
+
+    // Domain `Config` carries `u64` fields that proto stores as `i64`; the
+    // conversions clamp anything above `i64::MAX`. Generation is bounded to the
+    // representable range so the round-trip is expected to be exact — a failure
+    // then means a genuine conversion asymmetry, not a known lossy boundary.
+    fn safe_u64() -> impl Strategy<Value = u64> {
+        0u64..=(i64::MAX as u64)
+    }
+
+    /// Arbitrary opaque public-key bytes (admin/oracle identities are copied
+    /// through without a length check), sized around the real 64-byte keys.
+    fn arb_identity() -> impl Strategy<Value = Bytes> {
+        proptest::collection::vec(any::<u8>(), 0..80).prop_map(Bytes::from)
+    }
+
+    fn arb_voting() -> impl Strategy<Value = VotingConfig> {
+        (safe_u64(), safe_u64(), safe_u64(), safe_u64()).prop_map(
+            |(total, quorum, timeout, delay)| VotingConfig {
+                total: Total(total),
+                quorum: Quorum(quorum),
+                timeout: Timeout(Duration::from_secs(timeout)),
+                delay: Delay(Duration::from_secs(delay)),
+            },
+        )
+    }
+
+    fn arb_admin_config() -> impl Strategy<Value = AdminConfig> {
+        (
+            arb_voting(),
+            proptest::collection::vec(arb_identity().prop_map(|identity| Admin { identity }), 0..5),
+        )
+            .prop_map(|(voting, authorized)| AdminConfig { voting, authorized })
+    }
+
+    fn arb_oracle_config() -> impl Strategy<Value = OracleConfig> {
+        let arb_oracle = (arb_identity(), 0u32..1000).prop_map(|(identity, n)| Oracle {
+            identity,
+            // A URL that survives parse -> to_string -> parse unchanged, so any
+            // divergence is attributable to the config conversion, not to URL
+            // normalization.
+            endpoint: Url::parse(&format!("https://oracle{n}.example.com/")).unwrap(),
+        });
+        (
+            any::<bool>(),
+            arb_voting(),
+            safe_u64(),
+            safe_u64(),
+            proptest::collection::vec(arb_oracle, 0..5),
+        )
+            .prop_map(
+                |(enabled, voting, max_enrolled_subdomains, obs_secs, authorized)| OracleConfig {
+                    enabled,
+                    voting,
+                    max_enrolled_subdomains,
+                    observation_timeout: Duration::from_secs(obs_secs),
+                    authorized,
+                },
+            )
+    }
+
+    fn arb_validator() -> impl Strategy<Value = Validator> {
+        // Any 32 bytes are a well-formed ed25519 key as far as `from_raw_ed25519`
+        // is concerned (it validates length, not curve membership).
+        proptest::array::uniform32(any::<u8>()).prop_map(|bytes| Validator {
+            public_key: tendermint::PublicKey::from_raw_ed25519(&bytes).unwrap(),
+        })
+    }
+
+    fn arb_validator_config() -> impl Strategy<Value = ValidatorConfig> {
+        (safe_u64(), safe_u64(), safe_u64()).prop_map(
+            |(uptime_window, missed_blocks_max, unjail_missed_max)| ValidatorConfig {
+                uptime_window,
+                missed_blocks_max,
+                unjail_missed_max,
+            },
+        )
+    }
+
+    fn arb_config() -> impl Strategy<Value = Config> {
+        (
+            any::<u32>(),
+            arb_admin_config(),
+            arb_oracle_config(),
+            any::<bool>(),
+            proptest::collection::vec(arb_validator(), 0..5),
+            arb_validator_config(),
+        )
+            .prop_map(
+                |(version, admins, oracles, onion, validators, validator_config)| Config {
+                    version,
+                    admins,
+                    oracles,
+                    onion: OnionConfig { enabled: onion },
+                    validators,
+                    validator_config,
+                },
+            )
+    }
+
+    proptest! {
+        /// Within the i64-representable range, every domain `Config` survives the
+        /// exact proto encode -> decode -> strict-parse path an upgraded node uses
+        /// to read committed state. This pins the conversion symmetry that
+        /// `debug parse-config`'s round-trip checks — across the whole config
+        /// space rather than a single live sample.
+        #[test]
+        fn config_proto_round_trip_is_identity(config in arb_config()) {
+            let bytes = proto::Config::from(config.clone()).encode_to_vec();
+            let decoded = proto::Config::decode(bytes.as_slice()).expect("proto decodes");
+            let round_tripped = Config::try_from(decoded).expect("strict parse succeeds");
+            prop_assert_eq!(round_tripped, config);
+        }
     }
 }

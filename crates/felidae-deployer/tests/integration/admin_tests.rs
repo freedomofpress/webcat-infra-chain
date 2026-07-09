@@ -483,7 +483,8 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
 
     let mut phase2_validators = genesis_validators.clone();
     phase2_validators.push(Validator {
-        public_key: new_pubkey.clone().into(),
+        public_key: tendermint::PublicKey::from_raw_ed25519(&new_pubkey)
+            .expect("valid ed25519 key"),
     });
 
     let phase2_config = Config {
@@ -873,7 +874,8 @@ async fn test_validator_onboarding_joined_node() -> color_eyre::Result<()> {
     // ── Phase 5: Onboard the joined node as a 4th validator ────────────────
     let mut phase5_validators = genesis_validators.clone();
     phase5_validators.push(Validator {
-        public_key: new_validator_pubkey.clone().into(),
+        public_key: tendermint::PublicKey::from_raw_ed25519(&new_validator_pubkey)
+            .expect("valid ed25519 key"),
     });
 
     let onboard_config = Config {
