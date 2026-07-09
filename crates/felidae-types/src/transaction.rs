@@ -171,11 +171,40 @@ pub struct Admin {
     pub identity: Bytes,
 }
 
-#[serde_as]
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Validator {
-    #[serde_as(as = "Hex")]
-    pub public_key: Bytes,
+    /// Ed25519 consensus public key; hex string in JSON, parsed at construction.
+    #[serde(with = "ed25519_hex")]
+    pub public_key: tendermint::PublicKey,
+}
+
+impl Hash for Validator {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.public_key.to_bytes().hash(state);
+    }
+}
+
+/// Serde adapter keeping the operator-facing JSON shape a bare hex string
+/// (tendermint::PublicKey's native serde is a tagged enum, which we do not want).
+mod ed25519_hex {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(
+        key: &tendermint::PublicKey,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&hex::encode(key.to_bytes()))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<tendermint::PublicKey, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
+        tendermint::PublicKey::from_raw_ed25519(&bytes).ok_or_else(|| {
+            serde::de::Error::custom("invalid ed25519 public key (expected 32 bytes)")
+        })
+    }
 }
 
 #[serde_as]
@@ -455,6 +484,34 @@ mod tests {
             prefix_order_domain.name,
             fqdn::FQDN::from_ascii_str("sub.example.com.").unwrap()
         );
+    }
+
+    #[test]
+    fn validator_serde_hex_round_trip() {
+        let key = tendermint::PublicKey::from_raw_ed25519(&[2u8; 32]).unwrap();
+        let validator = Validator { public_key: key };
+        let json = serde_json::to_string(&validator).unwrap();
+        // Operator-facing shape must stay a bare hex string, not tendermint's tagged enum.
+        assert_eq!(json, format!(r#"{{"public_key":"{}"}}"#, "02".repeat(32)));
+        assert_eq!(serde_json::from_str::<Validator>(&json).unwrap(), validator);
+    }
+
+    #[test]
+    fn validator_deserialize_rejects_invalid_keys() {
+        for bad in [
+            r#"{"public_key":"zz"}"#.to_string(),                 // not hex
+            format!(r#"{{"public_key":"{}"}}"#, "02".repeat(31)), // too short
+            format!(r#"{{"public_key":"{}"}}"#, "02".repeat(33)), // too long
+        ] {
+            assert!(serde_json::from_str::<Validator>(&bad).is_err());
+        }
+    }
+
+    #[test]
+    fn all_zeros_placeholder_key_still_parses() {
+        // check_config's placeholder rejection relies on 32 zero bytes being representable;
+        // pin that from_raw_ed25519 is length-only validation.
+        assert!(tendermint::PublicKey::from_raw_ed25519(&[0u8; 32]).is_some());
     }
 
     #[test]

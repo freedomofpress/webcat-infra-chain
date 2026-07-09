@@ -158,7 +158,7 @@ async fn test_readd_removed_validator_resumes_signing() -> color_eyre::Result<()
 
     let genesis_validators = read_genesis_validator_pubkeys(&network)?;
     assert_eq!(genesis_validators.len(), 3);
-    let target_pubkey: Vec<u8> = genesis_validators[2].public_key.to_vec();
+    let target_pubkey: Vec<u8> = genesis_validators[2].public_key.to_bytes();
     let target_address = cometbft_address(&target_pubkey);
     let target_identity = hex::encode(&target_pubkey);
     eprintln!(
@@ -391,7 +391,7 @@ async fn test_validator_jailed_on_downtime() -> color_eyre::Result<()> {
     // Capture the target's identity before tearing it down.
     let genesis_validators = read_genesis_validator_pubkeys(&network)?;
     assert_eq!(genesis_validators.len(), 4);
-    let target_pubkey: Vec<u8> = genesis_validators[3].public_key.to_vec();
+    let target_pubkey: Vec<u8> = genesis_validators[3].public_key.to_bytes();
     let target_identity = hex::encode(&target_pubkey);
     eprintln!("[phase 0] target validator-3 identity: {}", target_identity);
 
@@ -527,7 +527,7 @@ async fn test_jailed_validator_unjails_on_recovery() -> color_eyre::Result<()> {
     let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
 
     let genesis_validators = read_genesis_validator_pubkeys(&network)?;
-    let target_pubkey: Vec<u8> = genesis_validators[3].public_key.to_vec();
+    let target_pubkey: Vec<u8> = genesis_validators[3].public_key.to_bytes();
     let target_identity = hex::encode(&target_pubkey);
 
     poll_until_async(
@@ -647,7 +647,7 @@ async fn test_chain_survives_one_jailed_of_four() -> color_eyre::Result<()> {
     let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
 
     let genesis_validators = read_genesis_validator_pubkeys(&network)?;
-    let target_pubkey: Vec<u8> = genesis_validators[3].public_key.to_vec();
+    let target_pubkey: Vec<u8> = genesis_validators[3].public_key.to_bytes();
 
     poll_until_async(
         consensus_propagation_wait(),
@@ -753,7 +753,7 @@ async fn test_jailed_validator_uptime_still_tracked() -> color_eyre::Result<()> 
     let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
 
     let genesis_validators = read_genesis_validator_pubkeys(&network)?;
-    let target_pubkey: Vec<u8> = genesis_validators[3].public_key.to_vec();
+    let target_pubkey: Vec<u8> = genesis_validators[3].public_key.to_bytes();
     let target_identity = hex::encode(&target_pubkey);
 
     poll_until_async(

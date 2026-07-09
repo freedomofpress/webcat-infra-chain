@@ -81,13 +81,13 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             let genesis_keys: BTreeMap<Vec<u8>, ()> = request
                 .validators
                 .iter()
-                .map(|v| (v.pub_key.to_bytes().to_vec(), ()))
+                .map(|v| (v.pub_key.to_bytes(), ()))
                 .collect();
 
             let config_keys: BTreeMap<Vec<u8>, ()> = config
                 .validators
                 .iter()
-                .map(|v| (v.public_key.to_vec(), ()))
+                .map(|v| (v.public_key.to_bytes(), ()))
                 .collect();
 
             if genesis_keys.len() != config_keys.len() {

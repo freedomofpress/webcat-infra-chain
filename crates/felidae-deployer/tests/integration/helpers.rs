@@ -376,6 +376,8 @@ pub fn read_priv_validator_pubkey(path: &std::path::Path) -> color_eyre::Result<
 pub fn read_genesis_validator_pubkeys(
     network: &crate::harness::TestNetwork,
 ) -> color_eyre::Result<Vec<felidae_types::transaction::Validator>> {
+    use color_eyre::eyre::OptionExt;
+
     let mut validators = Vec::new();
     for node in network
         .network
@@ -384,9 +386,9 @@ pub fn read_genesis_validator_pubkeys(
         .filter(|n| n.role.is_validator())
     {
         let pub_key_bytes = read_priv_validator_pubkey(&node.priv_validator_key_path())?;
-        validators.push(felidae_types::transaction::Validator {
-            public_key: pub_key_bytes.into(),
-        });
+        let public_key = tendermint::PublicKey::from_raw_ed25519(&pub_key_bytes)
+            .ok_or_eyre("invalid ed25519 public key in priv_validator_key.json")?;
+        validators.push(felidae_types::transaction::Validator { public_key });
     }
     Ok(validators)
 }

@@ -1320,6 +1320,7 @@ dependencies = [
  "hex",
  "humantime-serde",
  "insta",
+ "proptest",
  "prost 0.13.5",
  "serde",
  "serde_json",
