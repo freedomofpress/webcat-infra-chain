@@ -430,13 +430,11 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             };
         }
 
-        // Build a map of config validators by public key bytes.
+        // Build a map of config validators by public key bytes. The key was already
+        // parsed at the proto -> domain boundary, so no validation is needed here.
         let mut config_validators_map = BTreeMap::new();
         for validator in config_validators {
-            let pub_key_bytes: Vec<u8> = validator.public_key.to_vec();
-            let pub_key = tendermint::PublicKey::from_raw_ed25519(&pub_key_bytes)
-                .ok_or_eyre("invalid ed25519 public key in config")?;
-            config_validators_map.insert(pub_key_bytes, pub_key);
+            config_validators_map.insert(validator.public_key.to_bytes(), validator.public_key);
         }
 
         let mut updates: Vec<Update> = Vec::new();
@@ -917,7 +915,7 @@ mod tests {
         let other_key =
             tendermint::PublicKey::from_raw_ed25519(&[2u8; 32]).expect("valid ed25519 key");
         let other_validator = felidae_types::transaction::Validator {
-            public_key: Bytes::copy_from_slice(&other_key.to_bytes()),
+            public_key: other_key,
         };
 
         let mut state = store.state.write().await;
@@ -974,7 +972,7 @@ mod tests {
         let other_key =
             tendermint::PublicKey::from_raw_ed25519(&[2u8; 32]).expect("valid ed25519 key");
         let other_validator = felidae_types::transaction::Validator {
-            public_key: Bytes::copy_from_slice(&other_key.to_bytes()),
+            public_key: other_key,
         };
 
         let mut state = store.state.write().await;
@@ -1072,10 +1070,10 @@ mod tests {
         let other_key =
             tendermint::PublicKey::from_raw_ed25519(&[2u8; 32]).expect("valid ed25519 key");
         let our_validator = felidae_types::transaction::Validator {
-            public_key: Bytes::copy_from_slice(&pub_key.to_bytes()),
+            public_key: pub_key,
         };
         let other_validator = felidae_types::transaction::Validator {
-            public_key: Bytes::copy_from_slice(&other_key.to_bytes()),
+            public_key: other_key,
         };
 
         let mut state = store.state.write().await;
@@ -1176,7 +1174,7 @@ mod tests {
         let other_key =
             tendermint::PublicKey::from_raw_ed25519(&[2u8; 32]).expect("valid ed25519 key");
         let other_validator = felidae_types::transaction::Validator {
-            public_key: Bytes::copy_from_slice(&other_key.to_bytes()),
+            public_key: other_key,
         };
 
         let mut state = store.state.write().await;
@@ -1234,10 +1232,10 @@ mod tests {
         let other_key =
             tendermint::PublicKey::from_raw_ed25519(&[2u8; 32]).expect("valid ed25519 key");
         let our_validator = felidae_types::transaction::Validator {
-            public_key: Bytes::copy_from_slice(&pub_key.to_bytes()),
+            public_key: pub_key,
         };
         let other_validator = felidae_types::transaction::Validator {
-            public_key: Bytes::copy_from_slice(&other_key.to_bytes()),
+            public_key: other_key,
         };
 
         let mut state = store.state.write().await;
