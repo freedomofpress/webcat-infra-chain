@@ -118,7 +118,7 @@ async fn test_admin_template_read_local_keys() -> color_eyre::Result<()> {
         1,
         "expected 1 authorized admin"
     );
-    let actual_admin_pubkey = hex::encode(&template_config.admins.authorized[0].identity);
+    let actual_admin_pubkey = template_config.admins.authorized[0].identity.to_string();
     assert_eq!(
         actual_admin_pubkey, expected_admin_pubkey,
         "admin public key mismatch"
@@ -130,7 +130,7 @@ async fn test_admin_template_read_local_keys() -> color_eyre::Result<()> {
         1,
         "expected 1 authorized oracle"
     );
-    let actual_oracle_pubkey = hex::encode(&template_config.oracles.authorized[0].identity);
+    let actual_oracle_pubkey = template_config.oracles.authorized[0].identity.to_string();
     assert_eq!(
         actual_oracle_pubkey, expected_oracle_pubkey,
         "oracle public key mismatch"
@@ -238,14 +238,14 @@ async fn test_admin_init_identity_template_workflow() -> color_eyre::Result<()> 
         1,
         "expected 1 authorized admin"
     );
-    let actual_admin_pubkey = hex::encode(&template_config.admins.authorized[0].identity);
+    let actual_admin_pubkey = template_config.admins.authorized[0].identity.to_string();
     assert_eq!(
         actual_admin_pubkey, expected_pubkey,
         "admin public key from template should match identity output"
     );
 
     // Oracle key was not initialized, so a warning should have been printed.
-    // The template retains its default placeholder (all zeros) when key load fails.
+    // The template retains its default placeholder (the P-256 generator point) when key load fails.
     // Verify the warning was printed to stderr.
     assert!(
         stderr.contains("warning: could not load oracle key"),

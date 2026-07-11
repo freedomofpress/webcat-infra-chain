@@ -6,13 +6,12 @@ use std::net::TcpListener;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use bytes::Bytes;
 use color_eyre::eyre::{Result, WrapErr};
 use ed25519_dalek::SigningKey;
 use felidae_types::KeyPair;
 use felidae_types::transaction::{
-    Admin, AdminConfig, Config, Delay, OnionConfig, Oracle, OracleConfig, Quorum, Timeout, Total,
-    ValidatorConfig, VotingConfig,
+    Admin, AdminConfig, Config, Delay, Identity, OnionConfig, Oracle, OracleConfig, Quorum,
+    Timeout, Total, ValidatorConfig, VotingConfig,
 };
 use p256::SecretKey;
 use pkcs8::EncodePrivateKey;
@@ -357,7 +356,8 @@ impl Network {
             let public_key = keypair.public_key();
 
             oracle_configs.push(Oracle {
-                identity: Bytes::from(public_key),
+                identity: Identity::from_sec1_bytes(&public_key)
+                    .expect("keypair-derived public key is a valid P-256 point"),
                 endpoint: url::Url::parse(&format!(
                     "http://{}:{}",
                     node.bind_address, node.ports.felidae_oracle
@@ -379,7 +379,8 @@ impl Network {
             let public_key = keypair.public_key();
 
             admin_configs.push(Admin {
-                identity: Bytes::from(public_key),
+                identity: Identity::from_sec1_bytes(&public_key)
+                    .expect("keypair-derived public key is a valid P-256 point"),
             });
         }
 

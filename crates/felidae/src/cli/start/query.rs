@@ -286,7 +286,7 @@ pub fn app(storage: Storage) -> Router {
                         .authorized
                         .into_iter()
                         .map(|oracle| OracleInfo {
-                            identity: hex::encode(oracle.identity),
+                            identity: oracle.identity.to_string(),
                             endpoint: oracle.endpoint,
                         })
                         .collect();
