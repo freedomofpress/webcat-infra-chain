@@ -25,3 +25,4 @@ tempfile = "3"
 [dev-dependencies]
 proptest = "1"
 url = { workspace = true }
+p256 = { workspace = true }
