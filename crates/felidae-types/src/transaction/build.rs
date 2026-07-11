@@ -1,8 +1,8 @@
-use prost::bytes::Bytes;
 use tendermint::Time;
 
 use crate::transaction::{
-    Action, Admin, ChainId, Config, Observation, Observe, OracleIdentity, Reconfigure, Transaction,
+    Action, Admin, ChainId, Config, Identity, Observation, Observe, OracleIdentity, Reconfigure,
+    Transaction,
 };
 
 pub struct Builder {
@@ -25,26 +25,22 @@ impl Builder {
 
     pub fn reconfigure(
         self,
-        admin: impl Into<Bytes>,
+        admin: Identity,
         not_before: Time,
         not_after: Time,
         config: Config,
     ) -> Self {
         self.action(Action::Reconfigure(Reconfigure {
-            admin: Admin {
-                identity: admin.into(),
-            },
+            admin: Admin { identity: admin },
             config,
             not_before,
             not_after,
         }))
     }
 
-    pub fn observe(self, oracle: impl Into<Bytes>, observation: Observation) -> Self {
+    pub fn observe(self, oracle: Identity, observation: Observation) -> Self {
         self.action(Action::Observe(Observe {
-            oracle: OracleIdentity {
-                identity: oracle.into(),
-            },
+            oracle: OracleIdentity { identity: oracle },
             observation,
         }))
     }

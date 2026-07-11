@@ -69,21 +69,21 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             bail!("max_enrolled_subdomains cannot decrease");
         }
 
-        // Validate that no admin has an all-zero identity (placeholder entry):
+        // Validate that no admin has the well-known placeholder identity from the template:
         for (i, admin) in admins.iter().enumerate() {
-            if Self::is_all_zeros(&admin.identity) {
+            if admin.identity == Identity::placeholder() {
                 bail!(
-                    "admin at index {} has an all-zero identity (placeholder not replaced)",
+                    "admin at index {} has a placeholder identity (placeholder not replaced)",
                     i
                 );
             }
         }
 
-        // Validate that no oracle has an all-zero identity (placeholder entry):
+        // Validate that no oracle has the well-known placeholder identity from the template:
         for (i, oracle) in oracles.iter().enumerate() {
-            if Self::is_all_zeros(&oracle.identity) {
+            if oracle.identity == Identity::placeholder() {
                 bail!(
-                    "oracle at index {} has an all-zero identity (placeholder not replaced)",
+                    "oracle at index {} has a placeholder identity (placeholder not replaced)",
                     i
                 );
             }
