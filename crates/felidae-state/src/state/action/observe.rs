@@ -31,7 +31,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             .iter()
             .any(|o| o.identity == oracle.identity)
         {
-            bail!("not a current oracle: {}", hex::encode(identity));
+            bail!("not a current oracle: {identity}");
         }
 
         // Ensure the blockstamp is not in the future
@@ -144,7 +144,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             .await?
             .cast(Vote {
                 key: subdomain.clone(),
-                party: hex::encode(identity),
+                party: identity.to_string(),
                 time: current_time,
                 value: OracleVoteValue {
                     hash_observed: hash_observed.clone(),

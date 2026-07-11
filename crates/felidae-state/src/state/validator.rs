@@ -679,7 +679,6 @@ mod tests {
         Admin, AdminConfig, Delay, OnionConfig, OracleConfig, Quorum, Timeout, Total,
         ValidatorConfig, VotingConfig,
     };
-    use prost::bytes::Bytes;
     use tempfile::TempDir;
     use tendermint::block::Height;
 
@@ -688,6 +687,16 @@ mod tests {
 
     fn test_pub_key() -> tendermint::PublicKey {
         tendermint::PublicKey::from_raw_ed25519(&[1u8; 32]).expect("valid ed25519 key")
+    }
+
+    /// Deterministic P-256 admin identity (scalar 256, avoiding the
+    /// generator-point placeholder at scalar 1).
+    fn test_admin_identity() -> Identity {
+        let mut scalar = [0u8; 32];
+        scalar[30] = 1;
+        let signing_key =
+            p256::ecdsa::SigningKey::from_slice(&scalar).expect("low scalar is a valid key");
+        Identity::from(*signing_key.verifying_key())
     }
 
     /// Compute the CometBFT validator address for a public key.
@@ -709,7 +718,7 @@ mod tests {
                     delay: Delay(Duration::from_secs(0)),
                 },
                 authorized: vec![Admin {
-                    identity: Bytes::from(vec![0xabu8; 64]),
+                    identity: test_admin_identity(),
                 }],
             },
             oracles: OracleConfig {
@@ -758,6 +767,51 @@ mod tests {
                 .expect("declare_validator");
         }
         (store, temp_dir)
+    }
+
+    #[tokio::test]
+    async fn test_check_config_rejects_placeholder_identities() {
+        let (store, _dir) = setup_state_with_validator(ValidatorConfig::default()).await;
+        let state = store.state.read().await;
+
+        // A version-2 config that check_config accepts: one real admin, one real oracle.
+        let valid_config = || {
+            let mut config = test_config(ValidatorConfig::default());
+            config.version = 2;
+            config
+                .oracles
+                .authorized
+                .push(felidae_types::transaction::Oracle {
+                    identity: test_admin_identity(),
+                    endpoint: url::Url::parse("http://127.0.0.1:8081").unwrap(),
+                });
+            config.oracles.voting.total = Total(1);
+            config.oracles.voting.quorum = Quorum(1);
+            config
+        };
+
+        state
+            .check_config(&valid_config())
+            .await
+            .expect("non-placeholder config is valid");
+
+        // An unreplaced template placeholder (the P-256 generator point) must be
+        // rejected for both admins and oracles.
+        let mut config = valid_config();
+        config.admins.authorized[0].identity = Identity::placeholder();
+        let err = state.check_config(&config).await.unwrap_err();
+        assert!(
+            err.to_string().contains("placeholder"),
+            "unexpected error: {err}"
+        );
+
+        let mut config = valid_config();
+        config.oracles.authorized[0].identity = Identity::placeholder();
+        let err = state.check_config(&config).await.unwrap_err();
+        assert!(
+            err.to_string().contains("placeholder"),
+            "unexpected error: {err}"
+        );
     }
 
     #[tokio::test]

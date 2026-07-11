@@ -18,7 +18,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         if !current_config.admins.authorized.is_empty()
             && !current_config.admins.authorized.iter().any(|a| a == admin)
         {
-            bail!("not a current admin: {}", hex::encode(identity));
+            bail!("not a current admin: {identity}");
         }
 
         // Ensure the current time is within the not_before and not_after bounds:
@@ -49,7 +49,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             .await?
             .cast(Vote {
                 key: Empty,
-                party: hex::encode(identity),
+                party: identity.to_string(),
                 time: current_time,
                 value: config.clone(),
             })

@@ -23,7 +23,7 @@ pub use felidae_types::{
 };
 use felidae_types::{
     KeyPair,
-    transaction::{self, AuthenticatedTx},
+    transaction::{self, AuthenticatedTx, Identity},
 };
 
 /// Errors that may occur when creating a witness transaction.
@@ -119,7 +119,7 @@ pub fn witness(
 ) -> Result<String, WitnessError> {
     let keypair = KeyPair::decode(&hex::decode(signing_key).map_err(|_| Error::InvalidSigningKey)?)
         .map_err(|_| Error::InvalidSigningKey)?;
-    let identity = keypair.public_key().to_vec();
+    let identity = Identity::from_keypair(&keypair);
 
     // Get the canonical hash of the enrollment:
     let hash_observed = if !enrollment.is_empty() {

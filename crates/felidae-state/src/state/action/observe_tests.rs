@@ -2,25 +2,35 @@ use crate::Store;
 use felidae_types::{
     FQDN,
     transaction::{
-        Admin, AdminConfig, Blockstamp, Config, Delay, Domain, HashObserved, Observation, Observe,
-        OnionConfig, Oracle, OracleConfig, OracleIdentity, PrefixOrderDomain, Quorum, Timeout,
-        Total, ValidatorConfig, VotingConfig, Zone,
+        Admin, AdminConfig, Blockstamp, Config, Delay, Domain, HashObserved, Identity, Observation,
+        Observe, OnionConfig, Oracle, OracleConfig, OracleIdentity, PrefixOrderDomain, Quorum,
+        Timeout, Total, ValidatorConfig, VotingConfig, Zone,
     },
 };
-use prost::bytes::Bytes;
 use std::time::Duration;
 use tempfile::TempDir;
 use tendermint::{AppHash, Time, block::Height};
 
-fn oracle_identity() -> Bytes {
-    Bytes::from(vec![1u8; 64])
+/// Deterministic P-256 identity derived from a fixed low scalar (256 + n,
+/// so no `n` collides with the generator-point placeholder).
+fn test_identity(n: u8) -> Identity {
+    let mut scalar = [0u8; 32];
+    scalar[30] = 1;
+    scalar[31] = n;
+    let signing_key =
+        p256::ecdsa::SigningKey::from_slice(&scalar).expect("low scalar is a valid key");
+    Identity::from(*signing_key.verifying_key())
+}
+
+fn oracle_identity() -> Identity {
+    test_identity(1)
 }
 
 fn test_app_hash() -> AppHash {
     AppHash::try_from(vec![42u8; 32]).expect("valid app hash")
 }
 
-fn test_config(oracle: &Bytes, obs_timeout_secs: u64, max_subdomains: u64) -> Config {
+fn test_config(oracle: &Identity, obs_timeout_secs: u64, max_subdomains: u64) -> Config {
     Config {
         version: 1,
         admins: AdminConfig {
@@ -31,7 +41,7 @@ fn test_config(oracle: &Bytes, obs_timeout_secs: u64, max_subdomains: u64) -> Co
                 delay: Delay(Duration::from_secs(0)),
             },
             authorized: vec![Admin {
-                identity: Bytes::from(vec![0xabu8; 64]),
+                identity: test_identity(2),
             }],
         },
         oracles: OracleConfig {
@@ -45,7 +55,7 @@ fn test_config(oracle: &Bytes, obs_timeout_secs: u64, max_subdomains: u64) -> Co
             max_enrolled_subdomains: max_subdomains,
             observation_timeout: Duration::from_secs(obs_timeout_secs),
             authorized: vec![Oracle {
-                identity: oracle.clone(),
+                identity: *oracle,
                 endpoint: url::Url::parse("http://127.0.0.1:8081").unwrap(),
             }],
         },
@@ -104,7 +114,7 @@ async fn setup_state(obs_timeout_secs: u64, max_subdomains: u64) -> (Store, Temp
 }
 
 fn mock_observe(
-    oracle: &Bytes,
+    oracle: &Identity,
     subdomain: &str,
     zone: &str,
     blockstamp_height: u32,
@@ -112,9 +122,7 @@ fn mock_observe(
     hash_observed: HashObserved,
 ) -> Observe {
     Observe {
-        oracle: OracleIdentity {
-            identity: oracle.clone(),
-        },
+        oracle: OracleIdentity { identity: *oracle },
         observation: Observation {
             domain: Domain {
                 name: FQDN::from_ascii_str(subdomain).expect("valid subdomain FQDN"),
@@ -135,7 +143,7 @@ fn mock_observe(
 async fn test_observe_unauthorized_oracle() {
     let (store, _dir) = setup_state(300, 10).await;
     let app_hash = test_app_hash();
-    let unauthorized = Bytes::from(vec![0xffu8; 64]);
+    let unauthorized = test_identity(3);
 
     let mut state = store.state.write().await;
     let observe = mock_observe(

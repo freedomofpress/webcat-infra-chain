@@ -617,7 +617,7 @@ impl TryFrom<proto::Admin> for Admin {
 
     fn try_from(value: proto::Admin) -> Result<Self, Self::Error> {
         Ok(Admin {
-            identity: value.public_key,
+            identity: Identity::from_sec1_bytes(&value.public_key)?,
         })
     }
 }
@@ -627,7 +627,7 @@ impl TryFrom<Unsigned> for Admin {
 
     fn try_from(value: Unsigned) -> Result<Self, Self::Error> {
         Ok(Admin {
-            identity: value.public_key,
+            identity: Identity::from_sec1_bytes(&value.public_key)?,
         })
     }
 }
@@ -635,7 +635,7 @@ impl TryFrom<Unsigned> for Admin {
 impl From<Admin> for proto::Admin {
     fn from(admin: Admin) -> Self {
         proto::Admin {
-            public_key: admin.identity,
+            public_key: admin.identity.to_bytes().into(),
         }
     }
 }
@@ -665,7 +665,7 @@ impl From<Validator> for proto::Validator {
 
 impl From<Admin> for proto::Signature {
     fn from(admin: Admin) -> Self {
-        proto::Signature::unsigned(admin.identity)
+        proto::Signature::unsigned(admin.identity.to_bytes().into())
     }
 }
 
@@ -686,7 +686,7 @@ impl TryFrom<proto::Oracle> for Oracle {
             crate::ParseError::new::<Oracle>(format!("invalid endpoint URL: {}", endpoint_str))
         })?;
         Ok(Oracle {
-            identity: public_key,
+            identity: Identity::from_sec1_bytes(&public_key)?,
             endpoint,
         })
     }
@@ -696,7 +696,7 @@ impl From<Oracle> for proto::Oracle {
     fn from(oracle: Oracle) -> Self {
         proto::Oracle {
             public_key: Some(proto::OracleIdentity {
-                public_key: oracle.identity,
+                public_key: oracle.identity.to_bytes().into(),
             }),
             endpoint: oracle.endpoint.to_string(),
         }
@@ -706,7 +706,7 @@ impl From<Oracle> for proto::Oracle {
 impl From<OracleIdentity> for proto::OracleIdentity {
     fn from(oracle: OracleIdentity) -> Self {
         proto::OracleIdentity {
-            public_key: oracle.identity,
+            public_key: oracle.identity.to_bytes().into(),
         }
     }
 }
@@ -716,7 +716,7 @@ impl TryFrom<proto::OracleIdentity> for OracleIdentity {
 
     fn try_from(value: proto::OracleIdentity) -> Result<Self, Self::Error> {
         Ok(OracleIdentity {
-            identity: value.public_key,
+            identity: Identity::from_sec1_bytes(&value.public_key)?,
         })
     }
 }
@@ -726,20 +726,20 @@ impl TryFrom<Unsigned> for OracleIdentity {
 
     fn try_from(value: Unsigned) -> Result<Self, Self::Error> {
         Ok(OracleIdentity {
-            identity: value.public_key,
+            identity: Identity::from_sec1_bytes(&value.public_key)?,
         })
     }
 }
 
 impl From<OracleIdentity> for proto::Signature {
     fn from(oracle: OracleIdentity) -> Self {
-        proto::Signature::unsigned(oracle.identity)
+        proto::Signature::unsigned(oracle.identity.to_bytes().into())
     }
 }
 
 impl From<Oracle> for proto::Signature {
     fn from(oracle: Oracle) -> Self {
-        proto::Signature::unsigned(oracle.identity)
+        proto::Signature::unsigned(oracle.identity.to_bytes().into())
     }
 }
 
@@ -903,10 +903,19 @@ mod tests {
         0u64..=(i64::MAX as u64)
     }
 
-    /// Arbitrary opaque public-key bytes (admin/oracle identities are copied
-    /// through without a length check), sized around the real 64-byte keys.
-    fn arb_identity() -> impl Strategy<Value = Bytes> {
-        proptest::collection::vec(any::<u8>(), 0..80).prop_map(Bytes::from)
+    /// A valid P-256 admin/oracle identity. Identities are parsed and validated
+    /// at the proto -> domain boundary (`from_sec1_bytes`), so the round-trip is
+    /// only meaningful for real curve points: derive each from a signing scalar
+    /// and filter out the zero/out-of-range scalars `from_slice` rejects.
+    fn arb_identity() -> impl Strategy<Value = Identity> {
+        proptest::array::uniform32(any::<u8>()).prop_filter_map(
+            "non-zero, in-range P-256 scalar",
+            |bytes| {
+                p256::ecdsa::SigningKey::from_slice(&bytes)
+                    .ok()
+                    .map(|sk| Identity::from(*sk.verifying_key()))
+            },
+        )
     }
 
     fn arb_voting() -> impl Strategy<Value = VotingConfig> {
