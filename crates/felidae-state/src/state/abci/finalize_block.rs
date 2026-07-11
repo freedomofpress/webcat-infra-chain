@@ -145,15 +145,17 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 .await?;
         }
 
-        // Return only the delta (additions and power=0 removals) from config sync.
-        // CometBFT maintains its own validator set and only expects changes, not the
-        // full set.  Returning the full active set would cause duplicates when a newly
-        // added validator appears in both active_validators() and validator_changes,
-        // which CometBFT rejects ("duplicate entry").
-        // Jail/unjail power changes are also included here, as are tombstone power=0 updates.
-        validator_changes.extend(jail_updates);
-        validator_changes.extend(tombstone_updates);
-        let validator_updates = validator_changes;
+        // Emit only the delta from this block (CometBFT maintains its own set and
+        // rejects duplicate keys in one response). Coalesce per pubkey in
+        // state-mutation order — jail, then tombstone, then config sync — so the
+        // surviving update per key is the one matching final state. Covers e.g.
+        // jail+tombstone in one block, or unjail+admin-removal in one block.
+        let validator_updates = super::super::validator::coalesce_validator_updates(
+            jail_updates
+                .into_iter()
+                .chain(tombstone_updates)
+                .chain(validator_changes),
+        );
 
         Ok(response::FinalizeBlock {
             tx_results,

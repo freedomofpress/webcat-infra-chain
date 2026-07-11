@@ -138,6 +138,24 @@ impl felidae_proto::DomainType for Uptime {
 /// CometBFT's total-power limit of `i64::MAX / 8` even for large validator sets.
 pub const BASE_VALIDATOR_POWER: u32 = 1_000_000_000;
 
+/// Coalesce validator updates so each public key appears at most once,
+/// keeping the LAST update per key. Callers must supply updates in
+/// state-mutation order; the final power per key is then the one that
+/// matches state. CometBFT rejects a `FinalizeBlock` response containing
+/// duplicate keys ("duplicate entry"), which would halt the chain.
+///
+/// Output is sorted by public key, giving every node an identical response.
+pub(crate) fn coalesce_validator_updates(updates: impl IntoIterator<Item = Update>) -> Vec<Update> {
+    let mut coalesced: BTreeMap<tendermint::PublicKey, Power> = BTreeMap::new();
+    for Update { pub_key, power } in updates {
+        coalesced.insert(pub_key, power);
+    }
+    coalesced
+        .into_iter()
+        .map(|(pub_key, power)| Update { pub_key, power })
+        .collect()
+}
+
 impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     /// Declare a new validator by its public key.
     ///
@@ -1385,5 +1403,252 @@ mod tests {
             Some(Power::from(0u32)),
             "tombstoned validator's stored power must remain 0"
         );
+    }
+
+    #[test]
+    fn test_coalesce_validator_updates_last_wins() {
+        let k1 = test_pub_key();
+        let k2 = tendermint::PublicKey::from_raw_ed25519(&[2u8; 32]).expect("valid ed25519 key");
+
+        let coalesced = coalesce_validator_updates([
+            Update {
+                pub_key: k1,
+                power: Power::from(1u32),
+            },
+            Update {
+                pub_key: k2,
+                power: Power::from(BASE_VALIDATOR_POWER),
+            },
+            Update {
+                pub_key: k1,
+                power: Power::from(0u32),
+            },
+        ]);
+
+        // One entry per key; the LAST update per key survives; output is
+        // key-sorted so every node emits an identical response.
+        assert_eq!(coalesced.len(), 2);
+        assert_eq!(coalesced[0].pub_key, k1);
+        assert_eq!(coalesced[0].power, Power::from(0u32));
+        assert_eq!(coalesced[1].pub_key, k2);
+        assert_eq!(coalesced[1].power, Power::from(BASE_VALIDATOR_POWER));
+    }
+
+    /// Build a minimal `FinalizeBlock` request: empty votes (every validator
+    /// is marked as having missed the block) and the given misbehavior list.
+    fn finalize_block_request(
+        height: u32,
+        misbehavior: Vec<Misbehavior>,
+    ) -> request::FinalizeBlock {
+        request::FinalizeBlock {
+            txs: vec![],
+            decided_last_commit: CommitInfo {
+                round: 0u16.into(),
+                votes: vec![],
+            },
+            misbehavior,
+            hash: tendermint::Hash::None,
+            height: Height::from(height),
+            time: tendermint::Time::unix_epoch(),
+            next_validators_hash: tendermint::Hash::None,
+            proposer_address: tendermint::account::Id::try_from(vec![0u8; 20])
+                .expect("20-byte address"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_finalize_block_jail_and_tombstone_same_block_no_duplicate_update() {
+        // H1 scenario 1 (validator-lifecycle-review.md): a validator crosses
+        // the jail threshold in the same block that misbehavior evidence
+        // arrives for it. Both the jail loop (power=1) and the tombstone loop
+        // (power=0) emit an update for the same key; CometBFT rejects a
+        // FinalizeBlock response containing duplicate keys, which would halt
+        // the chain. The response must contain exactly one, terminal, update.
+        let (store, _dir) = setup_state_with_validator(ValidatorConfig {
+            uptime_window: 10,
+            missed_blocks_max: 5,
+            unjail_missed_max: 2,
+        })
+        .await;
+
+        let pub_key = test_pub_key();
+        let address = validator_address(&pub_key);
+        let mut state = store.state.write().await;
+
+        // Heights 3..=7: five missed blocks — one below the jail threshold,
+        // so no updates are emitted yet.
+        for height in 3u32..=7 {
+            let response = state
+                .finalize_block(finalize_block_request(height, vec![]))
+                .await
+                .expect("finalize_block");
+            assert!(
+                response.validator_updates.is_empty(),
+                "no update expected at height {height} (missed blocks still within threshold)"
+            );
+        }
+
+        // Height 8: the sixth miss crosses the jail threshold AND misbehavior
+        // evidence lands in the same block.
+        let response = state
+            .finalize_block(finalize_block_request(
+                8,
+                vec![Misbehavior {
+                    kind: tendermint::abci::types::MisbehaviorKind::DuplicateVote,
+                    validator: Validator {
+                        address,
+                        power: Power::from(BASE_VALIDATOR_POWER),
+                    },
+                    height: Height::from(7u32),
+                    time: tendermint::Time::unix_epoch(),
+                    total_voting_power: Power::from(BASE_VALIDATOR_POWER),
+                }],
+            ))
+            .await
+            .expect("finalize_block");
+
+        let updates_for_key: Vec<_> = response
+            .validator_updates
+            .iter()
+            .filter(|u| u.pub_key == pub_key)
+            .collect();
+        assert_eq!(
+            updates_for_key.len(),
+            1,
+            "exactly one update per key must be emitted (CometBFT rejects duplicates); got {:?}",
+            response.validator_updates,
+        );
+        assert_eq!(
+            updates_for_key[0].power,
+            Power::from(0u32),
+            "the surviving update must carry the terminal (tombstoned) power"
+        );
+        assert_eq!(
+            state.validator_status(&pub_key).await.unwrap(),
+            Some(ValidatorStatus::Tombstoned),
+        );
+    }
+
+    /// Build a `FinalizeBlock` request in which the given validator address
+    /// signed the previous block (all other fields minimal, no misbehavior).
+    fn signed_finalize_block_request(height: u32, signer: [u8; 20]) -> request::FinalizeBlock {
+        let mut request = finalize_block_request(height, vec![]);
+        request.decided_last_commit.votes = vec![VoteInfo {
+            validator: Validator {
+                address: signer,
+                power: Power::from(1u32),
+            },
+            sig_info: BlockSignatureInfo::Flag(BlockIdFlag::Commit),
+        }];
+        request
+    }
+
+    #[tokio::test]
+    async fn test_finalize_block_unjail_and_admin_removal_same_block_no_duplicate_update() {
+        // H1 scenario 3 (validator-lifecycle-review.md): a jailed validator's
+        // uptime recovers past the unjail threshold in the same block that a
+        // quorum-approved admin reconfigure removing it is promoted. The jail
+        // loop emits power=BASE, config sync then emits power=0; the response
+        // must carry exactly one, terminal, update for the key.
+        let (store, _dir) = setup_state_with_validator(ValidatorConfig {
+            uptime_window: 10,
+            missed_blocks_max: 5,
+            unjail_missed_max: 2,
+        })
+        .await;
+
+        let pub_key = test_pub_key();
+        let address = validator_address(&pub_key);
+        let other_key =
+            tendermint::PublicKey::from_raw_ed25519(&[2u8; 32]).expect("valid ed25519 key");
+        let mut state = store.state.write().await;
+
+        // Heights 3..=8: six missed blocks cross the jail threshold.
+        for height in 3u32..=8 {
+            state
+                .finalize_block(finalize_block_request(height, vec![]))
+                .await
+                .expect("finalize_block");
+        }
+        assert_eq!(
+            state.validator_status(&pub_key).await.unwrap(),
+            Some(ValidatorStatus::Jailed),
+        );
+
+        // Heights 9..=15: the validator signs every block, overwriting missed
+        // slots in the ring buffer; misses stay above unjail_missed_max, so no
+        // updates are emitted yet.
+        for height in 9u32..=15 {
+            let response = state
+                .finalize_block(signed_finalize_block_request(height, address))
+                .await
+                .expect("finalize_block");
+            assert!(
+                response.validator_updates.is_empty(),
+                "no update expected at height {height} (still recovering)"
+            );
+        }
+
+        // Cast a quorum-1 admin vote for a version-2 config that manages the
+        // validator set but omits our validator (i.e. removes it). With zero
+        // delay it is promoted inside the next finalize_block.
+        let mut new_config = test_config(ValidatorConfig {
+            uptime_window: 10,
+            missed_blocks_max: 5,
+            unjail_missed_max: 2,
+        });
+        new_config.version = 2;
+        new_config.validators = vec![felidae_types::transaction::Validator {
+            public_key: other_key,
+        }];
+        state
+            .admin_voting()
+            .await
+            .expect("admin_voting")
+            .cast(Vote {
+                key: Empty,
+                party: "test-admin".to_string(),
+                time: tendermint::Time::unix_epoch(),
+                value: new_config,
+            })
+            .await
+            .expect("cast admin vote");
+
+        // Height 16: the sixteenth block clears enough misses to unjail
+        // (power=BASE) AND the promoted config removes the validator
+        // (power=0) — both in the same finalize_block call.
+        let response = state
+            .finalize_block(signed_finalize_block_request(16, address))
+            .await
+            .expect("finalize_block");
+
+        let updates_for_key: Vec<_> = response
+            .validator_updates
+            .iter()
+            .filter(|u| u.pub_key == pub_key)
+            .collect();
+        assert_eq!(
+            updates_for_key.len(),
+            1,
+            "exactly one update per key must be emitted (CometBFT rejects duplicates); got {:?}",
+            response.validator_updates,
+        );
+        assert_eq!(
+            updates_for_key[0].power,
+            Power::from(0u32),
+            "the surviving update must carry the terminal (removed) power"
+        );
+        assert_eq!(
+            state.validator_status(&pub_key).await.unwrap(),
+            Some(ValidatorStatus::Inactive),
+        );
+
+        // The newly-managed other validator is declared in the same block.
+        let other_update = response
+            .validator_updates
+            .iter()
+            .find(|u| u.pub_key == other_key)
+            .expect("new validator declared by the promoted config");
+        assert_eq!(other_update.power, Power::from(BASE_VALIDATOR_POWER));
     }
 }
