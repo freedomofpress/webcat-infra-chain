@@ -89,12 +89,26 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             }
         }
 
-        // Validate that no validator has an all-zero public key (placeholder entry):
+        // Validate each declared validator:
+        //   - reject the all-zero public key (an unreplaced placeholder entry);
+        //   - reject any key that is currently tombstoned. Tombstoning is
+        //     permanent, so listing such a key in a reconfigure is always a
+        //     mistake. Rejecting here (rather than silently dropping it at
+        //     promotion) surfaces the error to the submitting admin via CheckTx.
         for (i, validator) in validators.iter().enumerate() {
             if Self::is_all_zeros(&validator.public_key.to_bytes()) {
                 bail!(
                     "validator at index {} has an all-zero public key (placeholder not replaced)",
                     i
+                );
+            }
+            if self.validator_status(&validator.public_key).await?
+                == Some(super::validator::ValidatorStatus::Tombstoned)
+            {
+                bail!(
+                    "validator at index {} ({}) is tombstoned and can never be re-added",
+                    i,
+                    hex::encode(validator.public_key.to_bytes()),
                 );
             }
         }
