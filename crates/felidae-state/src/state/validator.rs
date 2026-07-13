@@ -72,19 +72,26 @@ impl Uptime {
         }
     }
 
-    fn mark_signed(&mut self, height: u64, signed: bool) {
+    fn mark_signed(&mut self, height: u64, signed: bool) -> Result<(), Report> {
+        // Heights must be strictly sequential: CometBFT delivers FinalizeBlock for
+        // consecutive heights, and every active validator is marked exactly once
+        // per block. A gap means the ring-buffer index would land on the wrong
+        // slot, silently corrupting the miss count that drives jailing — a
+        // consensus-affecting decision. Refuse to write rather than corrupt state.
+        // The resulting halt is deterministic across nodes (same block, same
+        // state), so it stops the chain without forking it, and forces the
+        // underlying invariant violation to be investigated.
         if height != self.as_of_block_height + 1 {
-            // This indicates a bug — heights should always be sequential. Log it but don't
-            // bail, since propagating this error would cause a chain halt.
-            error!(
-                expected = self.as_of_block_height + 1,
-                got = height,
-                "uptime tracker received non-sequential height; ring buffer index will be incorrect"
+            bail!(
+                "uptime tracker received non-sequential height: expected {}, got {}",
+                self.as_of_block_height + 1,
+                height,
             );
         }
         let index = (height as usize) % self.bits.len();
         self.bits.set(index, signed);
         self.as_of_block_height = height;
+        Ok(())
     }
 
     fn num_missed_blocks(&self) -> usize {
@@ -608,7 +615,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 missed = uptime.num_missed_blocks(),
                 "recording validator vote"
             );
-            uptime.mark_signed(height, signed);
+            uptime.mark_signed(height, signed)?;
             self.store.put(Internal, &uptime_key, uptime);
         }
         Ok(())
@@ -1509,6 +1516,35 @@ mod tests {
         assert_eq!(coalesced[0].power, Power::from(0u32));
         assert_eq!(coalesced[1].pub_key, k2);
         assert_eq!(coalesced[1].power, Power::from(BASE_VALIDATOR_POWER));
+    }
+
+    #[test]
+    fn test_uptime_rejects_non_sequential_height() {
+        // A gap or replay in the height sequence would mis-index the ring buffer
+        // and silently corrupt the miss count, so mark_signed must refuse it
+        // rather than write bad state. (Under CometBFT this cannot happen; the
+        // guard turns any invariant violation into a loud, deterministic halt.)
+        let mut uptime = Uptime::new(10, 8);
+
+        // The next sequential height is accepted.
+        uptime
+            .mark_signed(11, true)
+            .expect("sequential height accepted");
+
+        // A forward gap (12 skipped) is rejected.
+        let err = uptime.mark_signed(13, true).unwrap_err();
+        assert!(
+            err.to_string().contains("non-sequential"),
+            "unexpected error: {err}"
+        );
+
+        // A stale/replayed height is likewise rejected, and the failed calls did
+        // not advance the tracker (still expecting 12).
+        let err = uptime.mark_signed(11, true).unwrap_err();
+        assert!(
+            err.to_string().contains("expected 12"),
+            "unexpected error: {err}"
+        );
     }
 
     /// Build a minimal `FinalizeBlock` request: empty votes (every validator
