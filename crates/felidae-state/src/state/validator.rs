@@ -501,7 +501,13 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                     debug!(pub_key = pub_key_hex, "validator is jailed, skipping");
                 }
                 Some(ValidatorStatus::Tombstoned) => {
-                    // Tombstoned validators can never be re-added.
+                    // Tombstoned validators can never be re-added. `check_config`
+                    // already rejects a reconfigure that lists a tombstoned key at
+                    // admission, so an admin cannot knowingly submit one. This is
+                    // the second line of defense for the race it cannot see: a
+                    // config approved while the validator was healthy, then
+                    // promoted *after* the validator was tombstoned. We warn and
+                    // drop rather than bail — bailing here would halt the chain.
                     warn!(
                         pub_key = pub_key_hex,
                         "ignoring tombstoned validator in config"
@@ -830,6 +836,77 @@ mod tests {
             err.to_string().contains("placeholder"),
             "unexpected error: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_check_config_rejects_tombstoned_validators() {
+        // A reconfigure that lists a tombstoned validator must be rejected at
+        // admission (check_config), not silently dropped at promotion — an admin
+        // should never believe they re-added a permanently-banned validator.
+        let (store, _dir) = setup_state_with_validator(ValidatorConfig::default()).await;
+        // A write guard so we can tombstone the validator; check_config takes
+        // &self and is happily callable through the &mut.
+        let mut state = store.state.write().await;
+
+        // A version-2 config that check_config accepts (one real admin, one real
+        // oracle, matching voting totals).
+        let valid_config = || {
+            let mut config = test_config(ValidatorConfig::default());
+            config.version = 2;
+            config
+                .oracles
+                .authorized
+                .push(felidae_types::transaction::Oracle {
+                    identity: test_admin_identity(),
+                    endpoint: url::Url::parse("http://127.0.0.1:8081").unwrap(),
+                });
+            config.oracles.voting.total = Total(1);
+            config.oracles.voting.quorum = Quorum(1);
+            config
+        };
+
+        let pub_key = test_pub_key();
+        let listing_config = || {
+            let mut config = valid_config();
+            config.validators = vec![felidae_types::transaction::Validator {
+                public_key: pub_key,
+            }];
+            config
+        };
+
+        // Precondition: while the validator is Active, listing it is fine.
+        state
+            .check_config(&listing_config())
+            .await
+            .expect("an active validator may be listed in config");
+
+        // Tombstone the validator.
+        state
+            .tombstone_validator(Validator {
+                address: validator_address(&pub_key),
+                power: Power::from(BASE_VALIDATOR_POWER),
+            })
+            .await
+            .expect("tombstone_validator");
+        assert_eq!(
+            state.validator_status(&pub_key).await.unwrap(),
+            Some(ValidatorStatus::Tombstoned),
+            "precondition: validator should be Tombstoned",
+        );
+
+        // A config that lists the now-tombstoned validator must be rejected.
+        let err = state.check_config(&listing_config()).await.unwrap_err();
+        assert!(
+            err.to_string().contains("tombstone"),
+            "unexpected error: {err}"
+        );
+
+        // Control: a config that does NOT list the tombstoned validator still
+        // passes — only the tombstoned entry is rejected, not the whole config.
+        state
+            .check_config(&valid_config())
+            .await
+            .expect("config without the tombstoned validator remains valid");
     }
 
     #[tokio::test]
