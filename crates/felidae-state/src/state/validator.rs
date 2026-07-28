@@ -1569,14 +1569,14 @@ mod tests {
         }
     }
 
+    /// Tests the case where a validator crosses the jail threshold
+    /// in the same block that misbehavior evidence arrives for it.
+    /// Both the jail loop (power=1) and the tombstone loop (power=0)
+    /// emit an update for the same key; CometBFT rejects a FinalizeBlock
+    /// response containing duplicate keys, which would halt the chain.
+    /// The response must contain exactly one, terminal, update.
     #[tokio::test]
     async fn test_finalize_block_jail_and_tombstone_same_block_no_duplicate_update() {
-        // H1 scenario 1 (validator-lifecycle-review.md): a validator crosses
-        // the jail threshold in the same block that misbehavior evidence
-        // arrives for it. Both the jail loop (power=1) and the tombstone loop
-        // (power=0) emit an update for the same key; CometBFT rejects a
-        // FinalizeBlock response containing duplicate keys, which would halt
-        // the chain. The response must contain exactly one, terminal, update.
         let (store, _dir) = setup_state_with_validator(ValidatorConfig {
             uptime_window: 10,
             missed_blocks_max: 5,
@@ -1656,13 +1656,13 @@ mod tests {
         request
     }
 
+    /// Tests the scenario where a jailed validator's uptime recovers
+    /// past the unjail threshold in the same block that a new Config
+    /// removing that same validator is ratified by admins and thereby reified on-chain.
+    /// The jail loop emits power=BASE, config sync then emits power=0;
+    /// the response must carry exactly one, terminal, update for the key.
     #[tokio::test]
     async fn test_finalize_block_unjail_and_admin_removal_same_block_no_duplicate_update() {
-        // H1 scenario 3 (validator-lifecycle-review.md): a jailed validator's
-        // uptime recovers past the unjail threshold in the same block that a
-        // quorum-approved admin reconfigure removing it is promoted. The jail
-        // loop emits power=BASE, config sync then emits power=0; the response
-        // must carry exactly one, terminal, update for the key.
         let (store, _dir) = setup_state_with_validator(ValidatorConfig {
             uptime_window: 10,
             missed_blocks_max: 5,
