@@ -145,12 +145,20 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 .await?;
         }
 
-        // Emit only the delta from this block (CometBFT maintains its own set and
-        // rejects duplicate keys in one response). Coalesce per pubkey in
-        // state-mutation order — jail, then tombstone, then config sync — so the
-        // surviving update per key is the one matching final state. Covers e.g.
-        // jail+tombstone in one block, or unjail+admin-removal in one block.
-        let validator_updates = super::super::validator::coalesce_validator_updates(
+        // Emit only the delta from this block. CometBFT maintains its own set and
+        // rejects duplicate keys in one response, so coalesce to one update per
+        // pubkey, keeping the last. Correctness rests on two invariants:
+        //
+        //   1. The chain order below matches the order the state mutations ran
+        //      in this block (jail/unjail, then tombstone, then config sync), so
+        //      the last update per key is the one that matches final state.
+        //   2. `sync_validators_from_config` never emits an update for a jailed
+        //      or tombstoned key; its updates are chained last and would
+        //      otherwise clobber a tombstone with a re-add.
+        //
+        // Together these handle same-block edge cases like jail & tombstone or
+        // unjail & admin-removal, both tracked by unit tests.
+        let validator_updates = crate::state::validator::coalesce_validator_updates(
             jail_updates
                 .into_iter()
                 .chain(tombstone_updates)
