@@ -4,6 +4,7 @@ use clap::Parser;
 use std::future::Future;
 
 mod create_network;
+mod inject_config;
 mod join_network;
 mod run_network;
 
@@ -14,6 +15,8 @@ mod run_network;
 pub enum Options {
     /// Create a new felidae network.
     CreateNetwork(create_network::CreateNetwork),
+    /// Inject a chain config into genesis app_state files.
+    InjectConfig(inject_config::InjectConfig),
     /// Join an existing felidae network.
     JoinNetwork(join_network::JoinNetwork),
     /// Run a felidae network from a directory.
@@ -29,6 +32,7 @@ impl Run for Options {
     async fn run(self) -> color_eyre::Result<()> {
         match self {
             Self::CreateNetwork(cmd) => cmd.run().await,
+            Self::InjectConfig(cmd) => cmd.run().await,
             Self::JoinNetwork(cmd) => cmd.run().await,
             Self::RunNetwork(cmd) => cmd.run().await,
         }

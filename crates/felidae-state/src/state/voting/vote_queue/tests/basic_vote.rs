@@ -34,7 +34,7 @@ fn proptest_single_vote_cast_and_retrieval_below_quorum() {
                 delay: Delay(Duration::from_secs(86400)),
             };
 
-            let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", config);
+            let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", config).expect("valid voting config");
 
             let vote = Vote {
                 party: party.clone(),
@@ -110,7 +110,7 @@ fn proptest_vote_replacement() {
                 delay: Delay(Duration::from_secs(86400)),
             };
 
-            let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", config);
+            let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", config).expect("valid voting config");
 
             // Cast first vote
             let vote1 = Vote {
@@ -206,7 +206,7 @@ fn proptest_multiple_parties_voting() {
                 delay: Delay(Duration::from_secs(86400)),
             };
 
-            let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", config);
+            let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", config).expect("valid voting config");
 
             // Cast votes from all parties for the same key and value
             // Use slightly different times to ensure uniqueness
