@@ -719,7 +719,7 @@ mod tests {
     use std::time::Duration;
 
     use felidae_types::transaction::{
-        Admin, AdminConfig, Delay, OnionConfig, OracleConfig, Quorum, Timeout, Total,
+        Admin, AdminConfig, Delay, Identity, OnionConfig, OracleConfig, Quorum, Timeout, Total,
         ValidatorConfig, VotingConfig,
     };
     use tempfile::TempDir;
@@ -1248,7 +1248,7 @@ mod tests {
 
         // First sync: test_pub_key is absent from the config, so it transitions to Inactive.
         state
-            .sync_validators_from_config(&[other_validator.clone()])
+            .sync_validators_from_config(std::slice::from_ref(&other_validator))
             .await
             .expect("sync 1");
         assert_eq!(
