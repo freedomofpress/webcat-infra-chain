@@ -20,7 +20,10 @@ mod build;
 pub use build::Builder;
 
 mod authenticated;
+
+mod check;
 pub use authenticated::AuthenticatedTx;
+pub use check::InvalidConfig;
 
 // Here are all the domain types that can be stored in the state, and their mapping to protobuf:
 domain_types!(

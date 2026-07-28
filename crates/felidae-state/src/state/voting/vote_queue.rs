@@ -1,5 +1,5 @@
 use color_eyre::Report;
-use color_eyre::eyre::{Context, eyre};
+use color_eyre::eyre::{Context, bail, eyre};
 use felidae_proto::DomainType;
 use felidae_types::transaction::VotingConfig;
 use futures::{StreamExt, TryStreamExt};
@@ -67,14 +67,21 @@ where
         state: &'a mut State<S>,
         prefix: &'static str,
         config: VotingConfig,
-    ) -> VoteQueue<'a, S, K, V> {
-        VoteQueue {
+    ) -> Result<VoteQueue<'a, S, K, V>, Report> {
+        // The tally is a bare `count >= quorum`, so a zero quorum would
+        // promote any value on the first vote cast. Config validation already
+        // rejects zero quorums; enforcing the invariant here too means a
+        // permissive queue can never be constructed at all.
+        if config.quorum.0 == 0 {
+            bail!("voting config quorum must be non-zero");
+        }
+        Ok(VoteQueue {
             state,
             internal_state_prefix: prefix,
             config,
             _key: std::marker::PhantomData,
             _value: std::marker::PhantomData,
-        }
+        })
     }
 
     /// Run this every block to remove expired votes.

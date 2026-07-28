@@ -6,7 +6,7 @@
 #[macro_use]
 extern crate tracing;
 
-use std::{collections::BTreeSet, str::FromStr, time::Duration};
+use std::{collections::BTreeSet, str::FromStr};
 
 use color_eyre::{
     Report,
@@ -15,10 +15,9 @@ use color_eyre::{
 use felidae_types::{
     FQDN,
     transaction::{
-        Action, Admin, AdminConfig, AuthenticatedTx, Blockstamp, ChainId, Config, Delay, Domain,
-        Empty, HashObserved, Identity, Observation, Observe, OnionConfig, OracleConfig,
-        OracleIdentity, OracleVoteValue, PrefixOrderDomain, Quorum, Reconfigure, Timeout, Total,
-        Transaction, ValidatorConfig, VotingConfig,
+        Action, Admin, AuthenticatedTx, Blockstamp, ChainId, Config, Domain, Empty, HashObserved,
+        Observation, Observe, OracleIdentity, OracleVoteValue, PrefixOrderDomain, Reconfigure,
+        Transaction,
     },
 };
 use futures::{Stream, StreamExt};
