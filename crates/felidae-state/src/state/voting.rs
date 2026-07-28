@@ -11,20 +11,12 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         &'a mut self,
     ) -> Result<VoteQueue<'a, S, PrefixOrderDomain, OracleVoteValue>, Report> {
         let config = self.config().await?.oracles.voting.clone();
-        Ok(VoteQueue::<S, PrefixOrderDomain, OracleVoteValue>::new(
-            self,
-            "oracle_voting/",
-            config,
-        ))
+        VoteQueue::<S, PrefixOrderDomain, OracleVoteValue>::new(self, "oracle_voting/", config)
     }
 
     /// Get the vote queue for admin updates.
     pub async fn admin_voting<'a>(&'a mut self) -> Result<VoteQueue<'a, S, Empty, Config>, Report> {
         let config = self.config().await?.admins.voting.clone();
-        Ok(VoteQueue::<S, Empty, Config>::new(
-            self,
-            "admin_voting/",
-            config,
-        ))
+        VoteQueue::<S, Empty, Config>::new(self, "admin_voting/", config)
     }
 }

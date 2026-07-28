@@ -25,6 +25,17 @@ pub fn find_binaries() -> color_eyre::Result<(PathBuf, PathBuf)> {
     Ok((cometbft_bin, felidae_bin))
 }
 
+/// Find the felidae-deployer binary, building it if necessary.
+pub fn find_deployer() -> color_eyre::Result<PathBuf> {
+    let build = escargot::CargoBuild::new()
+        .package("felidae-deployer")
+        .bin("felidae-deployer")
+        .current_release()
+        .current_target()
+        .run()?;
+    Ok(build.path().to_path_buf())
+}
+
 /// Find the cometbft binary.
 ///
 /// Search order:
