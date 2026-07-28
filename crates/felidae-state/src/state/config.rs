@@ -17,91 +17,32 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
 
     /// Check a config for internal consistency and validity, as well as validity against the
     /// current config.
-    pub async fn check_config(
-        &self,
-        Config {
-            version,
-            admins:
-                AdminConfig {
-                    authorized: admins,
-                    voting: admin_voting_config,
-                },
-            oracles:
-                OracleConfig {
-                    enabled: _, // Can be enabled or not
-                    authorized: oracles,
-                    voting: oracle_voting_config,
-                    max_enrolled_subdomains,
-                    observation_timeout: _, // Any timeout is acceptable
-                },
-            onion: OnionConfig {
-                enabled: _, // Can be enabled or not
-            },
-            validators,
-            validator_config:
-                ValidatorConfig {
-                    uptime_window,
-                    missed_blocks_max,
-                    unjail_missed_max,
-                },
-        }: &Config,
-    ) -> Result<(), Report> {
+    pub async fn check_config(&self, config: &Config) -> Result<(), Report> {
         // Ensure the version is greater than the current version:
         let current_config = self.config().await?;
-        if *version <= current_config.version {
+        if config.version <= current_config.version {
             bail!(
-                "new config version {version} must be greater than current version {}",
+                "new config version {} must be greater than current version {}",
+                config.version,
                 current_config.version
             );
         }
 
-        // Check that the voting configs are valid:
-        self.check_voting_config(Total(admins.len() as u64), admin_voting_config)?;
-        self.check_voting_config(Total(oracles.len() as u64), oracle_voting_config)?;
-
-        // Ensure that max_enrolled_subdomains is non-zero:
-        if *max_enrolled_subdomains == 0 {
-            bail!("max_enrolled_subdomains must be non-zero");
-        }
+        // Stateless checks (no reference to chain state); these live on the
+        // Config type itself in felidae-types, and are also run at genesis by
+        // InitChain:
+        config.check_stateless()?;
 
         // Ensure that max_enrolled_subdomains does not decrease:
-        if *max_enrolled_subdomains < current_config.oracles.max_enrolled_subdomains {
+        if config.oracles.max_enrolled_subdomains < current_config.oracles.max_enrolled_subdomains {
             bail!("max_enrolled_subdomains cannot decrease");
         }
 
-        // Validate that no admin has the well-known placeholder identity from the template:
-        for (i, admin) in admins.iter().enumerate() {
-            if admin.identity == Identity::placeholder() {
-                bail!(
-                    "admin at index {} has a placeholder identity (placeholder not replaced)",
-                    i
-                );
-            }
-        }
-
-        // Validate that no oracle has the well-known placeholder identity from the template:
-        for (i, oracle) in oracles.iter().enumerate() {
-            if oracle.identity == Identity::placeholder() {
-                bail!(
-                    "oracle at index {} has a placeholder identity (placeholder not replaced)",
-                    i
-                );
-            }
-        }
-
-        // Validate each declared validator:
-        //   - reject the all-zero public key (an unreplaced placeholder entry);
-        //   - reject any key that is currently tombstoned. Tombstoning is
-        //     permanent, so listing such a key in a reconfigure is always a
-        //     mistake. Rejecting here (rather than silently dropping it at
-        //     promotion) surfaces the error to the submitting admin via CheckTx.
-        for (i, validator) in validators.iter().enumerate() {
-            if Self::is_all_zeros(&validator.public_key.to_bytes()) {
-                bail!(
-                    "validator at index {} has an all-zero public key (placeholder not replaced)",
-                    i
-                );
-            }
+        // Reject any validator key that is currently tombstoned. Tombstoning is
+        // permanent, so listing such a key in a reconfigure is always a
+        // mistake. Rejecting here (rather than silently dropping it at
+        // promotion) surfaces the error to the submitting admin via CheckTx.
+        for (i, validator) in config.validators.iter().enumerate() {
             if self.validator_status(&validator.public_key).await?
                 == Some(super::validator::ValidatorStatus::Tombstoned)
             {
@@ -113,69 +54,6 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             }
         }
 
-        // Validate uptime config:
-        if *uptime_window == 0 {
-            bail!("validator_config.uptime_window must be non-zero");
-        }
-        if *missed_blocks_max >= *uptime_window {
-            bail!(
-                "validator_config.missed_blocks_max ({}) must be less than uptime_window ({})",
-                missed_blocks_max,
-                uptime_window,
-            );
-        }
-        if *unjail_missed_max >= *missed_blocks_max {
-            bail!(
-                "validator_config.unjail_missed_max ({}) must be less than missed_blocks_max ({}) \
-                 to prevent oscillation at the jail threshold",
-                unjail_missed_max,
-                missed_blocks_max,
-            );
-        }
-
         Ok(())
-    }
-
-    /// Ensure that a voting config is internally consistent, and valid with respect to the expected
-    /// total number of voting parties.
-    fn check_voting_config(
-        &self,
-        expected_total: Total,
-        voting_config: &VotingConfig,
-    ) -> Result<(), Report> {
-        let VotingConfig {
-            total,
-            quorum,
-            timeout: _, // Any timeout is acceptable
-            delay: _,   // Any delay is acceptable
-        } = voting_config;
-
-        // Ensure the total matches the expected total:
-        if *total != expected_total {
-            bail!(
-                "voting config total {} does not match expected total {}",
-                total.0,
-                expected_total.0
-            );
-        }
-
-        // Ensure the quorum is non-zero and less than or equal to the total:
-        if quorum.0 == 0 {
-            bail!("voting config quorum must be non-zero");
-        }
-        if quorum.0 > total.0 {
-            bail!(
-                "voting config quorum {} cannot be greater than total {}",
-                quorum.0,
-                total.0
-            );
-        }
-
-        Ok(())
-    }
-
-    /// Check if a byte slice is all zeros (used to detect placeholder keys).
-    fn is_all_zeros(bytes: &[u8]) -> bool {
-        bytes.iter().all(|&b| b == 0)
     }
 }

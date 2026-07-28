@@ -42,7 +42,7 @@ fn proptest_quorum_reached_exactly() {
                 delay: Delay(Duration::from_secs(86400)),
             };
 
-            let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", config);
+            let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", config).expect("valid voting config");
 
             // Cast exactly quorum votes for the same key and value
             // Use slightly different times to ensure uniqueness
@@ -136,7 +136,7 @@ fn proptest_quorum_exceeded() {
                 delay: Delay(Duration::from_secs(86400)),
             };
 
-            let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", config);
+            let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", config).expect("valid voting config");
 
             // Cast votes_needed votes for the same key and value
             // Use slightly different times to ensure uniqueness
@@ -237,7 +237,7 @@ fn proptest_multiple_values_competing() {
                 delay: Delay(Duration::from_secs(86400)),
             };
 
-            let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", config);
+            let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", config).expect("valid voting config");
 
             let mut party_counter = 0u64;
             let mut next_party = || {
@@ -386,7 +386,7 @@ fn proptest_quorum_with_vote_replacement() {
                 delay: Delay(Duration::from_secs(86400)),
             };
 
-            let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", config);
+            let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", config).expect("valid voting config");
 
             let mut party_counter = 0u64;
             let mut next_party = || {
@@ -482,4 +482,28 @@ fn proptest_quorum_with_vote_replacement() {
             Ok(())
         })?;
     });
+}
+
+#[tokio::test]
+async fn construction_rejects_zero_quorum() {
+    // The tally promotes on `count >= quorum`, so quorum = 0 would promote
+    // any value on the first vote cast. We previously had a locked-open bootstrap
+    // for genesis values.
+    let (store, _block_time) = setup_test_state().await;
+    let mut state_guard = store.state.write().await;
+
+    let config = VotingConfig {
+        total: Total(3),
+        quorum: Quorum(0),
+        timeout: Timeout(Duration::from_secs(3600)),
+        delay: Delay(Duration::from_secs(0)),
+    };
+
+    let err = VoteQueue::<_, ChainId, ChainId>::new(&mut *state_guard, "test_queue", config)
+        .map(|_| ())
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("quorum"),
+        "unexpected error: {err}"
+    );
 }

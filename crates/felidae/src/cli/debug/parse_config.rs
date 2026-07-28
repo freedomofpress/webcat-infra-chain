@@ -30,8 +30,9 @@ use super::super::Run;
 ///
 /// With --url, fetches every surface where a config is persisted (`/config`,
 /// `/admin/pending`, `/admin/votes`) from a live node's query endpoint.
-/// Otherwise parses a single config JSON from a file or stdin — useful for
-/// checking a draft reconfigure before it is broadcast.
+/// Otherwise parses a single config JSON from a file or stdin, and also runs
+/// the stateless semantic checks InitChain enforces — useful for pre-flighting
+/// a draft genesis config or reconfigure before it reaches the chain.
 #[derive(clap::Args)]
 pub struct ParseConfig {
     /// Query endpoint of a live node (e.g. https://node.example.com:8080).
@@ -62,11 +63,17 @@ impl Run for ParseConfig {
     }
 }
 
-/// Validate a single config JSON through both strict parsing paths.
+/// Validate a single config JSON through both strict parsing paths, plus the
+/// stateless semantic checks InitChain and reconfigure enforce (placeholder
+/// identities, zero quorums, node-fatal validator tuning). Drafts only: live
+/// surfaces skip this, since anything already committed has passed it.
 fn validate_one(json: &str, source: &str) -> color_eyre::Result<()> {
     let config: Config = serde_json::from_str(json)
         .wrap_err_with(|| format!("{source}: failed strict domain-type deserialization"))?;
     roundtrip_via_proto(&config, source)?;
+    config
+        .check_stateless()
+        .wrap_err_with(|| format!("{source}: failed semantic validation"))?;
     println!("{source}: ok — {}", summarize(&config));
     Ok(())
 }
