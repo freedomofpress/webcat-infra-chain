@@ -10,7 +10,7 @@ use std::{collections::BTreeSet, str::FromStr, time::Duration};
 
 use color_eyre::{
     Report,
-    eyre::{OptionExt, bail, eyre},
+    eyre::{OptionExt, WrapErr, bail, eyre},
 };
 use felidae_types::{
     FQDN,

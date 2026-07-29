@@ -81,6 +81,13 @@ impl Uptime {
         // The resulting halt is deterministic across nodes (same block, same
         // state), so it stops the chain without forking it, and forces the
         // underlying invariant violation to be investigated.
+        //
+        // Recovery note: restarting nodes does not clear this halt — the failing
+        // block is simply replayed and the guard fires again. Advancing past it
+        // requires a patched binary (or state surgery) that repairs whatever
+        // violated the invariant. That is deliberate: once a gap exists, the
+        // uptime state can no longer be trusted, and no automatic recovery
+        // could distinguish a benign cause from a corrupt store.
         if height != self.as_of_block_height + 1 {
             bail!(
                 "uptime tracker received non-sequential height: expected {}, got {}",
@@ -615,7 +622,12 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 missed = uptime.num_missed_blocks(),
                 "recording validator vote"
             );
-            uptime.mark_signed(height, signed)?;
+            // On failure, name the validator: the bail inside mark_signed halts
+            // every node at once, and the offending key is the first thing an
+            // operator needs (the debug! above is rarely enabled in production).
+            uptime
+                .mark_signed(height, signed)
+                .wrap_err_with(|| format!("recording uptime for validator {pub_key_hex}"))?;
             self.store.put(Internal, &uptime_key, uptime);
         }
         Ok(())
@@ -1544,6 +1556,41 @@ mod tests {
         assert!(
             err.to_string().contains("expected 12"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_non_sequential_uptime_error_names_the_validator() {
+        // When the sequential-height guard fires it halts every node at once,
+        // so the propagated error must name the offending validator — the
+        // first thing an operator needs, and not otherwise visible unless
+        // debug logging happens to be enabled.
+        let (store, _dir) = setup_state_with_validator(ValidatorConfig::default()).await;
+        let pub_key = test_pub_key();
+        let pub_key_hex = hex::encode(pub_key.to_bytes());
+        let mut state = store.state.write().await;
+
+        // Corrupt the tracker: as_of far ahead of the chain height. The window
+        // must match the config's, or mark_validators_voted would discard the
+        // tracker as resized and reset it instead of tripping the guard.
+        let window = ValidatorConfig::default().uptime_window as usize;
+        state.store.put(
+            Internal,
+            &format!("current/validator_uptime/{pub_key_hex}"),
+            Uptime::new(999, window),
+        );
+
+        let err = state
+            .finalize_block(finalize_block_request(3, vec![]))
+            .await
+            .unwrap_err();
+        // {:#} renders the full context chain: "recording uptime for validator
+        // <hex>: uptime tracker received non-sequential height: ...".
+        let msg = format!("{err:#}");
+        assert!(msg.contains("non-sequential"), "unexpected error: {msg}");
+        assert!(
+            msg.contains(&pub_key_hex),
+            "error must name the validator: {msg}"
         );
     }
 
