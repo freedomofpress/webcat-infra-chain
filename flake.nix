@@ -388,7 +388,37 @@
             ];
             meta = with pkgs.lib; {
               description = "Felidae blockchain application with CometBFT";
+              mainProgram = "felidae";
             };
+          };
+        };
+
+        # Runnable entrypoints:
+        #
+        #   nix run .#                  -> felidae, from the combined felidae+cometbft package
+        #   nix run .#felidae           -> felidae alone
+        #   nix run .#felidae-deployer  -> deployer CLI
+        #   nix run .#felidae-publish   -> publish CLI
+        #   nix run .#cometbft          -> cometbft alone
+        #
+        apps = {
+          default = flake-utils.lib.mkApp {
+            drv = self.packages.${system}.default;
+            name = "felidae";
+          };
+          felidae = flake-utils.lib.mkApp {
+            drv = self.packages.${system}.felidae;
+          };
+          felidae-deployer = flake-utils.lib.mkApp {
+            drv = self.packages.${system}.felidae;
+            name = "felidae-deployer";
+          };
+          felidae-publish = flake-utils.lib.mkApp {
+            drv = self.packages.${system}.felidae;
+            name = "felidae-publish";
+          };
+          cometbft = flake-utils.lib.mkApp {
+            drv = self.packages.${system}.cometbft;
           };
         };
 
