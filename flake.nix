@@ -2,7 +2,7 @@
   description = "Felidae blockchain application for WEBCAT infrastructure";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-25.11";
+    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-26.05";
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
@@ -61,6 +61,12 @@
       # Crane library for workspace builds with custom toolchain
       craneLib = (crane.mkLib pkgs).overrideToolchain (_: rustToolchain);
 
+      # rocksdb 8.1.1 — vendored by librocksdb-sys, pinned transitively via cnidarium —
+      # predates the GCC 13+ header cleanup and references uint64_t without including
+      # <cstdint>. GCC 15 (nixpkgs 26.05) rejects it, so force the include. C++ only:
+      # <cstdint> is not a valid C header, hence CXXFLAGS rather than NIX_CFLAGS_COMPILE.
+      rocksdbCxxFlags = "-include cstdint";
+
       # Source filtering for Rust workspace (improves cache hit rates)
       # Include .proto files which are needed by build scripts
       src = pkgs.lib.cleanSourceWith {
@@ -78,6 +84,7 @@
         buildInputs = commonBuildInputs;
 
         LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
+        CXXFLAGS = rocksdbCxxFlags;
         doCheck = false;
       };
 
@@ -438,8 +445,10 @@
             # nix tooling to fetch hashes for remote packages
             pkgs.nix-prefetch-scripts
 
-            # Go toolchain for CometBFT development
-            pkgs.go_1_24
+            # Go toolchain for CometBFT development. Track the nixpkgs default,
+            # which is what buildGoModule uses for the cometbft package above;
+            # pinning a minor version only breaks on nixpkgs bumps.
+            pkgs.go
 
             # Additional protobuf tools
             pkgs.protoc-gen-go-grpc
@@ -464,6 +473,8 @@
 
           # clang must be available for builds
           LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
+          # cargo builds of librocksdb-sys need the same C++ fixup as the nix builds
+          CXXFLAGS = rocksdbCxxFlags;
         };
     });
 }
