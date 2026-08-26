@@ -203,8 +203,7 @@ impl Identity {
 
     /// The identity of a signing keypair.
     pub fn from_keypair(keypair: &crate::KeyPair) -> Self {
-        Self::from_sec1_bytes(&keypair.public_key())
-            .expect("KeyPair public key is always a valid SEC1 point")
+        Identity(*keypair.verifying_key())
     }
 
     /// A well-known placeholder identity for config templates: the P-256
@@ -323,10 +322,8 @@ impl From<ValidatorKey> for tendermint::PublicKey {
 impl TryFrom<tendermint::PublicKey> for ValidatorKey {
     type Error = crate::ParseError;
 
-    /// Rejects any non-Ed25519 key. The `tendermint` crate's `secp256k1` feature
-    /// is off in this workspace, so this cannot currently fail, but cargo
-    /// features unify across the dependency graph: this is the fence that keeps
-    /// a non-Ed25519 consensus key out of state should that ever change.
+    /// Rejects any non-Ed25519 key — the fence that keeps one out of state
+    /// should cargo feature unification ever widen `tendermint::PublicKey`.
     fn try_from(key: tendermint::PublicKey) -> Result<Self, Self::Error> {
         key.ed25519().map(ValidatorKey).ok_or_else(|| {
             crate::ParseError::new::<ValidatorKey>(format!(

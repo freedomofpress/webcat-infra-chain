@@ -100,7 +100,7 @@ pub struct ValidatorInfo {
     /// The validator's ed25519 consensus public key (hex on the wire).
     pub identity: ValidatorKey,
     /// The CometBFT address, `SHA-256(identity)[..20]` (lowercase hex on the wire).
-    #[serde(with = "lowercase_hex_id")]
+    #[serde(serialize_with = "lowercase_hex_id::serialize")]
     pub address: tendermint::account::Id,
     /// Current voting power reported to CometBFT.
     pub power: u64,
@@ -125,23 +125,18 @@ pub struct OracleInfo {
     pub endpoint: url::Url,
 }
 
-/// Serde adapter for [`tendermint::account::Id`] as lowercase hex.
+/// Serialize a [`tendermint::account::Id`] as lowercase hex.
 ///
-/// The type's native serde is uppercase (CometBFT's convention); our wire has
-/// always been lowercase, and clients prefix-match against it case-sensitively.
-/// Decoding accepts either case.
+/// The type's native `Serialize` is uppercase (CometBFT's convention); our wire
+/// has always been lowercase, and clients prefix-match against it
+/// case-sensitively. Its native `Deserialize` already accepts either case, so
+/// only the encoder needs overriding.
 mod lowercase_hex_id {
-    use serde::{Deserialize, Deserializer, Serializer};
+    use serde::Serializer;
     use tendermint::account::Id;
 
     pub fn serialize<S: Serializer>(id: &Id, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&hex::encode(id.as_bytes()))
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Id, D::Error> {
-        let s = String::deserialize(deserializer)?;
-        let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
-        Id::try_from(bytes).map_err(serde::de::Error::custom)
     }
 }
 
