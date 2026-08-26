@@ -1282,7 +1282,6 @@ dependencies = [
  "felidae-types",
  "futures",
  "hex",
- "p256",
  "proptest",
  "prost 0.13.5",
  "serde_json",

@@ -698,20 +698,8 @@ impl Hash for Blockstamp {
 mod tests {
     use super::*;
 
+    use crate::test_util::test_identity;
     use insta::assert_snapshot;
-
-    /// Deterministic P-256 identity derived from a fixed low scalar.
-    ///
-    /// The scalar is 256 + n, so no `n` yields scalar 1 — whose public key is
-    /// the generator point, i.e. `Identity::placeholder()`.
-    fn test_identity(n: u8) -> Identity {
-        let mut scalar = [0u8; 32];
-        scalar[30] = 1;
-        scalar[31] = n;
-        let signing_key =
-            p256::ecdsa::SigningKey::from_slice(&scalar).expect("low scalar is a valid key");
-        Identity::from(*signing_key.verifying_key())
-    }
 
     #[test]
     fn test_domain_display_and_parse() {

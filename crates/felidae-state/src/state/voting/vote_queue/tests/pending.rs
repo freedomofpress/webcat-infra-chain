@@ -1,5 +1,6 @@
 use super::super::*;
 use super::common::setup_test_state;
+use felidae_types::test_util::identity_named;
 use felidae_types::transaction::{ChainId, Delay, Quorum, Timeout, Total};
 use std::time::Duration;
 
@@ -36,7 +37,7 @@ async fn test_pending_change_promotion() {
         last_vote_time = vote_time;
 
         let vote = Vote {
-            party: format!("party_{}", i),
+            party: identity_named(&format!("party_{}", i)),
             time: vote_time,
             key: key.clone(),
             value: value.clone(),
@@ -139,7 +140,7 @@ async fn test_pending_change_overwriting() {
                 Time::from_unix_timestamp(base_time_a.unix_timestamp() + i as i64, 0).unwrap();
             last_vote_time_a = vote_time;
             let vote = Vote {
-                party: format!("party_a_{}", i),
+                party: identity_named(&format!("party_a_{}", i)),
                 time: vote_time,
                 key: key.clone(),
                 value: value_a.clone(),
@@ -190,7 +191,7 @@ async fn test_pending_change_overwriting() {
                 Time::from_unix_timestamp(base_time_b.unix_timestamp() + i as i64, 0).unwrap();
             last_vote_time_b = vote_time;
             let vote = Vote {
-                party: format!("party_b_{}", i),
+                party: identity_named(&format!("party_b_{}", i)),
                 time: vote_time,
                 key: key.clone(),
                 value: value_b.clone(),
@@ -295,7 +296,7 @@ async fn test_pending_change_same_value_no_reset() {
                     .unwrap();
             last_vote_time_initial = vote_time;
             let vote = Vote {
-                party: format!("party_initial_{}", i),
+                party: identity_named(&format!("party_initial_{}", i)),
                 time: vote_time,
                 key: key.clone(),
                 value: value.clone(),
@@ -350,7 +351,7 @@ async fn test_pending_change_same_value_no_reset() {
                 Time::from_unix_timestamp(base_time_second.unix_timestamp() + i as i64, 0).unwrap();
             last_vote_time_second = vote_time;
             let vote = Vote {
-                party: format!("party_second_{}", i),
+                party: identity_named(&format!("party_second_{}", i)),
                 time: vote_time,
                 key: key.clone(),
                 value: value.clone(), // Same value
@@ -450,7 +451,7 @@ async fn test_multiple_pending_changes_partial_promotion() {
             last_vote_time_a = vote_time;
             vote_queue
                 .cast(Vote {
-                    party: format!("party_a_{i}"),
+                    party: identity_named(&format!("party_a_{i}")),
                     time: vote_time,
                     key: key_a.clone(),
                     value: value_a.clone(),
@@ -465,7 +466,7 @@ async fn test_multiple_pending_changes_partial_promotion() {
             last_vote_time_b = vote_time;
             vote_queue
                 .cast(Vote {
-                    party: format!("party_b_{i}"),
+                    party: identity_named(&format!("party_b_{i}")),
                     time: vote_time,
                     key: key_b.clone(),
                     value: value_b.clone(),
@@ -612,7 +613,7 @@ async fn test_pending_for_key_single_entry() {
                 .expect("valid timestamp");
         vote_queue
             .cast(Vote {
-                party: format!("party_{i}"),
+                party: identity_named(&format!("party_{i}")),
                 time: vote_time,
                 key: key.clone(),
                 value: value.clone(),
@@ -660,7 +661,7 @@ async fn test_pending_for_key_multiple_entries_error() {
         last_vote_time = vote_time;
         vote_queue
             .cast(Vote {
-                party: format!("party_{i}"),
+                party: identity_named(&format!("party_{i}")),
                 time: vote_time,
                 key: key.clone(),
                 value: value.clone(),

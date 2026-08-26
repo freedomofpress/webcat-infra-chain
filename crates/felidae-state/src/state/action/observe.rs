@@ -144,7 +144,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             .await?
             .cast(Vote {
                 key: subdomain.clone(),
-                party: identity.to_string(),
+                party: *identity,
                 time: current_time,
                 value: OracleVoteValue {
                     hash_observed: hash_observed.clone(),
