@@ -41,11 +41,12 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 voting_validators.insert(validator.address);
             }
         }
-        self.mark_validators_voted(voting_validators).await?;
-
-        // TODO: Jail inactive validators?
+        self.mark_validators_voted(height.value(), voting_validators)
+            .await?;
+        let jail_updates = self.jail_inactive_validators().await?;
 
         // Tombstone byzantine validators
+        let mut tombstone_updates: Vec<Update> = Vec::new();
         for Misbehavior {
             validator: bad_validator,
             kind: _,
@@ -54,7 +55,9 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             total_voting_power: _,
         } in misbehavior
         {
-            self.tombstone_validator(bad_validator).await?;
+            if let Some(update) = self.tombstone_validator(bad_validator).await? {
+                tombstone_updates.push(update);
+            }
         }
 
         // Record the current block height and time:
@@ -98,7 +101,9 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             tx_results.push(result);
         }
 
-        // Process ripe pending config changes into current config
+        // Process ripe pending config changes into current config.
+        // Collect any validator set changes so they can be included in the response.
+        let mut validator_changes: Vec<Update> = Vec::new();
         for (_, new_config) in self.admin_voting().await?.promote_pending_changes().await? {
             // We want to only apply configs with a version greater than the current version, to
             // avoid replay attacks. This can only happen if there are multiple pending config
@@ -119,7 +124,14 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             }
 
             info!(version = new_config.version, "applying new config",);
-            self.set_config(new_config).await?;
+            self.set_config(new_config.clone()).await?;
+
+            // Note: This will never be executed on the initial config specified in genesis, and only for
+            // subsequent configs.
+            let changes = self
+                .sync_validators_from_config(&new_config.validators)
+                .await?;
+            validator_changes.extend(changes);
         }
 
         // Process ripe pending oracle observations into canonical state
@@ -133,8 +145,25 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 .await?;
         }
 
-        // Get validator updates
-        let validator_updates = self.active_validators().await?;
+        // Emit only the delta from this block. CometBFT maintains its own set and
+        // rejects duplicate keys in one response, so coalesce to one update per
+        // pubkey, keeping the last. Correctness rests on two invariants:
+        //
+        //   1. The chain order below matches the order the state mutations ran
+        //      in this block (jail/unjail, then tombstone, then config sync), so
+        //      the last update per key is the one that matches final state.
+        //   2. `sync_validators_from_config` never emits an update for a jailed
+        //      or tombstoned key; its updates are chained last and would
+        //      otherwise clobber a tombstone with a re-add.
+        //
+        // Together these handle same-block edge cases like jail & tombstone or
+        // unjail & admin-removal, both tracked by unit tests.
+        let validator_updates = crate::state::validator::coalesce_validator_updates(
+            jail_updates
+                .into_iter()
+                .chain(tombstone_updates)
+                .chain(validator_changes),
+        );
 
         Ok(response::FinalizeBlock {
             tx_results,

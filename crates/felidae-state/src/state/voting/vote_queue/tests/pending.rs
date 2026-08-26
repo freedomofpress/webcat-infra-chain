@@ -16,7 +16,8 @@ async fn test_pending_change_promotion() {
         delay: Delay(delay),
     };
 
-    let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", config);
+    let mut vote_queue =
+        VoteQueue::new(&mut *state_guard, "test_queue", config).expect("valid voting config");
 
     // Cast quorum votes to create a pending change
     // Use a timestamp that's old enough (e.g., 2 days ago, as long as its greater than the delay we are good)
@@ -81,7 +82,7 @@ async fn test_pending_change_promotion() {
         delay: Delay(delay),
     };
     let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
-        VoteQueue::new(&mut *state_guard, "test_queue", config2);
+        VoteQueue::new(&mut *state_guard, "test_queue", config2).expect("valid voting config");
     let promoted = vote_queue
         .promote_pending_changes()
         .await
@@ -131,7 +132,7 @@ async fn test_pending_change_overwriting() {
             delay: Delay(delay),
         };
         let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
-            VoteQueue::new(&mut *state_guard, "test_queue", config);
+            VoteQueue::new(&mut *state_guard, "test_queue", config).expect("valid voting config");
 
         for i in 0..3 {
             let vote_time =
@@ -182,7 +183,7 @@ async fn test_pending_change_overwriting() {
             delay: Delay(delay),
         };
         let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
-            VoteQueue::new(&mut *state_guard, "test_queue", config_b);
+            VoteQueue::new(&mut *state_guard, "test_queue", config_b).expect("valid voting config");
 
         for i in 0..3 {
             let vote_time =
@@ -218,7 +219,8 @@ async fn test_pending_change_overwriting() {
             delay: Delay(delay),
         };
         let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
-            VoteQueue::new(&mut *state_guard, "test_queue", config_promote);
+            VoteQueue::new(&mut *state_guard, "test_queue", config_promote)
+                .expect("valid voting config");
         let promoted_none = vote_queue
             .promote_pending_changes()
             .await
@@ -248,7 +250,8 @@ async fn test_pending_change_overwriting() {
             delay: Delay(delay),
         };
         let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
-            VoteQueue::new(&mut *state_guard, "test_queue", config_final);
+            VoteQueue::new(&mut *state_guard, "test_queue", config_final)
+                .expect("valid voting config");
         let promoted = vote_queue
             .promote_pending_changes()
             .await
@@ -284,7 +287,7 @@ async fn test_pending_change_same_value_no_reset() {
             delay: Delay(delay),
         };
         let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
-            VoteQueue::new(&mut *state_guard, "test_queue", config);
+            VoteQueue::new(&mut *state_guard, "test_queue", config).expect("valid voting config");
 
         for i in 0..3 {
             let vote_time =
@@ -339,7 +342,8 @@ async fn test_pending_change_same_value_no_reset() {
             delay: Delay(delay),
         };
         let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
-            VoteQueue::new(&mut *state_guard, "test_queue", config_second);
+            VoteQueue::new(&mut *state_guard, "test_queue", config_second)
+                .expect("valid voting config");
 
         for i in 0..3 {
             let vote_time =
@@ -397,7 +401,8 @@ async fn test_pending_change_same_value_no_reset() {
             delay: Delay(delay),
         };
         let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
-            VoteQueue::new(&mut *state_guard, "test_queue", config_promote);
+            VoteQueue::new(&mut *state_guard, "test_queue", config_promote)
+                .expect("valid voting config");
         let promoted = vote_queue
             .promote_pending_changes()
             .await
@@ -436,7 +441,8 @@ async fn test_multiple_pending_changes_partial_promotion() {
         delay: Delay(delay),
     };
     {
-        let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", make_config());
+        let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", make_config())
+            .expect("valid voting config");
 
         for i in 0..3 {
             let vote_time = Time::from_unix_timestamp(base_time_a.unix_timestamp() + i as i64, 0)
@@ -501,7 +507,8 @@ async fn test_multiple_pending_changes_partial_promotion() {
         .expect("failed to set block time after key A");
 
     {
-        let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", make_config());
+        let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", make_config())
+            .expect("valid voting config");
         let promoted = vote_queue
             .promote_pending_changes()
             .await
@@ -544,7 +551,8 @@ async fn test_multiple_pending_changes_partial_promotion() {
         .expect("failed to set block time after key B");
 
     {
-        let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", make_config());
+        let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", make_config())
+            .expect("valid voting config");
         let promoted = vote_queue
             .promote_pending_changes()
             .await
@@ -570,7 +578,7 @@ async fn test_pending_for_key_none() {
     };
 
     let vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
-        VoteQueue::new(&mut *state_guard, "test_queue", config);
+        VoteQueue::new(&mut *state_guard, "test_queue", config).expect("valid voting config");
     let pending = vote_queue
         .pending_for_key(ChainId("key_query_none".to_string()))
         .await
@@ -597,7 +605,7 @@ async fn test_pending_for_key_single_entry() {
     let value = ChainId("value_query_single".to_string());
 
     let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
-        VoteQueue::new(&mut *state_guard, "test_queue", config);
+        VoteQueue::new(&mut *state_guard, "test_queue", config).expect("valid voting config");
     for i in 0..3 {
         let vote_time =
             Time::from_unix_timestamp(initial_block_time.unix_timestamp() + i as i64, 0)
@@ -642,7 +650,8 @@ async fn test_pending_for_key_multiple_entries_error() {
     let value = ChainId("value_query_duplicate".to_string());
 
     let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
-        VoteQueue::new(&mut *state_guard, "test_queue", make_config());
+        VoteQueue::new(&mut *state_guard, "test_queue", make_config())
+            .expect("valid voting config");
     let mut last_vote_time = initial_block_time;
     for i in 0..3 {
         let vote_time =
@@ -681,7 +690,8 @@ async fn test_pending_for_key_multiple_entries_error() {
         .index_put(Internal, &index_key, value.clone());
 
     let vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
-        VoteQueue::new(&mut *state_guard, "test_queue", make_config());
+        VoteQueue::new(&mut *state_guard, "test_queue", make_config())
+            .expect("valid voting config");
     let err = vote_queue
         .pending_for_key(key)
         .await

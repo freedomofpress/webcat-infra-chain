@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use felidae_deployer::{Network, NetworkConfig};
+use felidae_types::transaction::ValidatorConfig;
 use tendermint_rpc::{Client, HttpClient};
 
 /// A managed test network that handles the full lifecycle of a multi-validator
@@ -58,6 +59,20 @@ impl TestNetwork {
         num_validators: usize,
         block_time: Duration,
     ) -> color_eyre::Result<Self> {
+        Self::create_with_validator_config(num_validators, block_time, None).await
+    }
+
+    /// Create a test network with an explicit `ValidatorConfig` override at genesis.
+    ///
+    /// `validator_config` of `None` keeps the production defaults (10_000-block
+    /// uptime window, 500 missed-blocks jail threshold). Tests that need to
+    /// exercise jailing in seconds rather than minutes should pass tight
+    /// thresholds so the lifecycle fires within the test's wall-clock budget.
+    pub async fn create_with_validator_config(
+        num_validators: usize,
+        block_time: Duration,
+        validator_config: Option<ValidatorConfig>,
+    ) -> color_eyre::Result<Self> {
         let temp_dir = tempfile::tempdir()?;
         let directory = temp_dir.path().to_path_buf();
 
@@ -75,10 +90,13 @@ impl TestNetwork {
 
         // Generate felidae config and inject it into genesis
         // Uses 1s oracle delay for testing, 0s admin delay for immediate config changes
-        let felidae_config = network.generate_felidae_config(
+        let mut felidae_config = network.generate_felidae_config(
             Duration::from_secs(1), // oracle voting delay
             Duration::from_secs(0), // admin voting delay
         )?;
+        if let Some(vc) = validator_config {
+            felidae_config.validator_config = vc;
+        }
         network.inject_genesis_app_state(&felidae_config)?;
 
         Ok(Self {
@@ -94,54 +112,170 @@ impl TestNetwork {
         // Preflight check: verify all ports are available before starting any processes
         self.network.check_ports_available()?;
 
-        for node in &self.network.nodes {
-            // Start CometBFT
-            let cometbft_name = format!("{}-cometbft", node.name);
-            let child = Command::new(cometbft_bin)
-                .args(["start", "--home", &node.cometbft_home().to_string_lossy()])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()?;
-            self.processes.insert(cometbft_name, child);
+        for index in 0..self.network.nodes.len() {
+            self.spawn_node_processes(index, cometbft_bin, felidae_bin)?;
+        }
 
-            // Start Felidae
-            let felidae_name = format!("{}-felidae", node.name);
+        Ok(())
+    }
+
+    /// Spawn the CometBFT + Felidae (+ Oracle, for validators) processes for a
+    /// single node and insert their handles into `self.processes`.
+    ///
+    /// Used by [`start`](Self::start) for the initial bring-up and by
+    /// [`restart_validator`](Self::restart_validator) to bring a previously
+    /// killed validator back online with the same home directory.
+    fn spawn_node_processes(
+        &mut self,
+        index: usize,
+        cometbft_bin: &str,
+        felidae_bin: &str,
+    ) -> color_eyre::Result<()> {
+        let node = &self.network.nodes[index];
+
+        // Start CometBFT
+        let cometbft_name = format!("{}-cometbft", node.name);
+        let child = Command::new(cometbft_bin)
+            .args(["start", "--home", &node.cometbft_home().to_string_lossy()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        self.processes.insert(cometbft_name, child);
+
+        // Start Felidae
+        let felidae_name = format!("{}-felidae", node.name);
+        let felidae_log = std::fs::File::create(node.home_dir.join("felidae.log"))?;
+        let child = Command::new(felidae_bin)
+            .env("RUST_LOG", "info")
+            .args([
+                "start",
+                "--abci-bind",
+                &node.abci_address(),
+                "--query-bind",
+                &format!("{}:{}", node.bind_address, node.ports.felidae_query),
+                "--homedir",
+                &node.felidae_home().to_string_lossy(),
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::from(felidae_log))
+            .spawn()?;
+        self.processes.insert(felidae_name, child);
+
+        // Start Oracle server for validators
+        if node.role.is_validator() {
+            let oracle_name = format!("{}-oracle", node.name);
             let child = Command::new(felidae_bin)
                 .args([
-                    "start",
-                    "--abci-bind",
-                    &node.abci_address(),
-                    "--query-bind",
-                    &format!("{}:{}", node.bind_address, node.ports.felidae_query),
+                    "oracle",
+                    "server",
+                    "--bind",
+                    &format!("{}:{}", node.bind_address, node.ports.felidae_oracle),
+                    "--node",
+                    &format!("http://{}:{}", node.bind_address, node.ports.cometbft_rpc),
                     "--homedir",
                     &node.felidae_home().to_string_lossy(),
                 ])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn()?;
-            self.processes.insert(felidae_name, child);
-
-            // Start Oracle server for validators
-            if node.role.is_validator() {
-                let oracle_name = format!("{}-oracle", node.name);
-                let child = Command::new(felidae_bin)
-                    .args([
-                        "oracle",
-                        "server",
-                        "--bind",
-                        &format!("{}:{}", node.bind_address, node.ports.felidae_oracle),
-                        "--node",
-                        &format!("http://{}:{}", node.bind_address, node.ports.cometbft_rpc),
-                        "--homedir",
-                        &node.felidae_home().to_string_lossy(),
-                    ])
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .spawn()?;
-                self.processes.insert(oracle_name, child);
-            }
+            self.processes.insert(oracle_name, child);
         }
 
+        Ok(())
+    }
+
+    /// Kill the CometBFT, Felidae, and Oracle processes for a single validator
+    /// node by index, leaving its home directory (and signing key) intact.
+    ///
+    /// Used to drive downtime-based lifecycle scenarios (jail/unjail). The
+    /// caller is responsible for waiting on the consequences (e.g. polling
+    /// CometBFT's validator set for a power drop to `1`).
+    ///
+    /// After this returns, the node's TCP ports may still be held briefly by
+    /// the kernel; [`restart_validator`](Self::restart_validator) handles that
+    /// by polling until the ports are free before respawning.
+    pub fn kill_validator(&mut self, index: usize) -> color_eyre::Result<()> {
+        if index >= self.network.nodes.len() {
+            return Err(color_eyre::eyre::eyre!(
+                "kill_validator: index {index} out of range (network has {} nodes)",
+                self.network.nodes.len()
+            ));
+        }
+        let node_name = self.network.nodes[index].name.clone();
+        let prefixes = [
+            format!("{node_name}-cometbft"),
+            format!("{node_name}-felidae"),
+            format!("{node_name}-oracle"),
+        ];
+
+        for prefix in &prefixes {
+            if let Some(mut child) = self.processes.remove(prefix) {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+        eprintln!("[kill_validator] killed processes for node {node_name}");
+        Ok(())
+    }
+
+    /// Restart the processes previously stopped by
+    /// [`kill_validator`](Self::kill_validator), reusing the node's home
+    /// directory so its consensus key and any on-disk state are preserved.
+    ///
+    /// Polls for the node's TCP ports to become free before spawning, so a
+    /// freshly killed validator can be restarted back-to-back without the
+    /// `address already in use` race that the kernel's TIME_WAIT window can
+    /// otherwise produce.
+    pub fn restart_validator(
+        &mut self,
+        index: usize,
+        cometbft_bin: &str,
+        felidae_bin: &str,
+    ) -> color_eyre::Result<()> {
+        if index >= self.network.nodes.len() {
+            return Err(color_eyre::eyre::eyre!(
+                "restart_validator: index {index} out of range (network has {} nodes)",
+                self.network.nodes.len()
+            ));
+        }
+
+        let node = &self.network.nodes[index];
+        let ports_to_free = [
+            node.ports.cometbft_p2p,
+            node.ports.cometbft_rpc,
+            node.ports.felidae_abci,
+            node.ports.felidae_query,
+        ]
+        .into_iter()
+        .chain(if node.role.is_validator() {
+            Some(node.ports.felidae_oracle)
+        } else {
+            None
+        })
+        .collect::<Vec<_>>();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let all_free = ports_to_free
+                .iter()
+                .all(|port| std::net::TcpListener::bind(("127.0.0.1", *port)).is_ok());
+            if all_free {
+                break;
+            }
+            if std::time::Instant::now() > deadline {
+                return Err(color_eyre::eyre::eyre!(
+                    "restart_validator: node {} ports still held after 10s",
+                    node.name
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        self.spawn_node_processes(index, cometbft_bin, felidae_bin)?;
+        eprintln!(
+            "[restart_validator] restarted processes for node {}",
+            self.network.nodes[index].name
+        );
         Ok(())
     }
 

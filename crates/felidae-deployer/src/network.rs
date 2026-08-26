@@ -3,20 +3,16 @@
 use std::fs;
 use std::io::Write;
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use bytes::Bytes;
-use color_eyre::eyre::{Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, eyre};
 use ed25519_dalek::SigningKey;
 use felidae_types::KeyPair;
 use felidae_types::transaction::{
-    Admin, AdminConfig, Config, Delay, OnionConfig, Oracle, OracleConfig, Quorum, Timeout, Total,
-    VotingConfig,
+    Admin, AdminConfig, Config, Delay, Identity, OnionConfig, Oracle, OracleConfig, Quorum,
+    Timeout, Total, ValidatorConfig, VotingConfig,
 };
-use p256::SecretKey;
-use pkcs8::EncodePrivateKey;
-use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -178,6 +174,10 @@ impl Network {
     }
 
     /// Initialize the network by creating all necessary directories and files.
+    ///
+    /// The genesis written here carries no `app_state`, and a chain will
+    /// refuse to start from it: call [`Self::inject_genesis_app_state`] with a
+    /// config (e.g. from [`Self::generate_felidae_config`]) before launching.
     pub fn initialize(&mut self) -> Result<()> {
         // Create base directory
         fs::create_dir_all(&self.config.directory)
@@ -307,7 +307,8 @@ impl Network {
     ///
     /// This method reads the PKCS#8-encoded admin and oracle keys from each validator,
     /// extracts the public keys, and builds a `Config` suitable for use in genesis or
-    /// for submitting as a reconfiguration transaction.
+    /// for submitting as a reconfiguration transaction. The result is validated with
+    /// the same stateless checks InitChain runs.
     ///
     /// # Arguments
     ///
@@ -344,74 +345,45 @@ impl Network {
         oracle_voting_delay: Duration,
         admin_voting_delay: Duration,
     ) -> Result<Config> {
-        // Extract oracle public keys from each validator's PKCS#8 keypair file
-        let mut oracle_configs = Vec::new();
-        for node in self.nodes.iter().filter(|n| n.role.is_validator()) {
-            let key_hex = fs::read_to_string(node.oracle_key_path()).wrap_err_with(|| {
-                format!("failed to read oracle key: {:?}", node.oracle_key_path())
-            })?;
-            let key_bytes =
-                hex::decode(key_hex.trim()).wrap_err("failed to decode oracle key hex")?;
-            let keypair =
-                KeyPair::decode(&key_bytes).wrap_err("failed to decode oracle key PKCS#8")?;
-            let public_key = keypair.public_key();
+        let validators: Vec<&WebcatNode> = self
+            .nodes
+            .iter()
+            .filter(|n| n.role.is_validator())
+            .collect();
 
-            oracle_configs.push(Oracle {
-                identity: Bytes::from(public_key),
-                endpoint: url::Url::parse(&format!(
-                    "http://{}:{}",
-                    node.bind_address, node.ports.felidae_oracle
-                ))
-                .expect("valid oracle endpoint URL"),
-            });
-        }
+        let admins = validators
+            .iter()
+            .map(|node| {
+                Ok(Admin {
+                    identity: identity_from_key_file(&node.admin_key_path())?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        // Extract admin public keys from each validator's PKCS#8 keypair file
-        let mut admin_configs = Vec::new();
-        for node in self.nodes.iter().filter(|n| n.role.is_validator()) {
-            let key_hex = fs::read_to_string(node.admin_key_path()).wrap_err_with(|| {
-                format!("failed to read admin key: {:?}", node.admin_key_path())
-            })?;
-            let key_bytes =
-                hex::decode(key_hex.trim()).wrap_err("failed to decode admin key hex")?;
-            let keypair =
-                KeyPair::decode(&key_bytes).wrap_err("failed to decode admin key PKCS#8")?;
-            let public_key = keypair.public_key();
+        let oracles = validators
+            .iter()
+            .map(|node| {
+                Ok(Oracle {
+                    identity: identity_from_key_file(&node.oracle_key_path())?,
+                    endpoint: url::Url::parse(&format!(
+                        "http://{}:{}",
+                        node.bind_address, node.ports.felidae_oracle
+                    ))
+                    .expect("valid oracle endpoint URL"),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-            admin_configs.push(Admin {
-                identity: Bytes::from(public_key),
-            });
-        }
-
-        let num_validators = self.nodes.iter().filter(|n| n.role.is_validator()).count();
-
-        // Build the chain configuration with BFT-safe quorum thresholds
-        // For n validators, quorum = 2*n/3 + 1
-        Ok(Config {
-            version: 0,
-            admins: AdminConfig {
-                voting: VotingConfig {
-                    total: Total(num_validators as u64),
-                    quorum: Quorum(((num_validators * 2) / 3 + 1) as u64),
-                    timeout: Timeout(Duration::from_secs(60)),
-                    delay: Delay(admin_voting_delay),
-                },
-                authorized: admin_configs,
-            },
-            oracles: OracleConfig {
-                enabled: true,
-                voting: VotingConfig {
-                    total: Total(num_validators as u64),
-                    quorum: Quorum(((num_validators * 2) / 3 + 1) as u64),
-                    timeout: Timeout(Duration::from_secs(300)),
-                    delay: Delay(oracle_voting_delay),
-                },
-                max_enrolled_subdomains: 5,
-                observation_timeout: Duration::from_secs(300),
-                authorized: oracle_configs,
-            },
-            onion: OnionConfig { enabled: false },
-        })
+        // BFT-safe quorum threshold: for n validators, quorum = 2*n/3 + 1
+        let n = validators.len() as u64;
+        felidae_config(
+            admins,
+            oracles,
+            Total(n),
+            Quorum(n * 2 / 3 + 1),
+            admin_voting_delay,
+            oracle_voting_delay,
+        )
     }
 
     /// Inject a felidae configuration into the genesis files of all nodes.
@@ -441,19 +413,7 @@ impl Network {
     /// ```
     pub fn inject_genesis_app_state(&self, config: &Config) -> Result<()> {
         for node in &self.nodes {
-            let genesis_path = node.genesis_path();
-            let genesis_content = fs::read_to_string(&genesis_path)
-                .wrap_err_with(|| format!("failed to read genesis: {:?}", genesis_path))?;
-            let mut genesis: serde_json::Value =
-                serde_json::from_str(&genesis_content).wrap_err("failed to parse genesis JSON")?;
-
-            genesis["app_state"] = serde_json::json!({
-                "config": serde_json::to_value(config)?
-            });
-
-            let updated_genesis = serde_json::to_string_pretty(&genesis)?;
-            fs::write(&genesis_path, updated_genesis)
-                .wrap_err_with(|| format!("failed to write genesis: {:?}", genesis_path))?;
+            inject_genesis_config(&node.genesis_path(), config)?;
         }
         Ok(())
     }
@@ -614,7 +574,7 @@ fn initialize_node(node: &mut WebcatNode) -> Result<()> {
 
     // For validators, generate priv_validator_key
     if node.role.is_validator() {
-        let priv_validator_key = generate_priv_validator_key()?;
+        let (priv_validator_key, _pub_key) = generate_priv_validator_key()?;
         let mut file = fs::File::create(node.priv_validator_key_path())?;
         file.write_all(priv_validator_key.as_bytes())?;
 
@@ -631,6 +591,87 @@ fn initialize_node(node: &mut WebcatNode) -> Result<()> {
         generate_felidae_keys(node)?;
     }
 
+    Ok(())
+}
+
+/// Assemble a chain [`Config`] for the given voting parties.
+///
+/// Both voting bodies share `total`/`quorum`; timeouts are fixed at the values
+/// used across dev and test deployments (60s admin, 5m oracle), while delays
+/// vary per caller. The result is checked with the same stateless validation
+/// InitChain runs, so a bad config fails at generation rather than chain start.
+pub fn felidae_config(
+    admins: Vec<Admin>,
+    oracles: Vec<Oracle>,
+    total: Total,
+    quorum: Quorum,
+    admin_delay: Duration,
+    oracle_delay: Duration,
+) -> Result<Config> {
+    let voting = |timeout: u64, delay: Duration| VotingConfig {
+        total: total.clone(),
+        quorum: quorum.clone(),
+        timeout: Timeout(Duration::from_secs(timeout)),
+        delay: Delay(delay),
+    };
+    let config = Config {
+        version: 0,
+        admins: AdminConfig {
+            voting: voting(60, admin_delay),
+            authorized: admins,
+        },
+        oracles: OracleConfig {
+            enabled: true,
+            voting: voting(300, oracle_delay),
+            max_enrolled_subdomains: 5,
+            observation_timeout: Duration::from_secs(300),
+            authorized: oracles,
+        },
+        onion: OnionConfig { enabled: false },
+        validators: vec![],
+        validator_config: ValidatorConfig::default(),
+    };
+    config.check_stateless()?;
+    Ok(config)
+}
+
+/// Read a PKCS#8 hex keypair file and derive the party [`Identity`] from it.
+pub fn identity_from_key_file(path: &Path) -> Result<Identity> {
+    let key_hex =
+        fs::read_to_string(path).wrap_err_with(|| format!("failed to read key {:?}", path))?;
+    let key_bytes = hex::decode(key_hex.trim()).wrap_err("failed to decode key hex")?;
+    let keypair = KeyPair::decode(&key_bytes).wrap_err("failed to decode key PKCS#8")?;
+    Identity::from_sec1_bytes(&keypair.public_key())
+        .map_err(|e| eyre!("keypair-derived public key is invalid: {e}"))
+}
+
+/// Generate a fresh P-256 keypair and write it to `path` as PKCS#8 hex —
+/// the on-disk format shared with `felidae admin init` / `felidae oracle init`.
+pub fn write_new_key(path: &Path) -> Result<()> {
+    let pkcs8 = KeyPair::generate()
+        .encode()
+        .wrap_err("failed to encode key to PKCS#8")?;
+    fs::write(path, hex::encode(pkcs8)).wrap_err_with(|| format!("failed to write key {:?}", path))
+}
+
+/// Inject a chain config into one genesis file's `app_state.config`.
+///
+/// All nodes of a chain must receive a byte-for-byte identical genesis for
+/// consensus to work: inject into every node's copy, or inject once and
+/// distribute the result.
+pub fn inject_genesis_config(genesis_path: &std::path::Path, config: &Config) -> Result<()> {
+    let genesis_content = fs::read_to_string(genesis_path)
+        .wrap_err_with(|| format!("failed to read genesis: {:?}", genesis_path))?;
+    let mut genesis: serde_json::Value =
+        serde_json::from_str(&genesis_content).wrap_err("failed to parse genesis JSON")?;
+
+    genesis["app_state"] = serde_json::json!({
+        "config": serde_json::to_value(config)?
+    });
+
+    let updated_genesis = serde_json::to_string_pretty(&genesis)?;
+    fs::write(genesis_path, updated_genesis)
+        .wrap_err_with(|| format!("failed to write genesis: {:?}", genesis_path))?;
     Ok(())
 }
 
@@ -665,8 +706,14 @@ pub fn generate_node_key() -> Result<(String, String)> {
     Ok((serde_json::to_string_pretty(&node_key)?, node_id))
 }
 
-/// Generate a CometBFT priv_validator_key.json.
-fn generate_priv_validator_key() -> Result<String> {
+/// Generate a CometBFT `priv_validator_key.json` body.
+///
+/// Returns `(json_string, pub_key_bytes)` where `json_string` is ready to be
+/// written to a node's `config/priv_validator_key.json` and `pub_key_bytes` is
+/// the raw 32-byte Ed25519 public key — suitable for inclusion in a felidae
+/// `Config.validators` entry when promoting a newly-joined node to validator
+/// status.
+pub fn generate_priv_validator_key() -> Result<(String, Vec<u8>)> {
     let secret_bytes: [u8; 32] = rand::random();
     let signing_key = SigningKey::from_bytes(&secret_bytes);
     let verifying_key = signing_key.verifying_key();
@@ -678,7 +725,7 @@ fn generate_priv_validator_key() -> Result<String> {
     let address = hex::encode_upper(&hash[..20]);
 
     let priv_key_bytes = signing_key.to_bytes();
-    let pub_key_bytes = verifying_key.to_bytes();
+    let pub_key_bytes = verifying_key.to_bytes().to_vec();
 
     let mut full_key = Vec::with_capacity(64);
     full_key.extend_from_slice(&priv_key_bytes);
@@ -696,29 +743,16 @@ fn generate_priv_validator_key() -> Result<String> {
         }
     });
 
-    Ok(serde_json::to_string_pretty(&priv_validator_key)?)
+    Ok((
+        serde_json::to_string_pretty(&priv_validator_key)?,
+        pub_key_bytes,
+    ))
 }
 
 /// Generate felidae admin and oracle keys as PKCS#8-encoded ECDSA-P256 keys.
 fn generate_felidae_keys(node: &WebcatNode) -> Result<()> {
-    // Generate proper ECDSA-P256 keys in PKCS#8 format (same as felidae admin/oracle init)
-    let admin_secret = SecretKey::random(&mut OsRng);
-    let admin_pkcs8 = admin_secret
-        .to_pkcs8_der()
-        .wrap_err("failed to encode admin key to PKCS#8")?;
-
-    let oracle_secret = SecretKey::random(&mut OsRng);
-    let oracle_pkcs8 = oracle_secret
-        .to_pkcs8_der()
-        .wrap_err("failed to encode oracle key to PKCS#8")?;
-
-    let mut file = fs::File::create(node.admin_key_path())?;
-    file.write_all(hex::encode(admin_pkcs8.as_bytes()).as_bytes())?;
-
-    let mut file = fs::File::create(node.oracle_key_path())?;
-    file.write_all(hex::encode(oracle_pkcs8.as_bytes()).as_bytes())?;
-
-    Ok(())
+    write_new_key(&node.admin_key_path())?;
+    write_new_key(&node.oracle_key_path())
 }
 
 /// Generate config.toml for a node.

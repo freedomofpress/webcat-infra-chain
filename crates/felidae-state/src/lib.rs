@@ -6,19 +6,18 @@
 #[macro_use]
 extern crate tracing;
 
-use std::{collections::BTreeSet, str::FromStr, time::Duration};
+use std::{collections::BTreeSet, str::FromStr};
 
 use color_eyre::{
     Report,
-    eyre::{OptionExt, bail, eyre},
+    eyre::{OptionExt, WrapErr, bail, eyre},
 };
 use felidae_types::{
     FQDN,
     transaction::{
-        Action, Admin, AdminConfig, AuthenticatedTx, Blockstamp, ChainId, Config, Delay, Domain,
-        Empty, HashObserved, Observation, Observe, OnionConfig, OracleConfig, OracleIdentity,
-        OracleVoteValue, PrefixOrderDomain, Quorum, Reconfigure, Timeout, Total, Transaction,
-        VotingConfig,
+        Action, Admin, AuthenticatedTx, Blockstamp, ChainId, Config, Domain, Empty, HashObserved,
+        Observation, Observe, OracleIdentity, OracleVoteValue, PrefixOrderDomain, Reconfigure,
+        Transaction,
     },
 };
 use futures::{Stream, StreamExt};
@@ -43,7 +42,7 @@ use store::{
 };
 pub use store::{Store, Substore};
 
-pub use state::Vote;
+pub use state::{BASE_VALIDATOR_POWER, Vote};
 
 /// ABCI service implementation for [`State`].
 mod abci;
@@ -104,5 +103,6 @@ mod state {
     /// Utility functions.
     mod util;
 
+    pub use validator::BASE_VALIDATOR_POWER;
     pub use voting::Vote;
 }

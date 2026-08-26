@@ -197,8 +197,7 @@ pub struct Template {
 
 impl Run for Template {
     async fn run(self) -> Result<(), color_eyre::Report> {
-        use felidae_types::transaction::{Admin, Oracle};
-        use prost::bytes::Bytes;
+        use felidae_types::transaction::{Admin, Identity, Oracle};
 
         let mut template = felidae_types::transaction::Config::template(0);
 
@@ -225,7 +224,8 @@ impl Run for Template {
             match load_pubkey_from_keypair(&path).await {
                 Ok(pubkey) => {
                     template.admins.authorized = vec![Admin {
-                        identity: Bytes::from(pubkey),
+                        identity: Identity::from_sec1_bytes(&pubkey)
+                            .expect("keypair-derived public key is a valid P-256 point"),
                     }];
                 }
                 Err(e) => {
@@ -243,7 +243,8 @@ impl Run for Template {
             match load_pubkey_from_keypair(&path).await {
                 Ok(pubkey) => {
                     template.oracles.authorized = vec![Oracle {
-                        identity: Bytes::from(pubkey),
+                        identity: Identity::from_sec1_bytes(&pubkey)
+                            .expect("keypair-derived public key is a valid P-256 point"),
                         endpoint: url::Url::parse("http://127.0.0.1:8081")
                             .expect("valid oracle endpoint URL"),
                     }];

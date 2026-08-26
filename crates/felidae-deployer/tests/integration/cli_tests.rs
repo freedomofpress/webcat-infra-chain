@@ -23,7 +23,9 @@ use crate::binaries::find_binaries;
 ///
 /// # Production Workflow
 ///
-/// In production, operators use this command to bootstrap their chain configuration:
+/// In production, operators use this command while authoring the genesis
+/// chain configuration (InitChain requires a complete `app_state.config`;
+/// there is no permissionless post-launch bootstrap):
 ///
 /// ```bash
 /// # Initialize keys (one-time setup)
@@ -33,7 +35,9 @@ use crate::binaries::find_binaries;
 /// # Generate config template with auto-detected keys
 /// felidae admin template --read-local-keys > config.json
 ///
-/// # Submit the config to the network
+/// # After filling in voting totals/quorums and all party keys, the config
+/// # is injected into genesis app_state.config before launch. Subsequent
+/// # changes are submitted as admin-signed reconfigures:
 /// felidae admin config config.json --node http://localhost:26657 --chain felidae
 /// ```
 ///
@@ -118,7 +122,7 @@ async fn test_admin_template_read_local_keys() -> color_eyre::Result<()> {
         1,
         "expected 1 authorized admin"
     );
-    let actual_admin_pubkey = hex::encode(&template_config.admins.authorized[0].identity);
+    let actual_admin_pubkey = template_config.admins.authorized[0].identity.to_string();
     assert_eq!(
         actual_admin_pubkey, expected_admin_pubkey,
         "admin public key mismatch"
@@ -130,7 +134,7 @@ async fn test_admin_template_read_local_keys() -> color_eyre::Result<()> {
         1,
         "expected 1 authorized oracle"
     );
-    let actual_oracle_pubkey = hex::encode(&template_config.oracles.authorized[0].identity);
+    let actual_oracle_pubkey = template_config.oracles.authorized[0].identity.to_string();
     assert_eq!(
         actual_oracle_pubkey, expected_oracle_pubkey,
         "oracle public key mismatch"
@@ -238,14 +242,14 @@ async fn test_admin_init_identity_template_workflow() -> color_eyre::Result<()> 
         1,
         "expected 1 authorized admin"
     );
-    let actual_admin_pubkey = hex::encode(&template_config.admins.authorized[0].identity);
+    let actual_admin_pubkey = template_config.admins.authorized[0].identity.to_string();
     assert_eq!(
         actual_admin_pubkey, expected_pubkey,
         "admin public key from template should match identity output"
     );
 
     // Oracle key was not initialized, so a warning should have been printed.
-    // The template retains its default placeholder (all zeros) when key load fails.
+    // The template retains its default placeholder (the P-256 generator point) when key load fails.
     // Verify the warning was printed to stderr.
     assert!(
         stderr.contains("warning: could not load oracle key"),
@@ -253,6 +257,78 @@ async fn test_admin_init_identity_template_workflow() -> color_eyre::Result<()> 
     );
 
     eprintln!("[test] admin init -> identity -> template workflow works correctly");
+
+    Ok(())
+}
+
+/// Verifies `felidae-deployer inject-config` authors a startable genesis.
+///
+/// # Business Logic Tested
+///
+/// This is the dev-bootstrap path behind `just genesis-single`: InitChain
+/// refuses a genesis without a valid `app_state.config`, and this subcommand
+/// is what closes that gap for single-node development chains.
+///
+/// # Test Strategy
+///
+/// 1. Initialize a network to obtain a real CometBFT genesis file
+/// 2. Run `felidae-deployer inject-config` against it, pointing the admin and
+///    oracle homedirs at temp directories (never the user's real homedirs)
+/// 3. Verify keys were generated at the felidae-CLI-compatible locations
+/// 4. Verify the injected config parses and passes the same stateless
+///    validation InitChain applies at chain start
+#[tokio::test]
+#[cfg(feature = "integration")]
+async fn test_inject_config_authors_valid_genesis() -> color_eyre::Result<()> {
+    let deployer_bin = crate::binaries::find_deployer()?;
+
+    let temp_dir = tempfile::tempdir()?;
+    let config = NetworkConfig {
+        chain_id: "felidae-inject-config-test".to_string(),
+        num_validators: 1,
+        use_sentries: false,
+        directory: temp_dir.path().to_path_buf(),
+        ..Default::default()
+    };
+    let mut network = Network::new(config);
+    network.initialize()?;
+    let genesis_path = network.nodes[0].genesis_path();
+
+    let admin_homedir = temp_dir.path().join("admin-home");
+    let oracle_homedir = temp_dir.path().join("oracle-home");
+
+    let output = Command::new(&deployer_bin)
+        .arg("inject-config")
+        .arg("--genesis")
+        .arg(&genesis_path)
+        .arg("--admin-homedir")
+        .arg(&admin_homedir)
+        .arg("--oracle-homedir")
+        .arg(&oracle_homedir)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(color_eyre::eyre::eyre!("inject-config failed: {}", stderr));
+    }
+
+    // Keys land where the felidae CLI expects to find them:
+    assert!(
+        admin_homedir.join("admin_key.pkcs8.hex").exists(),
+        "admin key generated in homedir"
+    );
+    assert!(
+        oracle_homedir.join("oracle_key.pkcs8.hex").exists(),
+        "oracle key generated in homedir"
+    );
+
+    // The injected config must survive the round-trip through genesis JSON
+    // and satisfy InitChain's stateless validation:
+    let genesis: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&genesis_path)?)?;
+    let injected: felidae_types::transaction::Config =
+        serde_json::from_value(genesis["app_state"]["config"].clone())?;
+    injected.check_stateless()?;
 
     Ok(())
 }

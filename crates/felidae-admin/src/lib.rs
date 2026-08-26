@@ -31,7 +31,7 @@ pub use felidae_types::{
 };
 use felidae_types::{
     KeyPair,
-    transaction::{self, AuthenticatedTx, Config},
+    transaction::{self, AuthenticatedTx, Config, Identity},
 };
 use tendermint::Time;
 
@@ -77,7 +77,7 @@ pub fn reconfigure(
     config: Config,
 ) -> Result<String, Error> {
     let keypair = KeyPair::decode(signing_key).map_err(|_| Error::InvalidSigningKey)?;
-    let admin = keypair.public_key().to_vec();
+    let admin = Identity::from_keypair(&keypair);
 
     // Set the time window for validity of the reconfiguration based on the current time and
     // specified timeout. The grace period must be large enough to account for the lag between

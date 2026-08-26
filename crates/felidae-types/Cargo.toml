@@ -15,7 +15,9 @@ serde_with = { workspace = true }
 humantime-serde = { workspace = true }
 hex = { workspace = true }
 url = { workspace = true }
+p256 = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
 serde_json = { workspace = true }
+proptest = { workspace = true }

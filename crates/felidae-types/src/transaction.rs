@@ -20,7 +20,10 @@ mod build;
 pub use build::Builder;
 
 mod authenticated;
+
+mod check;
 pub use authenticated::AuthenticatedTx;
+pub use check::InvalidConfig;
 
 // Here are all the domain types that can be stored in the state, and their mapping to protobuf:
 domain_types!(
@@ -40,7 +43,9 @@ domain_types!(
     Oracle: proto::Oracle,
     OracleIdentity: proto::OracleIdentity,
     OnionConfig: proto::config::OnionConfig,
+    ValidatorConfig: proto::config::ValidatorConfig,
     VotingConfig: proto::config::VotingConfig,
+    Validator: proto::Validator,
     Observe: proto::action::Observe,
     Observation: proto::action::observe::Observation,
     HashObserved: proto::action::observe::observation::HashObserved,
@@ -89,6 +94,31 @@ pub struct Config {
     pub admins: AdminConfig,
     pub oracles: OracleConfig,
     pub onion: OnionConfig,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub validators: Vec<Validator>,
+    #[serde(default)]
+    pub validator_config: ValidatorConfig,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct ValidatorConfig {
+    /// Number of blocks in the sliding uptime window.
+    pub uptime_window: u64,
+    /// Maximum missed blocks in the window before a validator is jailed.
+    pub missed_blocks_max: u64,
+    /// Maximum missed blocks in the window before a jailed validator is unjailed.
+    /// Must be strictly less than `missed_blocks_max` to prevent oscillation.
+    pub unjail_missed_max: u64,
+}
+
+impl Default for ValidatorConfig {
+    fn default() -> Self {
+        Self {
+            uptime_window: 10_000,
+            missed_blocks_max: 500,
+            unjail_missed_max: 250,
+        }
+    }
 }
 
 impl Config {
@@ -104,7 +134,7 @@ impl Config {
                 },
                 // Placeholder entry
                 authorized: vec![Admin {
-                    identity: Bytes::from(vec![0u8; 64]),
+                    identity: Identity::placeholder(),
                 }],
             },
             oracles: OracleConfig {
@@ -119,11 +149,13 @@ impl Config {
                 observation_timeout: Duration::from_secs(5 * 60),
                 // Placeholder entry so it's easier to fill out
                 authorized: vec![Oracle {
-                    identity: Bytes::from(vec![0u8; 64]),
+                    identity: Identity::placeholder(),
                     endpoint: Url::parse("http://127.0.0.1:8081").unwrap(),
                 }],
             },
             onion: OnionConfig { enabled: false },
+            validators: vec![],
+            validator_config: ValidatorConfig::default(),
         }
     }
 }
@@ -134,12 +166,143 @@ pub struct AdminConfig {
     pub authorized: Vec<Admin>,
 }
 
-#[serde_as]
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Admin {
-    #[serde_as(as = "Hex")]
-    pub identity: Bytes,
+    pub identity: Identity,
+}
+
+/// A NIST P-256 ECDSA public key identifying an admin or oracle.
+///
+/// Parsed and validated at construction, so a held value is always a point on
+/// the curve. Canonical encoding is 65-byte SEC1 uncompressed (`0x04 || x || y`),
+/// matching what [`KeyPair::public_key`] produces; compressed (33-byte) input
+/// is accepted and canonicalized. JSON shape is a bare lowercase hex string.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Identity(p256::ecdsa::VerifyingKey);
+
+impl Identity {
+    /// Parse an identity from SEC1-encoded bytes (compressed or uncompressed).
+    pub fn from_sec1_bytes(bytes: &[u8]) -> Result<Self, crate::ParseError> {
+        p256::ecdsa::VerifyingKey::from_sec1_bytes(bytes)
+            .map(Identity)
+            .map_err(|_| {
+                crate::ParseError::new::<Identity>(format!(
+                    "invalid P-256 public key: {}",
+                    hex::encode(bytes)
+                ))
+            })
+    }
+
+    /// The canonical 65-byte SEC1 uncompressed encoding.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.0.to_encoded_point(false).as_bytes().to_vec()
+    }
+
+    /// The identity of a signing keypair.
+    pub fn from_keypair(keypair: &crate::KeyPair) -> Self {
+        Self::from_sec1_bytes(&keypair.public_key())
+            .expect("KeyPair public key is always a valid SEC1 point")
+    }
+
+    /// A well-known placeholder identity for config templates: the P-256
+    /// generator point. Valid and parseable, but rejected by config validation
+    /// if left unreplaced.
+    pub fn placeholder() -> Self {
+        Identity(
+            p256::ecdsa::VerifyingKey::from_affine(p256::AffinePoint::GENERATOR)
+                .expect("generator point is not the identity point"),
+        )
+    }
+}
+
+impl From<p256::ecdsa::VerifyingKey> for Identity {
+    fn from(key: p256::ecdsa::VerifyingKey) -> Self {
+        Identity(key)
+    }
+}
+
+impl From<Identity> for p256::ecdsa::VerifyingKey {
+    fn from(identity: Identity) -> Self {
+        identity.0
+    }
+}
+
+impl Hash for Identity {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.to_bytes().hash(state);
+    }
+}
+
+impl Display for Identity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(self.to_bytes()))
+    }
+}
+
+impl Debug for Identity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Identity({self})")
+    }
+}
+
+impl FromStr for Identity {
+    type Err = crate::ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = hex::decode(s)
+            .map_err(|_| crate::ParseError::new::<Identity>(format!("invalid hex: {s}")))?;
+        Self::from_sec1_bytes(&bytes)
+    }
+}
+
+impl Serialize for Identity {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for Identity {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Validator {
+    /// Ed25519 consensus public key; hex string in JSON, parsed at construction.
+    #[serde(with = "ed25519_hex")]
+    pub public_key: tendermint::PublicKey,
+}
+
+impl Hash for Validator {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.public_key.to_bytes().hash(state);
+    }
+}
+
+/// Serde adapter keeping the operator-facing JSON shape a bare hex string
+/// (tendermint::PublicKey's native serde is a tagged enum, which we do not want).
+mod ed25519_hex {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(
+        key: &tendermint::PublicKey,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&hex::encode(key.to_bytes()))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<tendermint::PublicKey, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
+        tendermint::PublicKey::from_raw_ed25519(&bytes).ok_or_else(|| {
+            serde::de::Error::custom("invalid ed25519 public key (expected 32 bytes)")
+        })
+    }
 }
 
 #[serde_as]
@@ -153,11 +316,9 @@ pub struct OracleConfig {
     pub authorized: Vec<Oracle>,
 }
 
-#[serde_as]
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Oracle {
-    #[serde_as(as = "Hex")]
-    pub identity: Bytes,
+    pub identity: Identity,
     /// URL endpoint for the oracle (e.g. `https://oracle.example.com/oracle/`).
     #[serde(
         default = "default_oracle_endpoint",
@@ -193,12 +354,10 @@ where
 }
 
 /// Transparent wrapper for the oracle's public key.
-#[serde_as]
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct OracleIdentity {
-    #[serde_as(as = "Hex")]
-    pub identity: Bytes,
+    pub identity: Identity,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -402,6 +561,19 @@ mod tests {
 
     use insta::assert_snapshot;
 
+    /// Deterministic P-256 identity derived from a fixed low scalar.
+    ///
+    /// The scalar is 256 + n, so no `n` yields scalar 1 — whose public key is
+    /// the generator point, i.e. `Identity::placeholder()`.
+    fn test_identity(n: u8) -> Identity {
+        let mut scalar = [0u8; 32];
+        scalar[30] = 1;
+        scalar[31] = n;
+        let signing_key =
+            p256::ecdsa::SigningKey::from_slice(&scalar).expect("low scalar is a valid key");
+        Identity::from(*signing_key.verifying_key())
+    }
+
     #[test]
     fn test_domain_display_and_parse() {
         let domain_str = "sub.example.com.";
@@ -422,10 +594,94 @@ mod tests {
     }
 
     #[test]
+    fn validator_serde_hex_round_trip() {
+        let key = tendermint::PublicKey::from_raw_ed25519(&[2u8; 32]).unwrap();
+        let validator = Validator { public_key: key };
+        let json = serde_json::to_string(&validator).unwrap();
+        // Operator-facing shape must stay a bare hex string, not tendermint's tagged enum.
+        assert_eq!(json, format!(r#"{{"public_key":"{}"}}"#, "02".repeat(32)));
+        assert_eq!(serde_json::from_str::<Validator>(&json).unwrap(), validator);
+    }
+
+    #[test]
+    fn validator_deserialize_rejects_invalid_keys() {
+        for bad in [
+            r#"{"public_key":"zz"}"#.to_string(),                 // not hex
+            format!(r#"{{"public_key":"{}"}}"#, "02".repeat(31)), // too short
+            format!(r#"{{"public_key":"{}"}}"#, "02".repeat(33)), // too long
+        ] {
+            assert!(serde_json::from_str::<Validator>(&bad).is_err());
+        }
+    }
+
+    #[test]
+    fn all_zeros_placeholder_key_still_parses() {
+        // check_config's placeholder rejection relies on 32 zero bytes being representable;
+        // pin that from_raw_ed25519 is length-only validation.
+        assert!(tendermint::PublicKey::from_raw_ed25519(&[0u8; 32]).is_some());
+    }
+
+    #[test]
+    fn identity_serde_hex_round_trip() {
+        let identity = test_identity(1);
+        let json = serde_json::to_string(&identity).unwrap();
+        // Bare lowercase hex of the 65-byte SEC1 uncompressed encoding.
+        let hex = identity.to_string();
+        assert_eq!(hex.len(), 130);
+        assert!(hex.starts_with("04"));
+        assert_eq!(json, format!(r#""{hex}""#));
+        assert_eq!(serde_json::from_str::<Identity>(&json).unwrap(), identity);
+    }
+
+    #[test]
+    fn identity_rejects_invalid() {
+        // Off-curve: valid tag and length, but (1,1) is not on the curve.
+        let mut off_curve = vec![0u8; 65];
+        off_curve[0] = 0x04;
+        off_curve[32] = 1;
+        off_curve[64] = 1;
+        for bad in [vec![], vec![1u8; 64], vec![1u8; 66], off_curve] {
+            assert!(
+                Identity::from_sec1_bytes(&bad).is_err(),
+                "{}-byte input must be rejected",
+                bad.len()
+            );
+            let json = format!(r#""{}""#, hex::encode(&bad));
+            assert!(serde_json::from_str::<Identity>(&json).is_err());
+        }
+    }
+
+    #[test]
+    fn identity_accepts_compressed_and_canonicalizes() {
+        let identity = test_identity(1);
+        let compressed = p256::ecdsa::VerifyingKey::from(identity)
+            .to_encoded_point(true)
+            .as_bytes()
+            .to_vec();
+        assert_eq!(compressed.len(), 33);
+        let parsed = Identity::from_sec1_bytes(&compressed).unwrap();
+        assert_eq!(parsed, identity);
+        assert_eq!(parsed.to_bytes().len(), 65);
+    }
+
+    #[test]
+    fn placeholder_is_parseable() {
+        // check_config rejects the placeholder by equality, so it must be
+        // representable in the strictly-parsed type.
+        let placeholder = Identity::placeholder();
+        assert_eq!(
+            Identity::from_sec1_bytes(&placeholder.to_bytes()).unwrap(),
+            placeholder
+        );
+        // The generator point's well-known SEC1 prefix.
+        assert!(placeholder.to_string().starts_with("046b17d1f2e12c4247"));
+    }
+
+    #[test]
     fn test_observe_serialization() {
         let observe = Observe {
             oracle: OracleIdentity {
-                identity: Bytes::from_static(&[0u8; 64]),
+                identity: test_identity(1),
             },
             observation: Observation {
                 domain: Domain {
@@ -450,7 +706,7 @@ mod tests {
             version: 1,
             admins: AdminConfig {
                 authorized: vec![Admin {
-                    identity: Bytes::from_static(&[0u8; 64]),
+                    identity: test_identity(1),
                 }],
                 voting: VotingConfig {
                     total: Total(3),
@@ -462,7 +718,7 @@ mod tests {
             oracles: OracleConfig {
                 enabled: true,
                 authorized: vec![Oracle {
-                    identity: Bytes::from_static(&[1u8; 64]),
+                    identity: test_identity(2),
                     endpoint: Url::parse("http://127.0.0.1:8081").unwrap(),
                 }],
                 voting: VotingConfig {
@@ -475,6 +731,8 @@ mod tests {
                 observation_timeout: Duration::from_secs(120),
             },
             onion: OnionConfig { enabled: false },
+            validators: vec![],
+            validator_config: ValidatorConfig::default(),
         };
         assert_snapshot!(serde_json::to_string(&config).unwrap());
     }
@@ -485,7 +743,7 @@ mod tests {
             chain_id: ChainId("test-chain".to_string()),
             actions: vec![Action::Reconfigure(Reconfigure {
                 admin: Admin {
-                    identity: Bytes::from_static(&[0u8; 64]),
+                    identity: test_identity(1),
                 },
                 not_before: Time::from_unix_timestamp(1_650_000_000, 0).unwrap(),
                 not_after: Time::from_unix_timestamp(1_660_000_000, 0).unwrap(),
@@ -493,7 +751,7 @@ mod tests {
                     version: 1,
                     admins: AdminConfig {
                         authorized: vec![Admin {
-                            identity: Bytes::from_static(&[0u8; 64]),
+                            identity: test_identity(1),
                         }],
                         voting: VotingConfig {
                             total: Total(3),
@@ -505,7 +763,7 @@ mod tests {
                     oracles: OracleConfig {
                         enabled: true,
                         authorized: vec![Oracle {
-                            identity: Bytes::from_static(&[1u8; 64]),
+                            identity: test_identity(2),
                             endpoint: Url::parse("http://127.0.0.1:8081").unwrap(),
                         }],
                         voting: VotingConfig {
@@ -518,6 +776,8 @@ mod tests {
                         observation_timeout: Duration::from_secs(120),
                     },
                     onion: OnionConfig { enabled: false },
+                    validators: vec![],
+                    validator_config: ValidatorConfig::default(),
                 },
             })],
         };
@@ -535,7 +795,7 @@ mod tests {
         for url in valid_urls {
             let json = format!(
                 r#"{{"identity":"{}","endpoint":"{}"}}"#,
-                "01".repeat(64),
+                test_identity(1),
                 url
             );
             let oracle: Result<Oracle, _> = serde_json::from_str(&json);
@@ -553,7 +813,7 @@ mod tests {
         for url in invalid_urls {
             let json = format!(
                 r#"{{"identity":"{}","endpoint":"{}"}}"#,
-                "01".repeat(64),
+                test_identity(1),
                 url
             );
             let oracle: Result<Oracle, _> = serde_json::from_str(&json);
