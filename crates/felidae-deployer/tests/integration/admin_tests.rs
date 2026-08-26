@@ -4,7 +4,7 @@
 //! config updates, quorum enforcement, and BFT voting behavior.
 
 use felidae_types::response::ChainInfo;
-use felidae_types::transaction::{Config, OracleConfig, Validator};
+use felidae_types::transaction::{Config, OracleConfig, Validator, ValidatorKey};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 use tendermint_rpc::{Client, HttpClient};
@@ -483,8 +483,7 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
 
     let mut phase2_validators = genesis_validators.clone();
     phase2_validators.push(Validator {
-        public_key: tendermint::PublicKey::from_raw_ed25519(&new_pubkey)
-            .expect("valid ed25519 key"),
+        public_key: ValidatorKey::from_bytes(&new_pubkey).expect("valid ed25519 key"),
     });
 
     let phase2_config = Config {
@@ -874,8 +873,7 @@ async fn test_validator_onboarding_joined_node() -> color_eyre::Result<()> {
     // ── Phase 5: Onboard the joined node as a 4th validator ────────────────
     let mut phase5_validators = genesis_validators.clone();
     phase5_validators.push(Validator {
-        public_key: tendermint::PublicKey::from_raw_ed25519(&new_validator_pubkey)
-            .expect("valid ed25519 key"),
+        public_key: ValidatorKey::from_bytes(&new_validator_pubkey).expect("valid ed25519 key"),
     });
 
     let onboard_config = Config {

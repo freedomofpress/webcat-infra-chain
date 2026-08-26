@@ -640,21 +640,16 @@ impl TryFrom<proto::Validator> for Validator {
     type Error = crate::ParseError;
 
     fn try_from(value: proto::Validator) -> Result<Self, Self::Error> {
-        let public_key =
-            tendermint::PublicKey::from_raw_ed25519(&value.public_key).ok_or_else(|| {
-                crate::ParseError::new::<Validator>(format!(
-                    "invalid ed25519 public key: {}",
-                    hex::encode(&value.public_key)
-                ))
-            })?;
-        Ok(Validator { public_key })
+        Ok(Validator {
+            public_key: ValidatorKey::from_bytes(&value.public_key)?,
+        })
     }
 }
 
 impl From<Validator> for proto::Validator {
     fn from(validator: Validator) -> Self {
         proto::Validator {
-            public_key: validator.public_key.to_bytes().into(),
+            public_key: validator.public_key.as_bytes().to_vec().into(),
         }
     }
 }
@@ -956,10 +951,10 @@ mod tests {
     }
 
     fn arb_validator() -> impl Strategy<Value = Validator> {
-        // Any 32 bytes are a well-formed ed25519 key as far as `from_raw_ed25519`
-        // is concerned (it validates length, not curve membership).
+        // Any 32 bytes are a well-formed key as far as `ValidatorKey` is
+        // concerned (it validates length, not curve membership).
         proptest::array::uniform32(any::<u8>()).prop_map(|bytes| Validator {
-            public_key: tendermint::PublicKey::from_raw_ed25519(&bytes).unwrap(),
+            public_key: ValidatorKey::from_bytes(&bytes).unwrap(),
         })
     }
 
