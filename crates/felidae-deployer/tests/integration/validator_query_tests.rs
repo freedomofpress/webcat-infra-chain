@@ -10,6 +10,7 @@ use std::process::Command;
 
 use felidae_state::BASE_VALIDATOR_POWER;
 use felidae_types::response::ValidatorInfo;
+use felidae_types::transaction::ValidatorStatus;
 use sha2::{Digest, Sha256};
 use tendermint_rpc::HttpClient;
 
@@ -79,7 +80,7 @@ async fn test_validators_query_lists_active_validators() -> color_eyre::Result<(
         .map(|(pk, _)| hex::encode(pk))
         .collect();
     let reported_identities: BTreeSet<String> =
-        validators.iter().map(|v| v.identity.clone()).collect();
+        validators.iter().map(|v| v.identity.to_string()).collect();
     assert_eq!(
         reported_identities, cometbft_identities,
         "identities reported by /validators should match CometBFT's validator set"
@@ -87,9 +88,11 @@ async fn test_validators_query_lists_active_validators() -> color_eyre::Result<(
 
     for v in &validators {
         assert_eq!(
-            v.status, "active",
+            v.status,
+            ValidatorStatus::Active,
             "validator {} should be active in a healthy network, got {:?}",
-            v.identity, v.status
+            v.identity,
+            v.status
         );
         assert_eq!(
             v.power,
@@ -97,10 +100,11 @@ async fn test_validators_query_lists_active_validators() -> color_eyre::Result<(
             "validator {} should carry BASE_VALIDATOR_POWER",
             v.identity
         );
-        let pub_key_bytes = hex::decode(&v.identity)?;
+        let pub_key_bytes = v.identity.as_bytes().to_vec();
         let expected_address = cometbft_address_hex(&pub_key_bytes);
         assert_eq!(
-            v.address, expected_address,
+            hex::encode(v.address.as_bytes()),
+            expected_address,
             "address field for {} should be the SHA-256[0..20] of the pubkey",
             v.identity
         );
@@ -156,18 +160,22 @@ async fn test_validators_query_prefix_lookup() -> color_eyre::Result<()> {
     let target = &all[0];
 
     // Full identity lookup.
-    let by_full = query_validators_cli(&felidae_bin, &network.query_url(), Some(&target.identity))?;
+    let by_full = query_validators_cli(
+        &felidae_bin,
+        &network.query_url(),
+        Some(&target.identity.to_string()),
+    )?;
     assert_eq!(
         by_full.len(),
         1,
         "full-identity lookup should match exactly one validator"
     );
     assert_eq!(by_full[0].identity, target.identity);
-    assert_eq!(by_full[0].status, "active");
+    assert_eq!(by_full[0].status, ValidatorStatus::Active);
 
     // Prefix lookup using the first 8 hex chars of the identity. The chance
     // of a collision among 3 random ed25519 keys at 32 bits is negligible.
-    let prefix: String = target.identity.chars().take(8).collect();
+    let prefix: String = target.identity.to_string().chars().take(8).collect();
     let by_prefix = query_validators_cli(&felidae_bin, &network.query_url(), Some(&prefix))?;
     assert_eq!(
         by_prefix.len(),
@@ -188,8 +196,11 @@ async fn test_validators_query_prefix_lookup() -> color_eyre::Result<()> {
 
     // Address lookup should also work — the route accepts either pubkey or
     // address prefix.
-    let by_address =
-        query_validators_cli(&felidae_bin, &network.query_url(), Some(&target.address))?;
+    let by_address = query_validators_cli(
+        &felidae_bin,
+        &network.query_url(),
+        Some(&hex::encode(target.address.as_bytes())),
+    )?;
     assert_eq!(
         by_address.len(),
         1,
@@ -324,9 +335,11 @@ async fn test_validators_route_returns_well_formed_json() -> color_eyre::Result<
     assert_eq!(typed.len(), 3);
     for v in &typed {
         assert_eq!(
-            v.status, "active",
+            v.status,
+            ValidatorStatus::Active,
             "validator {} should be active, got {:?}",
-            v.identity, v.status
+            v.identity,
+            v.status
         );
     }
 
