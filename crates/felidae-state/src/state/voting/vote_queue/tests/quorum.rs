@@ -1,5 +1,6 @@
 use super::super::*;
 use super::common::setup_test_state;
+use felidae_types::test_util::identity_named;
 use felidae_types::transaction::{ChainId, Delay, Quorum, Timeout, Total};
 use std::time::Duration;
 
@@ -26,7 +27,7 @@ fn proptest_quorum_reached_exactly() {
         let mut parties = Vec::new();
         let mut party_counter = 0u64;
         while parties.len() < quorum as usize {
-            parties.push(format!("party_{}", party_counter));
+            parties.push(identity_named(&format!("party_{}", party_counter)));
             party_counter += 1;
         }
 
@@ -53,7 +54,7 @@ fn proptest_quorum_reached_exactly() {
                 ).expect("valid timestamp");
 
                 let vote = Vote {
-                    party: party.clone(),
+                    party: *party,
                     time: vote_time,
                     key: ChainId(key.clone()),
                     value: ChainId(value.clone()),
@@ -120,7 +121,7 @@ fn proptest_quorum_exceeded() {
         let mut parties = Vec::new();
         let mut party_counter = 0u64;
         while parties.len() < votes_needed as usize {
-            parties.push(format!("party_{}", party_counter));
+            parties.push(identity_named(&format!("party_{}", party_counter)));
             party_counter += 1;
         }
 
@@ -147,7 +148,7 @@ fn proptest_quorum_exceeded() {
                 ).expect("valid timestamp");
 
                 let vote = Vote {
-                    party: party.clone(),
+                    party: *party,
                     time: vote_time,
                     key: ChainId(key.clone()),
                     value: ChainId(value.clone()),
@@ -241,7 +242,7 @@ fn proptest_multiple_values_competing() {
 
             let mut party_counter = 0u64;
             let mut next_party = || {
-                let name = format!("party_{}", party_counter);
+                let name = identity_named(&format!("party_{}", party_counter));
                 party_counter += 1;
                 name
             };
@@ -390,7 +391,7 @@ fn proptest_quorum_with_vote_replacement() {
 
             let mut party_counter = 0u64;
             let mut next_party = || {
-                let name = format!("party_{}", party_counter);
+                let name = identity_named(&format!("party_{}", party_counter));
                 party_counter += 1;
                 name
             };
@@ -405,7 +406,7 @@ fn proptest_quorum_with_vote_replacement() {
 
                 let party = next_party();
                 let vote = Vote {
-                    party: party.clone(),
+                    party,
                     time: vote_time,
                     key: ChainId(key.clone()),
                     value: ChainId(value_a.clone()),
@@ -420,13 +421,13 @@ fn proptest_quorum_with_vote_replacement() {
             }
 
             // The first party replaces value A with value B (so now there are quorum - 2 votes for value A)
-            let replacement_party = parties_a[0].clone();
+            let replacement_party = parties_a[0];
             let replacement_time = Time::from_unix_timestamp(
                 block_time.unix_timestamp() + (quorum - 1) as i64,
                 0,
             ).expect("valid timestamp");
             let replacement_vote = Vote {
-                party: replacement_party.clone(),
+                party: replacement_party,
                 time: replacement_time,
                 key: ChainId(key.clone()),
                 value: ChainId(value_b.clone()),
@@ -444,7 +445,7 @@ fn proptest_quorum_with_vote_replacement() {
                     0,
                 ).expect("valid timestamp");
                 let final_vote = Vote {
-                    party: final_party.clone(),
+                    party: final_party,
                     time: final_time,
                     key: ChainId(key.clone()),
                     value: ChainId(value_a.clone()),

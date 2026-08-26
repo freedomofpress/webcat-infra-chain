@@ -31,3 +31,7 @@ impl From<VerifyError> for ParseError {
 
 pub mod response;
 pub mod transaction;
+
+#[cfg(any(test, feature = "test-util"))]
+#[doc(hidden)]
+pub mod test_util;

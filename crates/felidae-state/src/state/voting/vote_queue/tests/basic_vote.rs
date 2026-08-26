@@ -1,5 +1,6 @@
 use super::super::*;
 use super::common::setup_test_state;
+use felidae_types::test_util::identity_named;
 use felidae_types::transaction::{ChainId, Delay, Quorum, Timeout, Total};
 use std::time::Duration;
 
@@ -16,7 +17,7 @@ fn proptest_single_vote_cast_and_retrieval_below_quorum() {
         quorum in 1u64..=100u64,
         key in "[a-zA-Z0-9_]+",
         value in "[a-zA-Z0-9_]+",
-        party in "[a-zA-Z0-9_]+",
+        party in "[a-zA-Z0-9_]+".prop_map(|s| identity_named(&s)),
     )| {
         // Ensure quorum < total and quorum > 1 (so single vote doesn't reach quorum)
         let total = total.max(3); // Need at least 3 for quorum < total and quorum > 1
@@ -37,7 +38,7 @@ fn proptest_single_vote_cast_and_retrieval_below_quorum() {
             let mut vote_queue = VoteQueue::new(&mut *state_guard, "test_queue", config).expect("valid voting config");
 
             let vote = Vote {
-                party: party.clone(),
+                party,
                 time: block_time,
                 key: ChainId(key.clone()),
                 value: ChainId(value.clone()),
@@ -55,7 +56,7 @@ fn proptest_single_vote_cast_and_retrieval_below_quorum() {
                 .map_err(|e| proptest::test_runner::TestCaseError::fail(format!("get votes failed: {e}")))?;
 
             prop_assert_eq!(votes.len(), 1, "should have exactly one vote");
-            prop_assert_eq!(votes[0].party.clone(), party.clone());
+            prop_assert_eq!(votes[0].party, party);
             prop_assert_eq!(votes[0].key.clone(), ChainId(key.clone()));
             prop_assert_eq!(votes[0].value.clone(), ChainId(value.clone()));
             prop_assert_eq!(votes[0].time, block_time);
@@ -67,7 +68,7 @@ fn proptest_single_vote_cast_and_retrieval_below_quorum() {
                 .map_err(|e| proptest::test_runner::TestCaseError::fail(format!("get votes by prefix failed: {e}")))?;
 
             prop_assert_eq!(votes_by_prefix.len(), 1, "should find vote via key prefix");
-            prop_assert_eq!(votes_by_prefix[0].party.clone(), party.clone());
+            prop_assert_eq!(votes_by_prefix[0].party, party);
             prop_assert_eq!(votes_by_prefix[0].value.clone(), ChainId(value.clone()));
 
             Ok(())
@@ -87,7 +88,7 @@ fn proptest_vote_replacement() {
         key in "[a-zA-Z0-9_]+",
         value1 in "[a-zA-Z0-9_]+",
         value2 in "[a-zA-Z0-9_]+",
-        party in "[a-zA-Z0-9_]+",
+        party in "[a-zA-Z0-9_]+".prop_map(|s| identity_named(&s)),
     )| {
         // Ensure value1 != value2
         if value1 == value2 {
@@ -114,7 +115,7 @@ fn proptest_vote_replacement() {
 
             // Cast first vote
             let vote1 = Vote {
-                party: party.clone(),
+                party,
                 time: block_time,
                 key: ChainId(key.clone()),
                 value: ChainId(value1.clone()),
@@ -133,7 +134,7 @@ fn proptest_vote_replacement() {
             ).expect("valid timestamp");
 
             let vote2 = Vote {
-                party: party.clone(),
+                party,
                 time: vote2_time,
                 key: ChainId(key.clone()),
                 value: ChainId(value2.clone()),
@@ -151,7 +152,7 @@ fn proptest_vote_replacement() {
                 .map_err(|e| proptest::test_runner::TestCaseError::fail(format!("get votes failed: {e}")))?;
 
             prop_assert_eq!(votes.len(), 1, "should have exactly one vote after replacement");
-            prop_assert_eq!(votes[0].party.clone(), party.clone());
+            prop_assert_eq!(votes[0].party, party);
             prop_assert_eq!(votes[0].key.clone(), ChainId(key.clone()));
             prop_assert_eq!(votes[0].value.clone(), ChainId(value2.clone()), "should have the second vote's value");
             prop_assert_eq!(votes[0].time, vote2_time, "should have the second vote's time");
@@ -163,7 +164,7 @@ fn proptest_vote_replacement() {
                 .map_err(|e| proptest::test_runner::TestCaseError::fail(format!("get votes by prefix failed: {e}")))?;
 
             prop_assert_eq!(votes_by_prefix.len(), 1, "should find exactly one vote via key prefix");
-            prop_assert_eq!(votes_by_prefix[0].party.clone(), party.clone());
+            prop_assert_eq!(votes_by_prefix[0].party, party);
             prop_assert_eq!(votes_by_prefix[0].value.clone(), ChainId(value2.clone()), "prefix query should return second vote's value");
 
             Ok(())
@@ -182,7 +183,7 @@ fn proptest_multiple_parties_voting() {
         quorum in 2u64..=100u64,
         key in "[a-zA-Z0-9_]+",
         value in "[a-zA-Z0-9_]+",
-        parties in proptest::collection::vec("[a-zA-Z0-9_]+", 2..=20), // 2 to 20 parties
+        parties in proptest::collection::vec("[a-zA-Z0-9_]+".prop_map(|s| identity_named(&s)), 2..=20), // 2 to 20 parties
     )| {
         // Ensure quorum is high enough that multiple votes won't immediately reach quorum
         // This allows us to verify all votes are present before promotion
@@ -217,7 +218,7 @@ fn proptest_multiple_parties_voting() {
                 ).expect("valid timestamp");
 
                 let vote = Vote {
-                    party: party.clone(),
+                    party: *party,
                     time: vote_time,
                     key: ChainId(key.clone()),
                     value: ChainId(value.clone()),

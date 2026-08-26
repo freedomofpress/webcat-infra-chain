@@ -23,6 +23,6 @@ serde_json = { workspace = true }
 tempfile = "3"
 
 [dev-dependencies]
+felidae-types = { path = "../felidae-types", features = ["test-util"] }
 proptest = "1"
 url = { workspace = true }
-p256 = { workspace = true }
