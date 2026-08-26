@@ -1,4 +1,5 @@
 use crate::Store;
+use felidae_types::test_util::test_identity;
 use felidae_types::{
     FQDN,
     transaction::{
@@ -10,17 +11,6 @@ use felidae_types::{
 use std::time::Duration;
 use tempfile::TempDir;
 use tendermint::{AppHash, Time, block::Height};
-
-/// Deterministic P-256 identity derived from a fixed low scalar (256 + n,
-/// so no `n` collides with the generator-point placeholder).
-fn test_identity(n: u8) -> Identity {
-    let mut scalar = [0u8; 32];
-    scalar[30] = 1;
-    scalar[31] = n;
-    let signing_key =
-        p256::ecdsa::SigningKey::from_slice(&scalar).expect("low scalar is a valid key");
-    Identity::from(*signing_key.verifying_key())
-}
 
 fn oracle_identity() -> Identity {
     test_identity(1)

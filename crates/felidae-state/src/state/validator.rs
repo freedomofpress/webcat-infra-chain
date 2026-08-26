@@ -575,19 +575,10 @@ mod tests {
 
     use super::*;
     use crate::Store;
+    use felidae_types::test_util::test_identity;
 
     fn test_pub_key() -> ValidatorKey {
         ValidatorKey::from_bytes(&[1u8; 32]).expect("valid ed25519 key")
-    }
-
-    /// Deterministic P-256 admin identity (scalar 256, avoiding the
-    /// generator-point placeholder at scalar 1).
-    fn test_admin_identity() -> Identity {
-        let mut scalar = [0u8; 32];
-        scalar[30] = 1;
-        let signing_key =
-            p256::ecdsa::SigningKey::from_slice(&scalar).expect("low scalar is a valid key");
-        Identity::from(*signing_key.verifying_key())
     }
 
     /// The CometBFT validator address in the raw form ABCI requests carry it.
@@ -609,7 +600,7 @@ mod tests {
                     delay: Delay(Duration::from_secs(0)),
                 },
                 authorized: vec![Admin {
-                    identity: test_admin_identity(),
+                    identity: test_identity(0),
                 }],
             },
             oracles: OracleConfig {
@@ -673,7 +664,7 @@ mod tests {
                 .oracles
                 .authorized
                 .push(felidae_types::transaction::Oracle {
-                    identity: test_admin_identity(),
+                    identity: test_identity(0),
                     endpoint: url::Url::parse("http://127.0.0.1:8081").unwrap(),
                 });
             config.oracles.voting.total = Total(1);
@@ -724,7 +715,7 @@ mod tests {
                 .oracles
                 .authorized
                 .push(felidae_types::transaction::Oracle {
-                    identity: test_admin_identity(),
+                    identity: test_identity(0),
                     endpoint: url::Url::parse("http://127.0.0.1:8081").unwrap(),
                 });
             config.oracles.voting.total = Total(1);
@@ -1604,7 +1595,7 @@ mod tests {
             .expect("admin_voting")
             .cast(Vote {
                 key: Empty,
-                party: "test-admin".to_string(),
+                party: test_identity(0),
                 time: tendermint::Time::unix_epoch(),
                 value: new_config,
             })

@@ -134,17 +134,7 @@ mod tests {
 
     use super::*;
     use crate::Store;
-
-    /// Deterministic P-256 identity derived from a fixed low scalar (256 + n,
-    /// so no `n` collides with the generator-point placeholder at scalar 1).
-    fn test_identity(n: u8) -> Identity {
-        let mut scalar = [0u8; 32];
-        scalar[30] = 1;
-        scalar[31] = n;
-        let signing_key =
-            p256::ecdsa::SigningKey::from_slice(&scalar).expect("low scalar is a valid key");
-        Identity::from(*signing_key.verifying_key())
-    }
+    use felidae_types::test_util::test_identity;
 
     /// A minimal but well-formed operator genesis config, mirroring the shape
     /// of the deployed testnet genesis files (no validators — the validator

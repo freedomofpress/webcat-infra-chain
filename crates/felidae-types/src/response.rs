@@ -17,8 +17,8 @@ use crate::transaction::{Config, Domain, HashObserved, Identity, ValidatorKey, V
 /// 3. The same oracle submits a new vote for the same domain (overwrites)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OracleVote {
-    /// Hex-encoded ECDSA-P256 public key identifying the oracle
-    pub oracle: String,
+    /// The oracle's P-256 public key (hex on the wire).
+    pub oracle: Identity,
     /// When this vote was submitted
     pub time: Time,
     /// Fully qualified domain name (e.g., "example.com.")
@@ -52,8 +52,8 @@ pub struct PendingObservation {
 /// chain configuration. The voted `config` contains the proposed new settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdminVote {
-    /// Hex-encoded ECDSA-P256 public key identifying the admin
-    pub admin: String,
+    /// The admin's P-256 public key (hex on the wire).
+    pub admin: Identity,
     /// When this vote was submitted
     pub time: Time,
     /// The proposed new configuration

@@ -48,7 +48,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             .await?
             .cast(Vote {
                 key: Empty,
-                party: identity.to_string(),
+                party: *identity,
                 time: current_time,
                 value: config.clone(),
             })
@@ -70,17 +70,7 @@ mod tests {
     use tendermint::{Time, block::Height};
 
     use crate::Store;
-
-    /// Deterministic P-256 identity derived from a fixed low scalar (256 + n,
-    /// so no `n` collides with the generator-point placeholder).
-    fn test_identity(n: u8) -> Identity {
-        let mut scalar = [0u8; 32];
-        scalar[30] = 1;
-        scalar[31] = n;
-        let signing_key =
-            p256::ecdsa::SigningKey::from_slice(&scalar).expect("low scalar is a valid key");
-        Identity::from(*signing_key.verifying_key())
-    }
+    use felidae_types::test_util::test_identity;
 
     fn voting(total: u64, quorum: u64) -> VotingConfig {
         VotingConfig {
