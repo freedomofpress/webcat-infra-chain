@@ -45,6 +45,7 @@ domain_types!(
     ValidatorConfig: proto::config::ValidatorConfig,
     VotingConfig: proto::config::VotingConfig,
     Validator: proto::Validator,
+    ValidatorStatus: u32,
     Observe: proto::action::Observe,
     Observation: proto::action::observe::Observation,
     HashObserved: proto::action::observe::observation::HashObserved,
@@ -389,6 +390,60 @@ impl<'de> Deserialize<'de> for ValidatorKey {
     }
 }
 
+/// The lifecycle status of a validator, as tracked on chain.
+///
+/// Stored in state as a `u32` tag and shown on the wire (query API, CLI) as a
+/// lowercase word. The tag values are part of the state encoding and must not
+/// be renumbered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ValidatorStatus {
+    /// Validator is active and participating in consensus.
+    Active,
+    /// Validator was removed from the `Config` by admins.
+    Inactive,
+    /// Validator was temporarily removed for excessive downtime.
+    Jailed,
+    /// Validator was permanently banned for equivocation (double-signing).
+    Tombstoned,
+}
+
+impl Display for ValidatorStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            ValidatorStatus::Active => "active",
+            ValidatorStatus::Inactive => "inactive",
+            ValidatorStatus::Jailed => "jailed",
+            ValidatorStatus::Tombstoned => "tombstoned",
+        })
+    }
+}
+
+impl From<ValidatorStatus> for u32 {
+    fn from(status: ValidatorStatus) -> Self {
+        match status {
+            ValidatorStatus::Active => 0,
+            ValidatorStatus::Inactive => 1,
+            ValidatorStatus::Jailed => 2,
+            ValidatorStatus::Tombstoned => 3,
+        }
+    }
+}
+
+impl TryFrom<u32> for ValidatorStatus {
+    type Error = crate::ParseError;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(ValidatorStatus::Active),
+            1 => Ok(ValidatorStatus::Inactive),
+            2 => Ok(ValidatorStatus::Jailed),
+            3 => Ok(ValidatorStatus::Tombstoned),
+            _ => Err(crate::ParseError::new::<ValidatorStatus>(value)),
+        }
+    }
+}
+
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct OracleConfig {
@@ -718,6 +773,31 @@ mod tests {
         let key = ValidatorKey::from_bytes(&[7u8; 32]).unwrap();
         let expected = &Sha256::digest(key.as_bytes())[..20];
         assert_eq!(key.address().as_bytes(), expected);
+    }
+
+    #[test]
+    fn validator_status_encodings_are_pinned() {
+        // The u32 tags are the state encoding; the words are the wire encoding.
+        // Both are load-bearing for existing stores and clients.
+        for (status, tag, word) in [
+            (ValidatorStatus::Active, 0, "active"),
+            (ValidatorStatus::Inactive, 1, "inactive"),
+            (ValidatorStatus::Jailed, 2, "jailed"),
+            (ValidatorStatus::Tombstoned, 3, "tombstoned"),
+        ] {
+            assert_eq!(u32::from(status), tag);
+            assert_eq!(ValidatorStatus::try_from(tag).unwrap(), status);
+            assert_eq!(status.to_string(), word);
+            assert_eq!(
+                serde_json::to_string(&status).unwrap(),
+                format!("\"{word}\"")
+            );
+            assert_eq!(
+                serde_json::from_str::<ValidatorStatus>(&format!("\"{word}\"")).unwrap(),
+                status
+            );
+        }
+        assert!(ValidatorStatus::try_from(4).is_err());
     }
 
     #[test]

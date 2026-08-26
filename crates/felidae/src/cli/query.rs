@@ -277,8 +277,8 @@ fn render_validators_table(validators: &[ValidatorInfo]) {
             };
             let uptime = format!("{}/{} ({})", signed, v.uptime_window, uptime_pct);
             Row {
-                identity: v.identity.clone(),
-                status: v.status.clone(),
+                identity: v.identity.to_string(),
+                status: v.status.to_string(),
                 power: power_share,
                 uptime,
             }

@@ -9,8 +9,7 @@
 use std::time::Duration;
 
 use felidae_state::BASE_VALIDATOR_POWER;
-use felidae_types::transaction::{Config, Validator, ValidatorConfig};
-use sha2::{Digest, Sha256};
+use felidae_types::transaction::{Config, Validator, ValidatorConfig, ValidatorStatus};
 use tendermint_rpc::{Client, HttpClient};
 
 use crate::binaries::find_binaries;
@@ -61,16 +60,6 @@ fn unjail_timeout() -> Duration {
     block_time() * 40 + Duration::from_secs(60)
 }
 
-/// Computes the CometBFT 20-byte address for a 32-byte ed25519 public key.
-fn cometbft_address(pub_key_bytes: &[u8]) -> [u8; 20] {
-    let mut hasher = Sha256::new();
-    hasher.update(pub_key_bytes);
-    let digest = hasher.finalize();
-    let mut address = [0u8; 20];
-    address.copy_from_slice(&digest[0..20]);
-    address
-}
-
 /// Polls the chain for a block whose `last_commit.signatures` contains a
 /// positive `BlockIdFlagCommit` signature from the given validator address.
 ///
@@ -78,7 +67,7 @@ fn cometbft_address(pub_key_bytes: &[u8]) -> [u8; 20] {
 /// validator was an active signer at some height *before* the latest one.
 async fn poll_for_validator_signature(
     rpc_client: &HttpClient,
-    validator_address: [u8; 20],
+    validator_address: tendermint::account::Id,
     timeout: Duration,
 ) -> color_eyre::Result<u64> {
     let start = std::time::Instant::now();
@@ -92,7 +81,7 @@ async fn poll_for_validator_signature(
                 for sig in &commit.signatures {
                     if sig.is_commit()
                         && let Some(addr) = sig.validator_address()
-                        && addr.as_bytes() == validator_address
+                        && addr == validator_address
                     {
                         return Ok(commit.height.value());
                     }
@@ -158,9 +147,10 @@ async fn test_readd_removed_validator_resumes_signing() -> color_eyre::Result<()
 
     let genesis_validators = read_genesis_validator_pubkeys(&network)?;
     assert_eq!(genesis_validators.len(), 3);
-    let target_pubkey: Vec<u8> = genesis_validators[2].public_key.as_bytes().to_vec();
-    let target_address = cometbft_address(&target_pubkey);
-    let target_identity = hex::encode(&target_pubkey);
+    let target_key = genesis_validators[2].public_key;
+    let target_pubkey: Vec<u8> = target_key.as_bytes().to_vec();
+    let target_address = target_key.address();
+    let target_identity = target_key.to_string();
     eprintln!(
         "[phase 0] will remove and re-add validator-2 (identity: {})",
         target_identity
@@ -241,7 +231,8 @@ async fn test_readd_removed_validator_resumes_signing() -> color_eyre::Result<()
             )
         })?;
     assert_eq!(
-        removed_info.status, "inactive",
+        removed_info.status,
+        ValidatorStatus::Inactive,
         "validator-2 should report status=inactive after admin removal, got {:?}",
         removed_info.status
     );
@@ -313,7 +304,8 @@ async fn test_readd_removed_validator_resumes_signing() -> color_eyre::Result<()
             )
         })?;
     assert_eq!(
-        readded_info.status, "active",
+        readded_info.status,
+        ValidatorStatus::Active,
         "validator-2 should report status=active after re-add, got {:?}",
         readded_info.status
     );
@@ -392,7 +384,7 @@ async fn test_validator_jailed_on_downtime() -> color_eyre::Result<()> {
     let genesis_validators = read_genesis_validator_pubkeys(&network)?;
     assert_eq!(genesis_validators.len(), 4);
     let target_pubkey: Vec<u8> = genesis_validators[3].public_key.as_bytes().to_vec();
-    let target_identity = hex::encode(&target_pubkey);
+    let target_identity = genesis_validators[3].public_key.to_string();
     eprintln!("[phase 0] target validator-3 identity: {}", target_identity);
 
     // Wait for the network to push past the initial-block grace cases —
@@ -483,7 +475,7 @@ async fn test_validator_jailed_on_downtime() -> color_eyre::Result<()> {
         || {
             let info = query_validator_info(&felidae_bin, &network.query_url(), &target_identity)?;
             Ok(info
-                .map(|v| v.status == "jailed" && v.power == 1)
+                .map(|v| v.status == ValidatorStatus::Jailed && v.power == 1)
                 .unwrap_or(false))
         },
     )
@@ -528,7 +520,7 @@ async fn test_jailed_validator_unjails_on_recovery() -> color_eyre::Result<()> {
 
     let genesis_validators = read_genesis_validator_pubkeys(&network)?;
     let target_pubkey: Vec<u8> = genesis_validators[3].public_key.as_bytes().to_vec();
-    let target_identity = hex::encode(&target_pubkey);
+    let target_identity = genesis_validators[3].public_key.to_string();
 
     poll_until_async(
         consensus_propagation_wait(),
@@ -557,7 +549,7 @@ async fn test_jailed_validator_unjails_on_recovery() -> color_eyre::Result<()> {
         .ok_or_else(|| {
         color_eyre::eyre::eyre!("validator-3 missing from /validators after jail")
     })?;
-    assert_eq!(jailed_info.status, "jailed");
+    assert_eq!(jailed_info.status, ValidatorStatus::Jailed);
     let missed_at_jail = jailed_info.missed_blocks;
     eprintln!("[phase 1] validator-3 jailed with missed_blocks={missed_at_jail}");
 
@@ -589,7 +581,8 @@ async fn test_jailed_validator_unjails_on_recovery() -> color_eyre::Result<()> {
             || color_eyre::eyre::eyre!("validator-3 missing from /validators after unjail"),
         )?;
     assert_eq!(
-        recovered_info.status, "active",
+        recovered_info.status,
+        ValidatorStatus::Active,
         "validator-3 should be Active after uptime recovery, got {:?}",
         recovered_info.status
     );
@@ -754,7 +747,7 @@ async fn test_jailed_validator_uptime_still_tracked() -> color_eyre::Result<()> 
 
     let genesis_validators = read_genesis_validator_pubkeys(&network)?;
     let target_pubkey: Vec<u8> = genesis_validators[3].public_key.as_bytes().to_vec();
-    let target_identity = hex::encode(&target_pubkey);
+    let target_identity = genesis_validators[3].public_key.to_string();
 
     poll_until_async(
         consensus_propagation_wait(),
@@ -789,7 +782,7 @@ async fn test_jailed_validator_uptime_still_tracked() -> color_eyre::Result<()> 
                 "validator-3 should be visible via /validators/{target_identity} while jailed"
             )
         })?;
-    assert_eq!(initial.status, "jailed");
+    assert_eq!(initial.status, ValidatorStatus::Jailed);
     let missed_at_jail = initial.missed_blocks;
     let height_at_jail = rpc_client.latest_block().await?.block.header.height.value();
     eprintln!(
@@ -821,7 +814,8 @@ async fn test_jailed_validator_uptime_still_tracked() -> color_eyre::Result<()> 
             )
         })?;
     assert_eq!(
-        later.status, "jailed",
+        later.status,
+        ValidatorStatus::Jailed,
         "validator-3 should still be jailed; it never restarted"
     );
     assert_eq!(

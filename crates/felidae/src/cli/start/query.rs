@@ -5,7 +5,7 @@ use color_eyre::{Report, eyre::eyre};
 use felidae_state::Vote;
 use felidae_state::{State, Substore};
 use felidae_types::response::{
-    AdminVote, ChainInfo, OracleVote, PendingConfig, PendingObservation,
+    AdminVote, ChainInfo, OracleInfo, OracleVote, PendingConfig, PendingObservation,
 };
 use felidae_types::transaction::{Domain, Empty};
 use fqdn::FQDN;
@@ -276,17 +276,12 @@ pub fn app(storage: Storage) -> Router {
                     Body::from(e.to_string()),
                 ),
                 Ok(config) => {
-                    #[derive(Serialize)]
-                    struct OracleInfo {
-                        identity: String,
-                        endpoint: url::Url,
-                    }
                     let oracles: Vec<OracleInfo> = config
                         .oracles
                         .authorized
                         .into_iter()
                         .map(|oracle| OracleInfo {
-                            identity: oracle.identity.to_string(),
+                            identity: oracle.identity,
                             endpoint: oracle.endpoint,
                         })
                         .collect();
@@ -479,7 +474,8 @@ pub fn app(storage: Storage) -> Router {
                 if let Some(ref id) = filtered {
                     let needle = id.trim_start_matches("0x").to_ascii_lowercase();
                     all.retain(|v| {
-                        v.identity.starts_with(&needle) || v.address.starts_with(&needle)
+                        v.identity.to_string().starts_with(&needle)
+                            || hex::encode(v.address.as_bytes()).starts_with(&needle)
                     });
                 }
                 Ok::<_, Report>(all)

@@ -44,7 +44,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         // promotion) surfaces the error to the submitting admin via CheckTx.
         for (i, validator) in config.validators.iter().enumerate() {
             if self.validator_status(&validator.public_key).await?
-                == Some(super::validator::ValidatorStatus::Tombstoned)
+                == Some(ValidatorStatus::Tombstoned)
             {
                 bail!(
                     "validator at index {} ({}) is tombstoned and can never be re-added",
