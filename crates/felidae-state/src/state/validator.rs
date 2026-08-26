@@ -4,48 +4,6 @@ use bitvec::prelude::*;
 
 use super::*;
 
-/// The status of a validator.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ValidatorStatus {
-    /// Validator is active and participating in consensus.
-    Active,
-    /// Validator was removed from the `Config` by admins.
-    Inactive,
-    /// Validator was temporarily removed for excessive downtime.
-    Jailed,
-    /// Validator was permanently banned for equivocation (double-signing).
-    Tombstoned,
-}
-
-impl From<ValidatorStatus> for u32 {
-    fn from(status: ValidatorStatus) -> Self {
-        match status {
-            ValidatorStatus::Active => 0,
-            ValidatorStatus::Inactive => 1,
-            ValidatorStatus::Jailed => 2,
-            ValidatorStatus::Tombstoned => 3,
-        }
-    }
-}
-
-impl TryFrom<u32> for ValidatorStatus {
-    type Error = Report;
-
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(ValidatorStatus::Active),
-            1 => Ok(ValidatorStatus::Inactive),
-            2 => Ok(ValidatorStatus::Jailed),
-            3 => Ok(ValidatorStatus::Tombstoned),
-            _ => bail!("unknown validator status: {}", value),
-        }
-    }
-}
-
-impl felidae_proto::DomainType for ValidatorStatus {
-    type Proto = u32;
-}
-
 /// Sliding-window uptime tracker for a validator.
 ///
 /// Stored at `current/validator_uptime/{pub_key_hex}`. Uses a bitvec ring buffer where
@@ -335,13 +293,10 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         let mut result = Vec::new();
         for (key, power) in self.validator_powers().await? {
             let status = match self.validator_status(&key).await? {
-                Some(ValidatorStatus::Active) => "active",
-                Some(ValidatorStatus::Inactive) => "inactive",
-                Some(ValidatorStatus::Jailed) => "jailed",
-                Some(ValidatorStatus::Tombstoned) => "tombstoned",
+                Some(status) => status,
                 // Predates status tracking — treat as active when it still has power.
-                None if power.value() > 0 => "active",
-                None => "inactive",
+                None if power.value() > 0 => ValidatorStatus::Active,
+                None => ValidatorStatus::Inactive,
             };
 
             let uptime: Option<Uptime> = self.store.get(Internal, &uptime_key(&key)).await?;
@@ -351,10 +306,10 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             };
 
             result.push(felidae_types::response::ValidatorInfo {
-                identity: key.to_string(),
-                address: hex::encode(key.address().as_bytes()),
+                identity: key,
+                address: key.address(),
                 power: power.value(),
-                status: status.to_string(),
+                status,
                 missed_blocks,
                 uptime_window,
                 missed_blocks_max: validator_config.missed_blocks_max,
