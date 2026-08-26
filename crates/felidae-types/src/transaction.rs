@@ -270,39 +270,122 @@ impl<'de> Deserialize<'de> for Identity {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Validator {
     /// Ed25519 consensus public key; hex string in JSON, parsed at construction.
-    #[serde(with = "ed25519_hex")]
-    pub public_key: tendermint::PublicKey,
+    pub public_key: ValidatorKey,
 }
 
-impl Hash for Validator {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.public_key.to_bytes().hash(state);
+/// An Ed25519 consensus public key identifying a validator.
+///
+/// The one home for every encoding of the key: lowercase hex on the wire
+/// (config JSON, query API) and in state keys, the raw 32 bytes in protobuf,
+/// and the CometBFT address (`SHA-256(key)[..20]`) via [`ValidatorKey::address`].
+/// Only the length is checked, exactly as CometBFT does; `[0u8; 32]` remains
+/// representable so config validation can reject it as a placeholder.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct ValidatorKey(tendermint::public_key::Ed25519);
+
+impl ValidatorKey {
+    /// Parse a key from its raw 32-byte encoding.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::ParseError> {
+        tendermint::public_key::Ed25519::try_from(bytes)
+            .map(ValidatorKey)
+            .map_err(|_| {
+                crate::ParseError::new::<ValidatorKey>(format!(
+                    "invalid ed25519 public key (expected 32 bytes): {}",
+                    hex::encode(bytes)
+                ))
+            })
+    }
+
+    /// The raw 32-byte encoding.
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+
+    /// The CometBFT validator address: the first 20 bytes of the SHA-256 of the key.
+    ///
+    /// This is how CometBFT refers to validators in commit votes and misbehavior
+    /// evidence, so it is the join key between ABCI requests and our state.
+    pub fn address(&self) -> tendermint::account::Id {
+        tendermint::account::Id::from(self.0)
     }
 }
 
-/// Serde adapter keeping the operator-facing JSON shape a bare hex string
-/// (tendermint::PublicKey's native serde is a tagged enum, which we do not want).
-mod ed25519_hex {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S: Serializer>(
-        key: &tendermint::PublicKey,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&hex::encode(key.to_bytes()))
+impl From<ValidatorKey> for tendermint::PublicKey {
+    fn from(key: ValidatorKey) -> Self {
+        tendermint::PublicKey::Ed25519(key.0)
     }
+}
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<tendermint::PublicKey, D::Error> {
-        let s = String::deserialize(deserializer)?;
-        let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
-        tendermint::PublicKey::from_raw_ed25519(&bytes).ok_or_else(|| {
-            serde::de::Error::custom("invalid ed25519 public key (expected 32 bytes)")
+impl TryFrom<tendermint::PublicKey> for ValidatorKey {
+    type Error = crate::ParseError;
+
+    /// Rejects any non-Ed25519 key. The `tendermint` crate's `secp256k1` feature
+    /// is off in this workspace, so this cannot currently fail, but cargo
+    /// features unify across the dependency graph: this is the fence that keeps
+    /// a non-Ed25519 consensus key out of state should that ever change.
+    fn try_from(key: tendermint::PublicKey) -> Result<Self, Self::Error> {
+        key.ed25519().map(ValidatorKey).ok_or_else(|| {
+            crate::ParseError::new::<ValidatorKey>(format!(
+                "not an ed25519 public key: {}",
+                hex::encode(key.to_bytes())
+            ))
         })
+    }
+}
+
+impl PartialOrd for ValidatorKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ValidatorKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_bytes().cmp(other.as_bytes())
+    }
+}
+
+impl Hash for ValidatorKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.as_bytes().hash(state);
+    }
+}
+
+impl Display for ValidatorKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(self.as_bytes()))
+    }
+}
+
+impl Debug for ValidatorKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ValidatorKey({self})")
+    }
+}
+
+impl FromStr for ValidatorKey {
+    type Err = crate::ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = hex::decode(s)
+            .map_err(|_| crate::ParseError::new::<ValidatorKey>(format!("invalid hex: {s}")))?;
+        Self::from_bytes(&bytes)
+    }
+}
+
+impl Serialize for ValidatorKey {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for ValidatorKey {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
     }
 }
 
@@ -596,12 +679,15 @@ mod tests {
 
     #[test]
     fn validator_serde_hex_round_trip() {
-        let key = tendermint::PublicKey::from_raw_ed25519(&[2u8; 32]).unwrap();
+        let key = ValidatorKey::from_bytes(&[2u8; 32]).unwrap();
         let validator = Validator { public_key: key };
         let json = serde_json::to_string(&validator).unwrap();
         // Operator-facing shape must stay a bare hex string, not tendermint's tagged enum.
         assert_eq!(json, format!(r#"{{"public_key":"{}"}}"#, "02".repeat(32)));
         assert_eq!(serde_json::from_str::<Validator>(&json).unwrap(), validator);
+        // Display and FromStr agree with the JSON shape (they back the state keys).
+        assert_eq!(key.to_string(), "02".repeat(32));
+        assert_eq!(key.to_string().parse::<ValidatorKey>().unwrap(), key);
     }
 
     #[test]
@@ -613,13 +699,33 @@ mod tests {
         ] {
             assert!(serde_json::from_str::<Validator>(&bad).is_err());
         }
+        assert!(ValidatorKey::from_bytes(&[2u8; 31]).is_err());
+        assert!(ValidatorKey::from_bytes(&[2u8; 33]).is_err());
     }
 
     #[test]
     fn all_zeros_placeholder_key_still_parses() {
         // check_config's placeholder rejection relies on 32 zero bytes being representable;
-        // pin that from_raw_ed25519 is length-only validation.
-        assert!(tendermint::PublicKey::from_raw_ed25519(&[0u8; 32]).is_some());
+        // pin that ValidatorKey is length-only validation.
+        assert!(ValidatorKey::from_bytes(&[0u8; 32]).is_ok());
+    }
+
+    #[test]
+    fn validator_key_address_is_sha256_prefix() {
+        // The CometBFT address convention, pinned so state code can lean on
+        // `address()` instead of hand-rolling the hash.
+        use sha2::{Digest, Sha256};
+        let key = ValidatorKey::from_bytes(&[7u8; 32]).unwrap();
+        let expected = &Sha256::digest(key.as_bytes())[..20];
+        assert_eq!(key.address().as_bytes(), expected);
+    }
+
+    #[test]
+    fn validator_key_tendermint_round_trip() {
+        let key = ValidatorKey::from_bytes(&[3u8; 32]).unwrap();
+        let tm = tendermint::PublicKey::from(key);
+        assert_eq!(tm.to_bytes(), key.as_bytes());
+        assert_eq!(ValidatorKey::try_from(tm).unwrap(), key);
     }
 
     #[test]

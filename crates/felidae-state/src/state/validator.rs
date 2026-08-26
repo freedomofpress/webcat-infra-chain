@@ -466,7 +466,10 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         // parsed at the proto -> domain boundary, so no validation is needed here.
         let mut config_validators_map = BTreeMap::new();
         for validator in config_validators {
-            config_validators_map.insert(validator.public_key.to_bytes(), validator.public_key);
+            config_validators_map.insert(
+                validator.public_key.as_bytes().to_vec(),
+                tendermint::PublicKey::from(validator.public_key),
+            );
         }
 
         let mut updates: Vec<Update> = Vec::new();
@@ -888,7 +891,7 @@ mod tests {
         let listing_config = || {
             let mut config = valid_config();
             config.validators = vec![felidae_types::transaction::Validator {
-                public_key: pub_key,
+                public_key: pub_key.try_into().expect("ed25519 key"),
             }];
             config
         };
@@ -1083,7 +1086,7 @@ mod tests {
         let other_key =
             tendermint::PublicKey::from_raw_ed25519(&[2u8; 32]).expect("valid ed25519 key");
         let other_validator = felidae_types::transaction::Validator {
-            public_key: other_key,
+            public_key: other_key.try_into().expect("ed25519 key"),
         };
 
         let mut state = store.state.write().await;
@@ -1140,7 +1143,7 @@ mod tests {
         let other_key =
             tendermint::PublicKey::from_raw_ed25519(&[2u8; 32]).expect("valid ed25519 key");
         let other_validator = felidae_types::transaction::Validator {
-            public_key: other_key,
+            public_key: other_key.try_into().expect("ed25519 key"),
         };
 
         let mut state = store.state.write().await;
@@ -1238,10 +1241,10 @@ mod tests {
         let other_key =
             tendermint::PublicKey::from_raw_ed25519(&[2u8; 32]).expect("valid ed25519 key");
         let our_validator = felidae_types::transaction::Validator {
-            public_key: pub_key,
+            public_key: pub_key.try_into().expect("ed25519 key"),
         };
         let other_validator = felidae_types::transaction::Validator {
-            public_key: other_key,
+            public_key: other_key.try_into().expect("ed25519 key"),
         };
 
         let mut state = store.state.write().await;
@@ -1342,7 +1345,7 @@ mod tests {
         let other_key =
             tendermint::PublicKey::from_raw_ed25519(&[2u8; 32]).expect("valid ed25519 key");
         let other_validator = felidae_types::transaction::Validator {
-            public_key: other_key,
+            public_key: other_key.try_into().expect("ed25519 key"),
         };
 
         let mut state = store.state.write().await;
@@ -1400,10 +1403,10 @@ mod tests {
         let other_key =
             tendermint::PublicKey::from_raw_ed25519(&[2u8; 32]).expect("valid ed25519 key");
         let our_validator = felidae_types::transaction::Validator {
-            public_key: pub_key,
+            public_key: pub_key.try_into().expect("ed25519 key"),
         };
         let other_validator = felidae_types::transaction::Validator {
-            public_key: other_key,
+            public_key: other_key.try_into().expect("ed25519 key"),
         };
 
         let mut state = store.state.write().await;
@@ -1759,7 +1762,7 @@ mod tests {
         });
         new_config.version = 2;
         new_config.validators = vec![felidae_types::transaction::Validator {
-            public_key: other_key,
+            public_key: other_key.try_into().expect("ed25519 key"),
         }];
         state
             .admin_voting()
