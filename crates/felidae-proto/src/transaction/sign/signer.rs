@@ -39,10 +39,14 @@ impl KeyPair {
         Self { signing_key }
     }
 
-    /// Get the public key corresponding to this keypair.
+    /// The P-256 verifying key of this keypair.
+    pub fn verifying_key(&self) -> &VerifyingKey {
+        self.signing_key.verifying_key()
+    }
+
+    /// The public key as carried on the wire: SEC1 uncompressed encoding.
     pub fn public_key(&self) -> Vec<u8> {
-        self.signing_key
-            .verifying_key()
+        self.verifying_key()
             .to_encoded_point(false)
             .as_bytes()
             .to_vec()

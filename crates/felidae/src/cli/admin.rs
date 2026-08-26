@@ -67,8 +67,10 @@ pub struct Identity {
 impl Run for Identity {
     async fn run(self) -> Result<(), color_eyre::Report> {
         let keypair = keypair(self.homedir.as_deref()).await?;
-        let public_key = keypair.public_key();
-        println!("{}", hex::encode(public_key));
+        println!(
+            "{}",
+            felidae_types::transaction::Identity::from_keypair(&keypair)
+        );
 
         Ok(())
     }
@@ -197,7 +199,7 @@ pub struct Template {
 
 impl Run for Template {
     async fn run(self) -> Result<(), color_eyre::Report> {
-        use felidae_types::transaction::{Admin, Identity, Oracle};
+        use felidae_types::transaction::{Admin, Oracle};
 
         let mut template = felidae_types::transaction::Config::template(0);
 
@@ -221,12 +223,9 @@ impl Run for Template {
 
         // Load admin public key if path is available
         if let Some(path) = admin_keypath {
-            match load_pubkey_from_keypair(&path).await {
-                Ok(pubkey) => {
-                    template.admins.authorized = vec![Admin {
-                        identity: Identity::from_sec1_bytes(&pubkey)
-                            .expect("keypair-derived public key is a valid P-256 point"),
-                    }];
+            match load_identity_from_keypair(&path).await {
+                Ok(identity) => {
+                    template.admins.authorized = vec![Admin { identity }];
                 }
                 Err(e) => {
                     eprintln!(
@@ -240,11 +239,10 @@ impl Run for Template {
 
         // Load oracle public key if path is available
         if let Some(path) = oracle_keypath_result {
-            match load_pubkey_from_keypair(&path).await {
-                Ok(pubkey) => {
+            match load_identity_from_keypair(&path).await {
+                Ok(identity) => {
                     template.oracles.authorized = vec![Oracle {
-                        identity: Identity::from_sec1_bytes(&pubkey)
-                            .expect("keypair-derived public key is a valid P-256 point"),
+                        identity,
                         endpoint: url::Url::parse("http://127.0.0.1:8081")
                             .expect("valid oracle endpoint URL"),
                     }];
@@ -313,8 +311,10 @@ async fn oracle_keypath(
     Ok(keypath)
 }
 
-/// Load a public key from a keypair file at the given path.
-async fn load_pubkey_from_keypair(path: &std::path::Path) -> color_eyre::Result<Vec<u8>> {
+/// Load the identity of the keypair file at the given path.
+async fn load_identity_from_keypair(
+    path: &std::path::Path,
+) -> color_eyre::Result<felidae_types::transaction::Identity> {
     let keyhex = tokio::fs::read_to_string(path)
         .await
         .map_err(|_| color_eyre::eyre::eyre!("could not read keypair at: {}", path.display()))?;
@@ -323,5 +323,5 @@ async fn load_pubkey_from_keypair(path: &std::path::Path) -> color_eyre::Result<
     })?;
     let keypair = KeyPair::decode(&keybytes)
         .map_err(|_| color_eyre::eyre::eyre!("could not parse keypair at: {}", path.display()))?;
-    Ok(keypair.public_key())
+    Ok(felidae_types::transaction::Identity::from_keypair(&keypair))
 }

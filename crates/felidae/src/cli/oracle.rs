@@ -74,8 +74,10 @@ pub struct Identity {
 impl Run for Identity {
     async fn run(self) -> Result<(), color_eyre::Report> {
         let keypair = keypair(self.homedir.as_deref()).await?;
-        let public_key = keypair.public_key();
-        println!("{}", hex::encode(public_key));
+        println!(
+            "{}",
+            felidae_types::transaction::Identity::from_keypair(&keypair)
+        );
 
         Ok(())
     }

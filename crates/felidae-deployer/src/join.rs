@@ -140,7 +140,7 @@ pub async fn join_network(config: JoinConfig) -> Result<WebcatNode> {
     // wrangling — the pubkey is discoverable at `priv_validator_key_path()`.
     // Without this, CometBFT would auto-generate the key at first start,
     // forcing callers to either race the daemon or restart the node.
-    let (priv_validator_key_json, _pub_key) = crate::network::generate_priv_validator_key()?;
+    let priv_validator_key_json = crate::network::generate_priv_validator_key()?;
     fs::write(node.priv_validator_key_path(), priv_validator_key_json)
         .wrap_err("failed to write priv_validator_key.json")?;
 
