@@ -38,7 +38,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 | BlockSignatureInfo::LegacySigned => true,
             };
             if voted {
-                voting_validators.insert(validator.address);
+                voting_validators.insert(tendermint::account::Id::new(validator.address));
             }
         }
         self.mark_validators_voted(height.value(), voting_validators)

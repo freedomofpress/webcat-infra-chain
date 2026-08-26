@@ -43,7 +43,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         // mistake. Rejecting here (rather than silently dropping it at
         // promotion) surfaces the error to the submitting admin via CheckTx.
         for (i, validator) in config.validators.iter().enumerate() {
-            if self.validator_status(&validator.public_key.into()).await?
+            if self.validator_status(&validator.public_key).await?
                 == Some(super::validator::ValidatorStatus::Tombstoned)
             {
                 bail!(
