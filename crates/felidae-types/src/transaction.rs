@@ -1,6 +1,5 @@
 use felidae_proto::domain_types;
 use felidae_proto::transaction::{self as proto};
-use prost::bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, hex::Hex, serde_as};
 use std::fmt::{Debug, Display};
@@ -63,12 +62,14 @@ pub struct Transaction {
 #[serde(transparent)]
 pub struct ChainId(pub String);
 
-#[serde_as]
+/// The signer slot of a transaction action, with the signature stripped.
+///
+/// Signatures live only in the protobuf layer; this is what remains once one has
+/// been verified: the (already-parsed) identity that signed.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Unsigned {
-    #[serde_as(as = "Hex")]
-    pub public_key: Bytes,
+    pub identity: Identity,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
