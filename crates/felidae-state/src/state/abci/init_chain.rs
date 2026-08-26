@@ -71,7 +71,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             let config_keys: BTreeMap<Vec<u8>, ()> = config
                 .validators
                 .iter()
-                .map(|v| (v.public_key.to_bytes(), ()))
+                .map(|v| (v.public_key.as_bytes().to_vec(), ()))
                 .collect();
 
             if genesis_keys.len() != config_keys.len() {
@@ -137,7 +137,7 @@ mod tests {
 
     use felidae_types::transaction::{
         Admin, AdminConfig, Delay, Identity, OnionConfig, Oracle, OracleConfig, Quorum, Timeout,
-        Total, Validator, ValidatorConfig, VotingConfig,
+        Total, Validator, ValidatorConfig, ValidatorKey, VotingConfig,
     };
     use tempfile::TempDir;
 
@@ -312,8 +312,7 @@ mod tests {
         // (remainder by zero in the uptime ring buffer).
         let mut config = genesis_config();
         config.validators = vec![Validator {
-            public_key: tendermint::PublicKey::from_raw_ed25519(&[1u8; 32])
-                .expect("valid ed25519 key"),
+            public_key: ValidatorKey::from_bytes(&[1u8; 32]).expect("valid ed25519 key"),
         }];
         config.validator_config.uptime_window = 0;
         // Note: config.validators requires matching genesis validators, but
