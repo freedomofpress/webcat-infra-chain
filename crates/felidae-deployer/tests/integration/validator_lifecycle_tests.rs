@@ -20,7 +20,7 @@ use crate::constants::{
 use crate::harness::TestNetwork;
 use crate::helpers::{
     poll_until, poll_until_async, query_cometbft_validators, query_config, query_validator_info,
-    read_genesis_validator_pubkeys, submit_admin_reconfig,
+    read_genesis_validator_pubkeys, submit_admin_reconfig, wait_reconfig_applied,
 };
 
 /// Tight `ValidatorConfig` tuned for downtime tests: a 30-block uptime
@@ -169,18 +169,19 @@ async fn test_readd_removed_validator_resumes_signing() -> color_eyre::Result<()
     submit_admin_reconfig(&network, &rpc_client, phase1_config).await?;
 
     let phase1_target_version = initial_config.version + 1;
-    poll_until(
-        consensus_propagation_wait_long(),
-        poll_interval(),
+    let config_after_seed = wait_reconfig_applied(
+        &felidae_bin,
+        &network.query_url(),
+        &rpc_client,
+        phase1_target_version,
         "phase 1: seed reconfig applied",
-        || {
-            let cfg = query_config(&felidae_bin, &network.query_url())?;
-            Ok(cfg.version >= phase1_target_version && cfg.validators.len() == 3)
-        },
     )
     .await?;
-    let config_after_seed = query_config(&felidae_bin, &network.query_url())?;
-    assert_eq!(config_after_seed.validators.len(), 3);
+    assert_eq!(
+        config_after_seed.validators.len(),
+        3,
+        "seeded config should list the 3 genesis validators"
+    );
 
     // The seed is a no-op at the consensus layer — all 3 still active.
     let cometbft_after_seed = query_cometbft_validators(&rpc_client).await?;
@@ -200,16 +201,19 @@ async fn test_readd_removed_validator_resumes_signing() -> color_eyre::Result<()
     submit_admin_reconfig(&network, &rpc_client, phase2_config).await?;
 
     let phase2_target_version = config_after_seed.version + 1;
-    poll_until(
-        consensus_propagation_wait_long(),
-        poll_interval(),
+    let config_after_remove = wait_reconfig_applied(
+        &felidae_bin,
+        &network.query_url(),
+        &rpc_client,
+        phase2_target_version,
         "phase 2: removal reconfig applied in felidae config",
-        || {
-            let cfg = query_config(&felidae_bin, &network.query_url())?;
-            Ok(cfg.version >= phase2_target_version && cfg.validators.len() == 2)
-        },
     )
     .await?;
+    assert_eq!(
+        config_after_remove.validators.len(),
+        2,
+        "config should list only the 2 remaining validators after removal"
+    );
 
     // CometBFT should drop validator-2 from its active set.
     poll_until_async(
@@ -259,7 +263,6 @@ async fn test_readd_removed_validator_resumes_signing() -> color_eyre::Result<()
     );
 
     // ── Phase 3: Re-add validator-2 ────────────────────────────────────────
-    let config_after_remove = query_config(&felidae_bin, &network.query_url())?;
     let phase3_config = Config {
         version: config_after_remove.version + 1,
         admins: config_after_remove.admins.clone(),
@@ -272,16 +275,19 @@ async fn test_readd_removed_validator_resumes_signing() -> color_eyre::Result<()
     submit_admin_reconfig(&network, &rpc_client, phase3_config).await?;
 
     let phase3_target_version = config_after_remove.version + 1;
-    poll_until(
-        consensus_propagation_wait_long(),
-        poll_interval(),
+    let config_after_readd = wait_reconfig_applied(
+        &felidae_bin,
+        &network.query_url(),
+        &rpc_client,
+        phase3_target_version,
         "phase 3: re-add reconfig applied in felidae config",
-        || {
-            let cfg = query_config(&felidae_bin, &network.query_url())?;
-            Ok(cfg.version >= phase3_target_version && cfg.validators.len() == 3)
-        },
     )
     .await?;
+    assert_eq!(
+        config_after_readd.validators.len(),
+        3,
+        "config should list all 3 validators again after re-add"
+    );
 
     poll_until_async(
         consensus_propagation_wait_long(),
