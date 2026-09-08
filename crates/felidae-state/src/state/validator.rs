@@ -514,6 +514,12 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             let Some(status) = self.validator_status(&key).await? else {
                 continue;
             };
+            // Only Active and Jailed validators transition on uptime,
+            // so we can skip state reads for other validator states.
+            match status {
+                ValidatorStatus::Inactive | ValidatorStatus::Tombstoned => continue,
+                ValidatorStatus::Active | ValidatorStatus::Jailed => {}
+            }
             let uptime: Option<Uptime> = self.store.get(Internal, &uptime_key(&key)).await?;
             let Some(uptime) = uptime else {
                 continue;
@@ -551,10 +557,9 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                         power: Power::from(BASE_VALIDATOR_POWER),
                     });
                 }
-                ValidatorStatus::Active
-                | ValidatorStatus::Jailed
-                | ValidatorStatus::Inactive
-                | ValidatorStatus::Tombstoned => {}
+                // Within thresholds — no transition. (Inactive and Tombstoned
+                // were skipped above.)
+                _ => {}
             }
         }
 
