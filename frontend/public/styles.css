@@ -94,6 +94,50 @@ header h1 {
     font-weight: 400;
 }
 
+a {
+    color: var(--color-primary);
+}
+
+code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    overflow-wrap: anywhere;
+}
+
+/* Enrollment steps */
+.steps {
+    list-style: none;
+    counter-reset: step;
+    margin-bottom: var(--spacing-xl);
+}
+
+.steps li {
+    counter-increment: step;
+    position: relative;
+    padding-left: 3rem;
+    margin-bottom: var(--spacing-md);
+}
+
+.steps li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 2rem;
+    height: 2rem;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background-color: var(--color-primary);
+    color: #ffffff;
+    font-weight: 700;
+}
+
+.steps h3 {
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    line-height: 2rem;
+}
+
 main {
     padding: var(--spacing-xl) var(--spacing-md);
 }
@@ -251,6 +295,7 @@ input[type="text"]:focus-visible {
     border: 1px solid var(--color-border);
 }
 
+main h2,
 .results h2 {
     margin-bottom: var(--spacing-md);
     color: var(--color-text);

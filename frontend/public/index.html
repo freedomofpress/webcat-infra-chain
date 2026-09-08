@@ -16,6 +16,44 @@
         </header>
 
         <main>
+            <section aria-labelledby="stepsHeading">
+                <h2 id="stepsHeading">Before you enroll</h2>
+                <ol class="steps">
+                    <li>
+                        <h3>Make your application WEBCAT-compliant</h3>
+                        <p class="help-text">
+                            Your site needs a signed manifest and WEBCAT-compatible headers before it can be enrolled.
+                            See the <a href="https://docs.webcat.tech/" rel="noopener">documentation</a> for how to do
+                            this.
+                        </p>
+                    </li>
+                    <li>
+                        <h3>Publish your enrollment file</h3>
+                        <p class="help-text">
+                            Serve your enrollment policy over HTTPS at this path:
+                            <code>https://example.com/.well-known/webcat/enrollment.json</code>
+                        </p>
+                        <p class="help-text">
+                            Every observation oracle fetches this URL directly, so it must be reachable from the public
+                            internet before you submit.
+                        </p>
+                    </li>
+                    <li>
+                        <h3>Submit your domain below</h3>
+                        <p class="help-text">
+                            Your browser solves a short proof-of-work challenge for each observation oracle, then sends
+                            the request.
+                            Keep this tab open until the results appear.
+                        </p>
+                    </li>
+                </ol>
+                <p class="status-message info">
+                    <strong>After you submit:</strong> the oracles observe your domain and vote. Once
+                    they agree, your enrollment waits out a delay period before it lands in the canonical
+                    list, so it will not take effect immediately.
+                </p>
+            </section>
+
             <form id="enrollmentForm">
                 <div class="form-group">
                     <label for="domain">Domain *</label>
