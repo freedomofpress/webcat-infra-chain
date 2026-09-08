@@ -94,6 +94,13 @@ header h1 {
     font-weight: 400;
 }
 
+.subtitle_left {
+    font-size: var(--font-size-lg);
+    color: var(--color-text-light);
+    font-weight: 400;
+    text-align: left;
+}
+
 main {
     padding: var(--spacing-xl) var(--spacing-md);
 }
