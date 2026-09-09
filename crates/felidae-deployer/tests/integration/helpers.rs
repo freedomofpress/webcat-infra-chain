@@ -376,7 +376,7 @@ pub fn read_priv_validator_pubkey(path: &std::path::Path) -> color_eyre::Result<
 pub fn read_genesis_validator_pubkeys(
     network: &crate::harness::TestNetwork,
 ) -> color_eyre::Result<Vec<felidae_types::transaction::Validator>> {
-    use color_eyre::eyre::OptionExt;
+    use color_eyre::eyre::WrapErr;
 
     let mut validators = Vec::new();
     for node in network
@@ -386,8 +386,8 @@ pub fn read_genesis_validator_pubkeys(
         .filter(|n| n.role.is_validator())
     {
         let pub_key_bytes = read_priv_validator_pubkey(&node.priv_validator_key_path())?;
-        let public_key = tendermint::PublicKey::from_raw_ed25519(&pub_key_bytes)
-            .ok_or_eyre("invalid ed25519 public key in priv_validator_key.json")?;
+        let public_key = felidae_types::transaction::ValidatorKey::from_bytes(&pub_key_bytes)
+            .wrap_err("invalid ed25519 public key in priv_validator_key.json")?;
         validators.push(felidae_types::transaction::Validator { public_key });
     }
     Ok(validators)
@@ -461,9 +461,79 @@ pub async fn submit_admin_reconfig(
             "[reconfig] admin {i}: code={:?}, log={}",
             result.code, result.log
         );
+        // A vote rejected at CheckTx silently starves the quorum (unanimous
+        // at n=3): fail here with the offending admin and log, rather than
+        // letting the caller's poll time out with no attribution.
+        if !result.code.is_ok() {
+            return Err(color_eyre::eyre::eyre!(
+                "admin {i} reconfig vote rejected at CheckTx: {}",
+                result.log
+            ));
+        }
         tokio::time::sleep(crate::constants::inter_tx_delay()).await;
     }
     Ok(())
+}
+
+/// Waits for an admin reconfiguration to reach quorum and apply, returning
+/// the applied config for content assertions.
+///
+/// Provides informative error messages about the specific failure
+/// that caused an admin reconfigure timeout, for debugging test harnesses.
+pub async fn wait_reconfig_applied(
+    felidae_bin: &std::path::Path,
+    query_url: &str,
+    rpc_client: &HttpClient,
+    target_version: u32,
+    description: &str,
+) -> color_eyre::Result<Config> {
+    // Quorum + promotion needs ~3 blocks once votes hit the mempool; 15 is
+    // deep headroom that still fails fast when the pipeline is broken.
+    const BLOCK_BUDGET: u64 = 15;
+    let hard_cap = 4 * crate::constants::consensus_propagation_wait_long();
+
+    let start = std::time::Instant::now();
+    let start_height = rpc_client.latest_block().await?.block.header.height.value();
+    loop {
+        match query_config(felidae_bin, query_url) {
+            Ok(cfg) if cfg.version >= target_version => return Ok(cfg),
+            Ok(_) => {}
+            Err(e) => eprintln!("[wait_reconfig_applied] {description}: error (retrying): {e}"),
+        }
+
+        let height = match rpc_client.latest_block().await {
+            Ok(block) => block.block.header.height.value(),
+            Err(e) => {
+                eprintln!("[wait_reconfig_applied] {description}: height error (retrying): {e}");
+                start_height
+            }
+        };
+        if height.saturating_sub(start_height) >= BLOCK_BUDGET || start.elapsed() >= hard_cap {
+            let current = query_config(felidae_bin, query_url)
+                .map(|c| c.version.to_string())
+                .unwrap_or_else(|e| format!("<query failed: {e}>"));
+            let votes = query_admin_votes(felidae_bin, query_url)
+                .map(|votes| {
+                    let versions: Vec<u32> = votes.iter().map(|vote| vote.config.version).collect();
+                    format!(
+                        "{} live vote(s) proposing version(s) {versions:?}",
+                        votes.len()
+                    )
+                })
+                .unwrap_or_else(|e| format!("<vote query failed: {e}>"));
+            let pending = query_admin_pending(felidae_bin, query_url)
+                .map(|p| format!("{} pending change(s)", p.len()))
+                .unwrap_or_else(|e| format!("<pending query failed: {e}>"));
+            return Err(color_eyre::eyre::eyre!(
+                "{description}: config version {target_version} not applied within \
+                 {} blocks / {:.1?} (height {start_height} → {height}); \
+                 current version: {current}; admin queue: {votes}; {pending}",
+                height.saturating_sub(start_height),
+                start.elapsed(),
+            ));
+        }
+        tokio::time::sleep(crate::constants::poll_interval()).await;
+    }
 }
 
 /// Queries every validator the chain knows about via `felidae query validators

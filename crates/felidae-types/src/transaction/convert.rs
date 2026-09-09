@@ -109,21 +109,21 @@ impl TryFrom<proto::Signature> for Unsigned {
 
     fn try_from(value: proto::Signature) -> Result<Self, Self::Error> {
         Ok(Unsigned {
-            public_key: value.public_key,
+            identity: Identity::from_sec1_bytes(&value.public_key)?,
         })
     }
 }
 
 impl From<Unsigned> for proto::Signature {
     fn from(unsigned: Unsigned) -> Self {
-        proto::Signature::unsigned(unsigned.public_key)
+        proto::Signature::unsigned(unsigned.identity.to_bytes().into())
     }
 }
 
 impl From<KeyPair> for Unsigned {
     fn from(value: KeyPair) -> Self {
         Unsigned {
-            public_key: value.public_key().into(),
+            identity: Identity::from_keypair(&value),
         }
     }
 }
@@ -171,7 +171,7 @@ impl TryFrom<proto::action::Reconfigure> for Reconfigure {
         let admin: Admin = signature
             .map(Unsigned::try_from)
             .ok_or_else(|| crate::ParseError::new::<Admin>("missing".to_string()))??
-            .try_into()?;
+            .into();
 
         let config = config
             .map(TryInto::try_into)
@@ -222,10 +222,10 @@ impl TryFrom<proto::action::Observe> for Observe {
             observation,
         } = value;
 
-        let oracle = signature
+        let oracle: OracleIdentity = signature
             .map(Unsigned::try_from)
             .ok_or_else(|| crate::ParseError::new::<OracleIdentity>("missing".to_string()))??
-            .try_into()?;
+            .into();
 
         let observation = observation
             .map(TryInto::try_into)
@@ -622,13 +622,9 @@ impl TryFrom<proto::Admin> for Admin {
     }
 }
 
-impl TryFrom<Unsigned> for Admin {
-    type Error = crate::ParseError;
-
-    fn try_from(value: Unsigned) -> Result<Self, Self::Error> {
-        Ok(Admin {
-            identity: Identity::from_sec1_bytes(&value.public_key)?,
-        })
+impl From<Unsigned> for Admin {
+    fn from(Unsigned { identity }: Unsigned) -> Self {
+        Admin { identity }
     }
 }
 
@@ -644,21 +640,16 @@ impl TryFrom<proto::Validator> for Validator {
     type Error = crate::ParseError;
 
     fn try_from(value: proto::Validator) -> Result<Self, Self::Error> {
-        let public_key =
-            tendermint::PublicKey::from_raw_ed25519(&value.public_key).ok_or_else(|| {
-                crate::ParseError::new::<Validator>(format!(
-                    "invalid ed25519 public key: {}",
-                    hex::encode(&value.public_key)
-                ))
-            })?;
-        Ok(Validator { public_key })
+        Ok(Validator {
+            public_key: ValidatorKey::from_bytes(&value.public_key)?,
+        })
     }
 }
 
 impl From<Validator> for proto::Validator {
     fn from(validator: Validator) -> Self {
         proto::Validator {
-            public_key: validator.public_key.to_bytes().into(),
+            public_key: validator.public_key.as_bytes().to_vec().into(),
         }
     }
 }
@@ -721,13 +712,9 @@ impl TryFrom<proto::OracleIdentity> for OracleIdentity {
     }
 }
 
-impl TryFrom<Unsigned> for OracleIdentity {
-    type Error = crate::ParseError;
-
-    fn try_from(value: Unsigned) -> Result<Self, Self::Error> {
-        Ok(OracleIdentity {
-            identity: Identity::from_sec1_bytes(&value.public_key)?,
-        })
+impl From<Unsigned> for OracleIdentity {
+    fn from(Unsigned { identity }: Unsigned) -> Self {
+        OracleIdentity { identity }
     }
 }
 
@@ -797,9 +784,9 @@ impl From<HashObserved> for proto::action::observe::observation::HashObserved {
             HashObserved::Hash(hash) => proto::action::observe::observation::HashObserved {
                 hash: hash.to_vec().into(),
             },
-            HashObserved::NotFound => {
-                proto::action::observe::observation::HashObserved { hash: Bytes::new() }
-            }
+            HashObserved::NotFound => proto::action::observe::observation::HashObserved {
+                hash: prost::bytes::Bytes::new(),
+            },
         }
     }
 }
@@ -964,10 +951,10 @@ mod tests {
     }
 
     fn arb_validator() -> impl Strategy<Value = Validator> {
-        // Any 32 bytes are a well-formed ed25519 key as far as `from_raw_ed25519`
-        // is concerned (it validates length, not curve membership).
+        // Any 32 bytes are a well-formed key as far as `ValidatorKey` is
+        // concerned (it validates length, not curve membership).
         proptest::array::uniform32(any::<u8>()).prop_map(|bytes| Validator {
-            public_key: tendermint::PublicKey::from_raw_ed25519(&bytes).unwrap(),
+            public_key: ValidatorKey::from_bytes(&bytes).unwrap(),
         })
     }
 

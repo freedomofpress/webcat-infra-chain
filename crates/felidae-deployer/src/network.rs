@@ -6,12 +6,12 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use color_eyre::eyre::{Result, WrapErr, eyre};
+use color_eyre::eyre::{Result, WrapErr};
 use ed25519_dalek::SigningKey;
 use felidae_types::KeyPair;
 use felidae_types::transaction::{
     Admin, AdminConfig, Config, Delay, Identity, OnionConfig, Oracle, OracleConfig, Quorum,
-    Timeout, Total, ValidatorConfig, VotingConfig,
+    Timeout, Total, ValidatorConfig, ValidatorKey, VotingConfig,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -574,7 +574,7 @@ fn initialize_node(node: &mut WebcatNode) -> Result<()> {
 
     // For validators, generate priv_validator_key
     if node.role.is_validator() {
-        let (priv_validator_key, _pub_key) = generate_priv_validator_key()?;
+        let priv_validator_key = generate_priv_validator_key()?;
         let mut file = fs::File::create(node.priv_validator_key_path())?;
         file.write_all(priv_validator_key.as_bytes())?;
 
@@ -641,8 +641,7 @@ pub fn identity_from_key_file(path: &Path) -> Result<Identity> {
         fs::read_to_string(path).wrap_err_with(|| format!("failed to read key {:?}", path))?;
     let key_bytes = hex::decode(key_hex.trim()).wrap_err("failed to decode key hex")?;
     let keypair = KeyPair::decode(&key_bytes).wrap_err("failed to decode key PKCS#8")?;
-    Identity::from_sec1_bytes(&keypair.public_key())
-        .map_err(|e| eyre!("keypair-derived public key is invalid: {e}"))
+    Ok(Identity::from_keypair(&keypair))
 }
 
 /// Generate a fresh P-256 keypair and write it to `path` as PKCS#8 hex —
@@ -706,23 +705,17 @@ pub fn generate_node_key() -> Result<(String, String)> {
     Ok((serde_json::to_string_pretty(&node_key)?, node_id))
 }
 
-/// Generate a CometBFT `priv_validator_key.json` body.
-///
-/// Returns `(json_string, pub_key_bytes)` where `json_string` is ready to be
-/// written to a node's `config/priv_validator_key.json` and `pub_key_bytes` is
-/// the raw 32-byte Ed25519 public key — suitable for inclusion in a felidae
-/// `Config.validators` entry when promoting a newly-joined node to validator
-/// status.
-pub fn generate_priv_validator_key() -> Result<(String, Vec<u8>)> {
+/// Generate a CometBFT `priv_validator_key.json` body, ready to be written to
+/// a node's `config/priv_validator_key.json`.
+pub fn generate_priv_validator_key() -> Result<String> {
     let secret_bytes: [u8; 32] = rand::random();
     let signing_key = SigningKey::from_bytes(&secret_bytes);
     let verifying_key = signing_key.verifying_key();
+    let key = ValidatorKey::from_bytes(verifying_key.as_bytes())
+        .expect("ed25519-dalek verifying keys are 32 bytes");
 
-    // Address is the first 20 bytes of SHA256(pubkey), hex-encoded uppercase
-    let mut hasher = Sha256::new();
-    hasher.update(verifying_key.as_bytes());
-    let hash = hasher.finalize();
-    let address = hex::encode_upper(&hash[..20]);
+    // CometBFT writes the address as uppercase hex, which is `account::Id`'s Display.
+    let address = key.address().to_string();
 
     let priv_key_bytes = signing_key.to_bytes();
     let pub_key_bytes = verifying_key.to_bytes().to_vec();
@@ -743,10 +736,7 @@ pub fn generate_priv_validator_key() -> Result<(String, Vec<u8>)> {
         }
     });
 
-    Ok((
-        serde_json::to_string_pretty(&priv_validator_key)?,
-        pub_key_bytes,
-    ))
+    Ok(serde_json::to_string_pretty(&priv_validator_key)?)
 }
 
 /// Generate felidae admin and oracle keys as PKCS#8-encoded ECDSA-P256 keys.

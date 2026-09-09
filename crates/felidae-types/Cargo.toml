@@ -16,8 +16,14 @@ humantime-serde = { workspace = true }
 hex = { workspace = true }
 url = { workspace = true }
 p256 = { workspace = true }
+sha2 = { workspace = true, optional = true }
+
+[features]
+# Deterministic key material for downstream tests; see `test_util`.
+test-util = ["dep:sha2"]
 
 [dev-dependencies]
 insta = { workspace = true }
 serde_json = { workspace = true }
 proptest = { workspace = true }
+sha2 = { workspace = true }

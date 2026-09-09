@@ -83,7 +83,7 @@ impl Config {
 
         // Validate that no validator has an all-zero public key (placeholder entry):
         for (i, validator) in validators.iter().enumerate() {
-            if is_all_zeros(&validator.public_key.to_bytes()) {
+            if is_all_zeros(validator.public_key.as_bytes()) {
                 invalid!(
                     "validator at index {} has an all-zero public key (placeholder not replaced)",
                     i
@@ -161,19 +161,9 @@ fn is_all_zeros(bytes: &[u8]) -> bool {
 mod tests {
     use std::time::Duration;
 
-    use super::super::{Admin, Delay, Oracle, Quorum, Timeout, Validator};
+    use super::super::{Admin, Delay, Oracle, Quorum, Timeout, Validator, ValidatorKey};
     use super::*;
-
-    /// Deterministic P-256 identity derived from a fixed low scalar (256 + n,
-    /// so no `n` collides with the generator-point placeholder at scalar 1).
-    fn test_identity(n: u8) -> Identity {
-        let mut scalar = [0u8; 32];
-        scalar[30] = 1;
-        scalar[31] = n;
-        let signing_key =
-            p256::ecdsa::SigningKey::from_slice(&scalar).expect("low scalar is a valid key");
-        Identity::from(*signing_key.verifying_key())
-    }
+    use crate::test_util::test_identity;
 
     fn voting(total: u64, quorum: u64) -> VotingConfig {
         VotingConfig {
@@ -207,8 +197,7 @@ mod tests {
             },
             onion: OnionConfig { enabled: false },
             validators: vec![Validator {
-                public_key: tendermint::PublicKey::from_raw_ed25519(&[1u8; 32])
-                    .expect("valid ed25519 key"),
+                public_key: ValidatorKey::from_bytes(&[1u8; 32]).expect("valid ed25519 key"),
             }],
             validator_config: ValidatorConfig::default(),
         }
@@ -282,7 +271,7 @@ mod tests {
     fn rejects_all_zero_validator_key() {
         let mut config = genesis_config();
         config.validators = vec![Validator {
-            public_key: tendermint::PublicKey::from_raw_ed25519(&[0u8; 32])
+            public_key: ValidatorKey::from_bytes(&[0u8; 32])
                 .expect("32 zero bytes parse as an ed25519 key"),
         }];
         let err = config.check_stateless().unwrap_err();

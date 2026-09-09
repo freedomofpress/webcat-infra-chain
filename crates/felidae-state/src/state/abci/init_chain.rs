@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use super::*;
 
 impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
@@ -59,20 +57,23 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         // Set the initial config in the state:
         self.set_config(config.clone()).await?;
 
+        // Parse the genesis validator set up front: only Ed25519 consensus keys
+        // are supported, and rejecting anything else here gives the operator a
+        // clear error instead of a halt at the first FinalizeBlock.
+        let genesis_validators = request
+            .validators
+            .iter()
+            .map(|v| Ok((ValidatorKey::try_from(v.pub_key)?, v.power)))
+            .collect::<Result<Vec<_>, Report>>()
+            .wrap_err("unsupported validator key in genesis")?;
+
         // If the initial config does have validators (optional),
         // we need to check that the public keys match the genesis validators exactly.
         if !config.validators.is_empty() {
-            let genesis_keys: BTreeMap<Vec<u8>, ()> = request
-                .validators
-                .iter()
-                .map(|v| (v.pub_key.to_bytes(), ()))
-                .collect();
-
-            let config_keys: BTreeMap<Vec<u8>, ()> = config
-                .validators
-                .iter()
-                .map(|v| (v.public_key.to_bytes(), ()))
-                .collect();
+            let genesis_keys: BTreeSet<ValidatorKey> =
+                genesis_validators.iter().map(|(key, _)| *key).collect();
+            let config_keys: BTreeSet<ValidatorKey> =
+                config.validators.iter().map(|v| v.public_key).collect();
 
             if genesis_keys.len() != config_keys.len() {
                 bail!(
@@ -82,42 +83,32 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
                 );
             }
 
-            for pub_key_bytes in genesis_keys.keys() {
-                if !config_keys.contains_key(pub_key_bytes) {
-                    bail!(
-                        "validator {} in genesis is not in config",
-                        hex::encode(pub_key_bytes)
-                    );
-                }
+            if let Some(key) = genesis_keys.difference(&config_keys).next() {
+                bail!("validator {key} in genesis is not in config");
             }
         }
 
         // Ensure all genesis validators have equal power:
-        if let Some(first) = request.validators.first() {
-            let expected_power = first.power;
-            for validator in request.validators.iter().skip(1) {
-                if validator.power != expected_power {
+        if let Some((_, expected_power)) = genesis_validators.first() {
+            for (key, power) in genesis_validators.iter().skip(1) {
+                if power != expected_power {
                     bail!(
-                        "all validators must have equal power at init_chain, but validator {} has power {} while first has power {}",
-                        hex::encode(validator.pub_key.to_bytes()),
-                        validator.power,
-                        expected_power,
+                        "all validators must have equal power at init_chain, but validator {key} has power {power} while first has power {expected_power}",
                     );
                 }
             }
         }
 
         // Declare the initial validator set, overriding genesis powers with BASE_VALIDATOR_POWER:
-        for validator in request.validators.iter() {
-            self.declare_validator(validator.pub_key).await?;
+        for (key, _) in &genesis_validators {
+            self.declare_validator(*key).await?;
         }
 
         // Build the response validator set with our canonical power, not the genesis file's power.
-        let validators = request
-            .validators
+        let validators = genesis_validators
             .iter()
-            .map(|v| Update {
-                pub_key: v.pub_key,
+            .map(|(key, _)| Update {
+                pub_key: (*key).into(),
                 power: Power::from(BASE_VALIDATOR_POWER),
             })
             .collect();
@@ -137,23 +128,13 @@ mod tests {
 
     use felidae_types::transaction::{
         Admin, AdminConfig, Delay, Identity, OnionConfig, Oracle, OracleConfig, Quorum, Timeout,
-        Total, Validator, ValidatorConfig, VotingConfig,
+        Total, Validator, ValidatorConfig, ValidatorKey, VotingConfig,
     };
     use tempfile::TempDir;
 
     use super::*;
     use crate::Store;
-
-    /// Deterministic P-256 identity derived from a fixed low scalar (256 + n,
-    /// so no `n` collides with the generator-point placeholder at scalar 1).
-    fn test_identity(n: u8) -> Identity {
-        let mut scalar = [0u8; 32];
-        scalar[30] = 1;
-        scalar[31] = n;
-        let signing_key =
-            p256::ecdsa::SigningKey::from_slice(&scalar).expect("low scalar is a valid key");
-        Identity::from(*signing_key.verifying_key())
-    }
+    use felidae_types::test_util::test_identity;
 
     /// A minimal but well-formed operator genesis config, mirroring the shape
     /// of the deployed testnet genesis files (no validators — the validator
@@ -312,8 +293,7 @@ mod tests {
         // (remainder by zero in the uptime ring buffer).
         let mut config = genesis_config();
         config.validators = vec![Validator {
-            public_key: tendermint::PublicKey::from_raw_ed25519(&[1u8; 32])
-                .expect("valid ed25519 key"),
+            public_key: ValidatorKey::from_bytes(&[1u8; 32]).expect("valid ed25519 key"),
         }];
         config.validator_config.uptime_window = 0;
         // Note: config.validators requires matching genesis validators, but
