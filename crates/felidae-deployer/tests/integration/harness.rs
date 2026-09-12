@@ -51,6 +51,13 @@ pub struct TestNetwork {
     /// Where this network's nodes keep their state and logs. Retained after the
     /// test ends; see the note in `create_with_validator_config`.
     pub directory: std::path::PathBuf,
+    /// The config injected at genesis.
+    ///
+    /// Kept so tests can ask how many parties a vote needs rather than
+    /// hardcoding it. Quorum moves with the validator count -- 3-of-3 at n=3,
+    /// 3-of-4, 4-of-5 -- so a literal `3` is right at two topologies and
+    /// silently wrong at the third.
+    pub genesis_config: felidae_types::transaction::Config,
 }
 
 /// The child processes of the network currently under test.
@@ -201,6 +208,7 @@ impl TestNetwork {
         network.inject_genesis_app_state(&felidae_config)?;
 
         Ok(Self {
+            genesis_config: felidae_config,
             network,
             processes: Arc::new(std::sync::Mutex::new(HashMap::new())),
             shutdown: Arc::new(AtomicBool::new(false)),
@@ -421,7 +429,7 @@ impl TestNetwork {
             "http://{}:{}",
             self.network.nodes[0].bind_address, self.network.nodes[0].ports.cometbft_rpc
         );
-        let client = HttpClient::new(rpc_url.as_str())?;
+        let client = crate::helpers::rpc_client(rpc_url.as_str())?;
 
         let start = std::time::Instant::now();
         loop {
@@ -458,6 +466,44 @@ impl TestNetwork {
             "http://{}:{}",
             self.network.nodes[0].bind_address, self.network.nodes[0].ports.cometbft_rpc
         )
+    }
+
+    /// How many validators this network has.
+    pub fn validator_count(&self) -> usize {
+        self.network.validators().count()
+    }
+
+    /// How many admins must vote before a reconfiguration is promoted.
+    pub fn admin_quorum(&self) -> usize {
+        self.genesis_config.admins.voting.quorum.0 as usize
+    }
+
+    /// How many oracles must agree before an observation becomes canonical.
+    pub fn oracle_quorum(&self) -> usize {
+        self.genesis_config.oracles.voting.quorum.0 as usize
+    }
+
+    /// One short of admin quorum: the largest vote that must *not* promote.
+    pub fn admin_minority(&self) -> usize {
+        self.admin_quorum().saturating_sub(1)
+    }
+
+    /// One short of oracle quorum.
+    pub fn oracle_minority(&self) -> usize {
+        self.oracle_quorum().saturating_sub(1)
+    }
+
+    /// A specific node's felidae query URL.
+    pub fn node_query_url(&self, index: usize) -> String {
+        let node = &self.network.nodes[index];
+        format!("http://{}:{}", node.bind_address, node.ports.felidae_query)
+    }
+
+    /// Every node's felidae query URL, in node order.
+    pub fn query_urls(&self) -> Vec<String> {
+        (0..self.network.nodes.len())
+            .map(|i| self.node_query_url(i))
+            .collect()
     }
 
     /// Get the first node's Felidae query API URL.

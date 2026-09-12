@@ -19,7 +19,7 @@ use crate::harness::TestNetwork;
 async fn test_root_route_returns_ok_with_endpoints() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
@@ -112,7 +112,7 @@ async fn test_root_route_returns_ok_with_endpoints() -> color_eyre::Result<()> {
 async fn test_config_route_returns_ok_json() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),

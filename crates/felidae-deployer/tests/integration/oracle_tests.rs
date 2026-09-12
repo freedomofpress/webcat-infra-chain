@@ -55,7 +55,7 @@ use crate::helpers::{
 async fn test_three_validator_network_starts() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
@@ -74,7 +74,7 @@ async fn test_three_validator_network_starts() -> color_eyre::Result<()> {
     eprintln!("[test] chain config via CLI: version={}", config.version);
 
     // Verify oracle servers are accessible
-    for i in 0..3 {
+    for i in 0..network.oracle_quorum() {
         eprintln!("[test] oracle {} URL: {}", i, network.oracle_url(i));
     }
 
@@ -113,14 +113,14 @@ async fn test_three_validator_network_starts() -> color_eyre::Result<()> {
 async fn test_oracle_observation_single_domain() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
     network.wait_ready(network_startup_timeout()).await?;
 
-    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+    let rpc_client = crate::helpers::rpc_client(network.rpc_url().as_str())?;
 
     // Debug: Verify the chain configuration is as expected via CLI
     let config = query_config(&felidae_bin, &network.query_url())?;
@@ -225,21 +225,21 @@ async fn test_oracle_observation_single_domain() -> color_eyre::Result<()> {
 async fn test_oracle_quorum_reached() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
     network.wait_ready(network_startup_timeout()).await?;
 
-    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+    let rpc_client = crate::helpers::rpc_client(network.rpc_url().as_str())?;
 
     let enrollment = test_enrollment_json();
 
     // Submit observations from all 3 oracles for the same domain.
     // Each oracle independently observes the enrollment and submits a vote.
     // All votes have the same hash because they observe the same enrollment.
-    for i in 0..3 {
+    for i in 0..network.oracle_quorum() {
         let oracle_key = network.read_oracle_key(i)?;
         submit_observation(
             &rpc_client,
@@ -287,20 +287,20 @@ async fn test_oracle_quorum_reached() -> color_eyre::Result<()> {
 async fn test_oracle_observation_multiple_domains() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
     network.wait_ready(network_startup_timeout()).await?;
 
-    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+    let rpc_client = crate::helpers::rpc_client(network.rpc_url().as_str())?;
 
     let enrollment = test_enrollment_json();
 
     // Submit observations from all oracles for both test domains sequentially.
     for (domain, zone) in TEST_DOMAINS {
-        for i in 0..3 {
+        for i in 0..network.oracle_quorum() {
             let oracle_key = network.read_oracle_key(i)?;
             submit_observation(
                 &rpc_client,
@@ -353,14 +353,14 @@ async fn test_oracle_observation_multiple_domains() -> color_eyre::Result<()> {
 async fn test_oracle_unenrollment() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
     network.wait_ready(network_startup_timeout()).await?;
 
-    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+    let rpc_client = crate::helpers::rpc_client(network.rpc_url().as_str())?;
 
     let enrollment = test_enrollment_json();
 
@@ -369,7 +369,7 @@ async fn test_oracle_unenrollment() -> color_eyre::Result<()> {
         "[test] Step 1: Enrolling domain {}.",
         TEST_DOMAIN_UNENROLL.0
     );
-    for i in 0..3 {
+    for i in 0..network.oracle_quorum() {
         let oracle_key = network.read_oracle_key(i)?;
         submit_observation(
             &rpc_client,
@@ -409,7 +409,7 @@ async fn test_oracle_unenrollment() -> color_eyre::Result<()> {
         "[test] Step 2: Unenrolling domain {}.",
         TEST_DOMAIN_UNENROLL.0
     );
-    for i in 0..3 {
+    for i in 0..network.oracle_quorum() {
         let oracle_key = network.read_oracle_key(i)?;
         submit_observation(
             &rpc_client,
@@ -453,14 +453,14 @@ async fn test_oracle_unenrollment() -> color_eyre::Result<()> {
 async fn test_unauthorized_oracle_rejected() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
     network.wait_ready(network_startup_timeout()).await?;
 
-    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+    let rpc_client = crate::helpers::rpc_client(network.rpc_url().as_str())?;
 
     // Generate a deterministic key that is NOT in the authorized oracle list.
     let unauthorized_key = {
@@ -514,14 +514,14 @@ async fn test_unauthorized_oracle_rejected() -> color_eyre::Result<()> {
 async fn test_partial_quorum_no_canonical() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
     network.wait_ready(network_startup_timeout()).await?;
 
-    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+    let rpc_client = crate::helpers::rpc_client(network.rpc_url().as_str())?;
 
     let enrollment = test_enrollment_json();
 
@@ -529,7 +529,7 @@ async fn test_partial_quorum_no_canonical() -> color_eyre::Result<()> {
     let partial_domain = format!("{}.{}", TEST_SUBDOMAIN_PREFIX_1, TEST_DOMAIN_WEBCAT.0);
 
     // Submit observations from only 2 of 3 oracles.
-    for i in 0..2 {
+    for i in 0..network.oracle_minority() {
         let oracle_key = network.read_oracle_key(i)?;
         submit_observation(
             &rpc_client,
@@ -557,8 +557,9 @@ async fn test_partial_quorum_no_canonical() -> color_eyre::Result<()> {
         .collect();
     assert_eq!(
         partial_votes.len(),
-        2,
-        "expected 2 votes in queue for {}, got {}",
+        network.oracle_minority(),
+        "expected {} vote(s) in queue for {}, got {}",
+        network.oracle_minority(),
         partial_domain,
         partial_votes.len()
     );
@@ -582,14 +583,14 @@ async fn test_partial_quorum_no_canonical() -> color_eyre::Result<()> {
 async fn test_enrollment_update() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
     network.wait_ready(network_startup_timeout()).await?;
 
-    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+    let rpc_client = crate::helpers::rpc_client(network.rpc_url().as_str())?;
 
     // Use a subdomain for update testing
     let update_domain = format!("{}.{}", TEST_SUBDOMAIN_PREFIX_2, TEST_DOMAIN_WEBCAT.0);
@@ -598,7 +599,7 @@ async fn test_enrollment_update() -> color_eyre::Result<()> {
     let enrollment_v1 = test_enrollment_json();
 
     eprintln!("[test] Phase 1: Initial enrollment for {}", update_domain);
-    for i in 0..3 {
+    for i in 0..network.oracle_quorum() {
         let oracle_key = network.read_oracle_key(i)?;
         submit_observation(
             &rpc_client,
@@ -647,7 +648,7 @@ async fn test_enrollment_update() -> color_eyre::Result<()> {
     };
 
     eprintln!("[test] Phase 2: Update enrollment for {}", update_domain);
-    for i in 0..3 {
+    for i in 0..network.oracle_quorum() {
         let oracle_key = network.read_oracle_key(i)?;
         submit_observation(
             &rpc_client,
@@ -699,14 +700,14 @@ async fn test_enrollment_update() -> color_eyre::Result<()> {
 async fn test_subdomain_limit_enforcement() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
     network.wait_ready(network_startup_timeout()).await?;
 
-    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+    let rpc_client = crate::helpers::rpc_client(network.rpc_url().as_str())?;
 
     let enrollment = test_enrollment_json();
 
@@ -727,7 +728,7 @@ async fn test_subdomain_limit_enforcement() -> color_eyre::Result<()> {
     for (idx, subdomain) in subdomains.iter().enumerate() {
         eprintln!("[test] Enrolling entry {}: {}", idx, subdomain);
 
-        for i in 0..3 {
+        for i in 0..network.oracle_quorum() {
             let oracle_key = network.read_oracle_key(i)?;
             submit_observation(
                 &rpc_client,
@@ -770,7 +771,7 @@ async fn test_subdomain_limit_enforcement() -> color_eyre::Result<()> {
     let over_limit_subdomain = format!("{}2.{}", TEST_SUBDOMAIN_PREFIX_2, registered_domain);
 
     let mut rejected = false;
-    for i in 0..3 {
+    for i in 0..network.oracle_quorum() {
         let oracle_key = network.read_oracle_key(i)?;
         let result = submit_observation(
             &rpc_client,

@@ -17,9 +17,10 @@ use crate::constants::{
 };
 use crate::harness::TestNetwork;
 use crate::helpers::{
-    generate_ed25519_pubkey, poll_until, poll_until_async, query_admin_pending, query_admin_votes,
-    query_cometbft_validators, query_config, read_genesis_validator_pubkeys,
-    read_priv_validator_pubkey, run_query_command, submit_admin_reconfig,
+    generate_ed25519_pubkey, latest_height, poll_until, poll_until_async, query_admin_pending,
+    query_admin_votes, query_cometbft_validators, query_config, read_genesis_validator_pubkeys,
+    read_priv_validator_pubkey, run_query_command, submit_admin_reconfig, wait_admin_votes,
+    wait_blocks, wait_reconfig_applied,
 };
 
 /// Runs `felidae query chain-info --json` and parses the result.
@@ -61,14 +62,14 @@ fn query_chain_info(
 async fn test_admin_reconfiguration() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
     network.wait_ready(network_startup_timeout()).await?;
 
-    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+    let rpc_client = crate::helpers::rpc_client(network.rpc_url().as_str())?;
 
     // Get the current configuration via CLI
     let current_config = query_config(&felidae_bin, &network.query_url())?;
@@ -139,14 +140,14 @@ async fn test_admin_reconfiguration() -> color_eyre::Result<()> {
 async fn test_admin_reconfig_minority_no_update() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
     network.wait_ready(network_startup_timeout()).await?;
 
-    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+    let rpc_client = crate::helpers::rpc_client(network.rpc_url().as_str())?;
 
     // Get the current configuration via CLI
     let current_config = query_config(&felidae_bin, &network.query_url())?;
@@ -170,8 +171,13 @@ async fn test_admin_reconfig_minority_no_update() -> color_eyre::Result<()> {
     };
 
     // Submit reconfiguration from only 2 of 3 admins (below quorum of 3)
-    eprintln!("[test] submitting reconfig from only 2 of 3 admins (below quorum)");
-    for i in 0..2 {
+    eprintln!(
+        "[test] submitting reconfig from {} of {} admins (below quorum of {})",
+        network.admin_minority(),
+        network.validator_count(),
+        network.admin_quorum()
+    );
+    for i in 0..network.admin_minority() {
         let admin_key = network.read_admin_key(i)?;
 
         let tx_hex = felidae_admin::reconfigure(
@@ -193,18 +199,24 @@ async fn test_admin_reconfig_minority_no_update() -> color_eyre::Result<()> {
         tokio::time::sleep(inter_tx_delay()).await;
     }
 
-    // Wait enough time for any potential processing
-    tokio::time::sleep(consensus_propagation_wait()).await;
-
-    // Verify votes are accumulated but not applied via CLI
-    let admin_votes = query_admin_votes(&felidae_bin, &network.query_url())?;
+    // Wait for both votes to reach state. The submissions above only entered
+    // the mempool, so waiting a fixed number of blocks would be a guess about
+    // block production rather than a fact about it.
+    let admin_votes =
+        wait_admin_votes(&felidae_bin, &network.query_url(), network.admin_minority()).await?;
     eprintln!("[test] admin votes in queue: {}", admin_votes.len());
 
-    // Should have 2 votes in the queue (not consumed into pending)
+    // Now give a wrongful promotion the time to happen, which is what this test
+    // actually guards. Reaching quorum consumes the votes, so a queue that
+    // still holds both is the evidence that it was not reached.
+    tokio::time::sleep(consensus_propagation_wait()).await;
+    let admin_votes = query_admin_votes(&felidae_bin, &network.query_url())?;
     assert_eq!(
         admin_votes.len(),
-        2,
-        "expected 2 admin votes in queue (below quorum), got {}",
+        network.admin_minority(),
+        "expected {} admin vote(s) to remain queued (below quorum of {}), got {}",
+        network.admin_minority(),
+        network.admin_quorum(),
         admin_votes.len()
     );
 
@@ -258,14 +270,14 @@ async fn test_admin_reconfig_minority_no_update() -> color_eyre::Result<()> {
 async fn test_admin_reconfig_full_quorum_success() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
     network.wait_ready(network_startup_timeout()).await?;
 
-    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+    let rpc_client = crate::helpers::rpc_client(network.rpc_url().as_str())?;
 
     // Get the current configuration via CLI
     let current_config = query_config(&felidae_bin, &network.query_url())?;
@@ -289,8 +301,12 @@ async fn test_admin_reconfig_full_quorum_success() -> color_eyre::Result<()> {
     };
 
     // Submit reconfiguration from ALL 3 admins (meeting quorum)
-    eprintln!("[test] submitting reconfig from all 3 admins (meeting quorum)");
-    for i in 0..3 {
+    eprintln!(
+        "[test] submitting reconfig from {} of {} admins (meeting quorum)",
+        network.admin_quorum(),
+        network.validator_count()
+    );
+    for i in 0..network.admin_quorum() {
         let admin_key = network.read_admin_key(i)?;
 
         let tx_hex = felidae_admin::reconfigure(
@@ -312,13 +328,18 @@ async fn test_admin_reconfig_full_quorum_success() -> color_eyre::Result<()> {
         tokio::time::sleep(inter_tx_delay()).await;
     }
 
-    // Poll for the config change to take effect (admin delay is 0s in test config)
+    // Poll for the config change to take effect (admin delay is 0s in test config).
+    // Bound this by blocks rather than by a flat 30s: quorum and promotion need
+    // a handful of blocks, and on a loaded runner those take longer than the
+    // wall-clock budget allowed. On timeout this also reports the admin queue,
+    // which distinguishes "votes never landed" from "votes landed, no promotion".
     let target_version = current_config.version + 1;
-    poll_until(
-        consensus_propagation_wait_long(),
-        poll_interval(),
+    wait_reconfig_applied(
+        &felidae_bin,
+        &network.query_url(),
+        &rpc_client,
+        target_version,
         "config version updated after full quorum",
-        || Ok(query_config(&felidae_bin, &network.query_url())?.version >= target_version),
     )
     .await?;
 
@@ -378,14 +399,14 @@ async fn test_admin_reconfig_full_quorum_success() -> color_eyre::Result<()> {
 async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
     network.wait_ready(network_startup_timeout()).await?;
 
-    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+    let rpc_client = crate::helpers::rpc_client(network.rpc_url().as_str())?;
 
     // ── Phase 0: Verify initial state ──
 
@@ -402,8 +423,8 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
     let initial_cometbft_vals = query_cometbft_validators(&rpc_client).await?;
     assert_eq!(
         initial_cometbft_vals.len(),
-        3,
-        "CometBFT should have 3 genesis validators"
+        network.validator_count(),
+        "CometBFT should have the genesis validators"
     );
     eprintln!(
         "[phase 0] CometBFT has {} validators",
@@ -412,7 +433,7 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
 
     // Read the 3 genesis validator pubkeys from priv_validator_key.json files
     let genesis_validators = read_genesis_validator_pubkeys(&network)?;
-    assert_eq!(genesis_validators.len(), 3);
+    assert_eq!(genesis_validators.len(), network.validator_count());
     eprintln!(
         "[phase 0] read {} genesis validator pubkeys",
         genesis_validators.len()
@@ -429,7 +450,10 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
         validator_config: initial_config.validator_config.clone(),
     };
 
-    eprintln!("[phase 1] submitting config with 3 genesis validators");
+    eprintln!(
+        "[phase 1] submitting config with the {} genesis validators",
+        network.validator_count()
+    );
     submit_admin_reconfig(&network, &rpc_client, phase1_config).await?;
 
     let target_version = initial_config.version + 1;
@@ -444,18 +468,21 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
     let config_after_phase1 = query_config(&felidae_bin, &network.query_url())?;
     assert_eq!(
         config_after_phase1.validators.len(),
-        3,
-        "config should have 3 validators"
+        network.validator_count(),
+        "config should list the genesis validators"
     );
 
     // CometBFT should still have exactly 3 validators (no-op sync)
     let cometbft_vals_phase1 = query_cometbft_validators(&rpc_client).await?;
     assert_eq!(
         cometbft_vals_phase1.len(),
-        3,
-        "CometBFT should still have 3 validators after declaring genesis set"
+        network.validator_count(),
+        "CometBFT set should be unchanged after declaring the genesis set"
     );
-    eprintln!("[phase 1] confirmed: 3 validators in config and CometBFT");
+    eprintln!(
+        "[phase 1] confirmed: {} validators in config and CometBFT",
+        network.validator_count()
+    );
 
     // ── Phase 2: Onboard a 4th validator ──
 
@@ -494,8 +521,8 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
     let config_after_phase2 = query_config(&felidae_bin, &network.query_url())?;
     assert_eq!(
         config_after_phase2.validators.len(),
-        4,
-        "config should have 4 validators"
+        network.validator_count() + 1,
+        "config should list the genesis validators plus the newcomer"
     );
 
     // Poll CometBFT until it sees the 4th validator (update takes effect after FinalizeBlock)
@@ -505,7 +532,7 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
         "phase 2: CometBFT sees 4 validators",
         || async {
             let vals = query_cometbft_validators(&rpc_client).await?;
-            Ok(vals.len() == 4)
+            Ok(vals.len() == network.validator_count() + 1)
         },
     )
     .await?;
@@ -513,8 +540,8 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
     let cometbft_vals_phase2 = query_cometbft_validators(&rpc_client).await?;
     assert_eq!(
         cometbft_vals_phase2.len(),
-        4,
-        "CometBFT should have 4 validators"
+        network.validator_count() + 1,
+        "CometBFT should have the genesis validators plus the newcomer"
     );
 
     // Verify the new validator has the canonical active power (BASE_VALIDATOR_POWER).
@@ -542,7 +569,10 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
         validator_config: config_after_phase2.validator_config.clone(),
     };
 
-    eprintln!("[phase 3] submitting config with 3 validators (removing 4th)");
+    eprintln!(
+        "[phase 3] submitting config with {} validators (removing the newcomer)",
+        network.validator_count()
+    );
     submit_admin_reconfig(&network, &rpc_client, phase3_config).await?;
 
     let target_version = config_after_phase2.version + 1;
@@ -557,8 +587,8 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
     let config_after_phase3 = query_config(&felidae_bin, &network.query_url())?;
     assert_eq!(
         config_after_phase3.validators.len(),
-        3,
-        "config should have 3 validators"
+        network.validator_count(),
+        "config should be back to the genesis validators"
     );
 
     // Poll CometBFT until it shows 3 validators again
@@ -568,7 +598,7 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
         "phase 3: CometBFT back to 3 validators",
         || async {
             let vals = query_cometbft_validators(&rpc_client).await?;
-            Ok(vals.len() == 3)
+            Ok(vals.len() == network.validator_count())
         },
     )
     .await?;
@@ -576,25 +606,20 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
     let cometbft_vals_phase3 = query_cometbft_validators(&rpc_client).await?;
     assert_eq!(
         cometbft_vals_phase3.len(),
-        3,
-        "CometBFT should be back to 3 validators"
+        network.validator_count(),
+        "CometBFT should be back to the genesis validators"
     );
-    eprintln!("[phase 3] confirmed: 4th validator removed");
+    eprintln!("[phase 3] confirmed: newcomer removed");
 
     // Verify the chain is still producing blocks
-    let height_before = rpc_client.latest_block().await?.block.header.height.value();
-    tokio::time::sleep(consensus_propagation_wait()).await;
-    let height_after = rpc_client.latest_block().await?.block.header.height.value();
-    assert!(
-        height_after > height_before,
-        "chain should still produce blocks after validator removal (height {} → {})",
-        height_before,
-        height_after
-    );
-    eprintln!(
-        "[phase 3] chain still live: height {} → {}",
-        height_before, height_after
-    );
+    let height_after = wait_blocks(
+        &rpc_client,
+        2,
+        consensus_propagation_wait_long(),
+        "chain keeps producing blocks",
+    )
+    .await?;
+    eprintln!("[phase 3] chain still live at height {height_after}");
 
     Ok(())
 }
@@ -610,18 +635,18 @@ async fn test_admin_validator_onboarding_offboarding() -> color_eyre::Result<()>
 async fn test_admin_reconfig_empty_validators_is_noop() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
     network.wait_ready(network_startup_timeout()).await?;
 
-    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+    let rpc_client = crate::helpers::rpc_client(network.rpc_url().as_str())?;
 
     // Get CometBFT's initial validator set
     let initial_cometbft_vals = query_cometbft_validators(&rpc_client).await?;
-    assert_eq!(initial_cometbft_vals.len(), 3);
+    assert_eq!(initial_cometbft_vals.len(), network.validator_count());
 
     // Submit a reconfig with empty validators (the default)
     let current_config = query_config(&felidae_bin, &network.query_url())?;
@@ -663,8 +688,8 @@ async fn test_admin_reconfig_empty_validators_is_noop() -> color_eyre::Result<()
     let cometbft_vals_after = query_cometbft_validators(&rpc_client).await?;
     assert_eq!(
         cometbft_vals_after.len(),
-        3,
-        "CometBFT should still have 3 validators after empty-validators reconfig"
+        network.validator_count(),
+        "CometBFT set should be unchanged after an empty-validators reconfig"
     );
     assert_eq!(
         cometbft_vals_after, initial_cometbft_vals,
@@ -672,13 +697,13 @@ async fn test_admin_reconfig_empty_validators_is_noop() -> color_eyre::Result<()
     );
 
     // Verify chain is still producing blocks
-    let height_before = rpc_client.latest_block().await?.block.header.height.value();
-    tokio::time::sleep(consensus_propagation_wait()).await;
-    let height_after = rpc_client.latest_block().await?.block.header.height.value();
-    assert!(
-        height_after > height_before,
-        "chain should still produce blocks"
-    );
+    let height_after = wait_blocks(
+        &rpc_client,
+        2,
+        consensus_propagation_wait_long(),
+        "chain keeps producing blocks",
+    )
+    .await?;
 
     eprintln!("[test] confirmed: empty validators is a no-op, chain still live");
 
@@ -715,27 +740,30 @@ async fn test_validator_onboarding_joined_node() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
     // ── Phase 0: Start devnet ──────────────────────────────────────────────
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
     network.wait_ready(network_startup_timeout()).await?;
 
-    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+    let rpc_client = crate::helpers::rpc_client(network.rpc_url().as_str())?;
 
     let initial_cometbft_vals = query_cometbft_validators(&rpc_client).await?;
     assert_eq!(
         initial_cometbft_vals.len(),
-        3,
-        "devnet should start with 3 validators"
+        network.validator_count(),
+        "CometBFT should have the genesis validators"
     );
     let initial_config = query_config(&felidae_bin, &network.query_url())?;
     assert!(
         initial_config.validators.is_empty(),
         "initial config.validators should be empty"
     );
-    eprintln!("[phase 0] 3-validator devnet ready");
+    eprintln!(
+        "[phase 0] {}-validator devnet ready",
+        network.validator_count()
+    );
 
     // ── Phase 1: Join as a full node ───────────────────────────────────────
     // `join_network` pre-provisions a `priv_validator_key.json` for the new
@@ -798,7 +826,7 @@ async fn test_validator_onboarding_joined_node() -> color_eyre::Result<()> {
     // reconfig in Phase 5 would instruct CometBFT to replace the signers
     // with {newcomer}, halting the chain.
     let genesis_validators = read_genesis_validator_pubkeys(&network)?;
-    assert_eq!(genesis_validators.len(), 3);
+    assert_eq!(genesis_validators.len(), network.validator_count());
 
     let config_before_seed = query_config(&felidae_bin, &network.query_url())?;
     let seed_config = Config {
@@ -820,7 +848,7 @@ async fn test_validator_onboarding_joined_node() -> color_eyre::Result<()> {
         "phase 4: seed reconfig applied",
         || {
             let cfg = query_config(&felidae_bin, &network.query_url())?;
-            Ok(cfg.version >= target_version && cfg.validators.len() == 3)
+            Ok(cfg.version >= target_version && cfg.validators.len() == network.validator_count())
         },
     )
     .await?;
@@ -829,7 +857,7 @@ async fn test_validator_onboarding_joined_node() -> color_eyre::Result<()> {
     let cometbft_after_seed = query_cometbft_validators(&rpc_client).await?;
     assert_eq!(
         cometbft_after_seed.len(),
-        3,
+        network.validator_count(),
         "CometBFT validator set should be unchanged after seeding"
     );
     let config_after_seed = query_config(&felidae_bin, &network.query_url())?;
@@ -859,7 +887,8 @@ async fn test_validator_onboarding_joined_node() -> color_eyre::Result<()> {
         "phase 5: onboarding reconfig applied in felidae config",
         || {
             let cfg = query_config(&felidae_bin, &network.query_url())?;
-            Ok(cfg.version >= onboard_target_version && cfg.validators.len() == 4)
+            Ok(cfg.version >= onboard_target_version
+                && cfg.validators.len() == network.validator_count() + 1)
         },
     )
     .await?;
@@ -871,13 +900,13 @@ async fn test_validator_onboarding_joined_node() -> color_eyre::Result<()> {
         "phase 5: CometBFT observes 4 validators",
         || async {
             let vals = query_cometbft_validators(&rpc_client).await?;
-            Ok(vals.len() == 4)
+            Ok(vals.len() == network.validator_count() + 1)
         },
     )
     .await?;
 
     let cometbft_after_onboard = query_cometbft_validators(&rpc_client).await?;
-    assert_eq!(cometbft_after_onboard.len(), 4);
+    assert_eq!(cometbft_after_onboard.len(), network.validator_count() + 1);
     let newcomer_entry = cometbft_after_onboard
         .iter()
         .find(|(key, _)| key == &new_validator_pubkey)
@@ -932,7 +961,7 @@ async fn test_validator_onboarding_joined_node() -> color_eyre::Result<()> {
         },
     )
     .await?;
-    let height_after = rpc_client.latest_block().await?.block.header.height.value();
+    let height_after = latest_height(&rpc_client).await?;
     eprintln!(
         "[phase 6] chain live on genesis node: {} → {}",
         height_before, height_after
@@ -957,7 +986,7 @@ async fn test_validator_onboarding_joined_node() -> color_eyre::Result<()> {
     let later_vals = query_cometbft_validators(&rpc_client).await?;
     assert_eq!(
         later_vals.len(),
-        4,
+        network.validator_count() + 1,
         "newcomer should remain in the active validator set at later heights"
     );
     assert!(
@@ -975,8 +1004,8 @@ async fn test_validator_onboarding_joined_node() -> color_eyre::Result<()> {
     );
     assert_eq!(
         joined_config.validators.len(),
-        4,
-        "joined node should see 4 validators in config"
+        network.validator_count() + 1,
+        "joined node should see the newcomer in config"
     );
 
     eprintln!("[phase 6] confirmed: validator onboarded end-to-end, state consistent across nodes");

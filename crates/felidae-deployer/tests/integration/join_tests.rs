@@ -44,7 +44,7 @@ async fn test_join_network_syncs_to_target_height() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
     // ── Step 1: create and start devnet ──────────────────────────────────
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
