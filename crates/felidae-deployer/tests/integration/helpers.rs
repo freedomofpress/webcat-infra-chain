@@ -7,9 +7,34 @@ use std::collections::HashMap;
 use std::process::Command;
 use std::time::Duration;
 
-use felidae_types::response::{AdminVote, OracleVote, PendingObservation, ValidatorInfo};
+use felidae_types::response::{
+    AdminVote, ChainInfo, OracleVote, PendingObservation, ValidatorInfo,
+};
 use felidae_types::transaction::Config;
 use tendermint_rpc::{Client, HttpClient, Paging};
+
+// =============================================================================
+// RPC UTILITIES
+// =============================================================================
+
+/// The chain's current height.
+pub async fn latest_height(rpc_client: &HttpClient) -> color_eyre::Result<u64> {
+    Ok(rpc_client.latest_block().await?.block.header.height.value())
+}
+
+/// A CometBFT RPC client that opens a fresh connection per request.
+///
+/// CometBFT reaps idle keep-alive connections; reusing one fails the request
+/// with `connection closed before message completed`. On loopback, a fresh
+/// connection is free.
+pub fn rpc_client(url: &str) -> color_eyre::Result<HttpClient> {
+    let inner = reqwest011::Client::builder()
+        .pool_max_idle_per_host(0)
+        // `Builder::client` discards the builder's own timeout; restate it.
+        .timeout(Duration::from_secs(30))
+        .build()?;
+    Ok(HttpClient::builder(url.parse()?).client(inner).build()?)
+}
 
 // =============================================================================
 // POLLING UTILITIES
@@ -71,6 +96,109 @@ where
         }
         tokio::time::sleep(interval).await;
     }
+}
+
+/// Wait for the chain to commit `blocks` further blocks, returning the height
+/// reached.
+///
+/// A stalled node keeps serving its last height, so "did the height grow?"
+/// can pass against a dead chain; "did it grow by N?" cannot. Inherits the
+/// liveness check from `poll_until_async`.
+pub async fn wait_blocks(
+    rpc_client: &HttpClient,
+    blocks: u64,
+    budget: Duration,
+    description: &str,
+) -> color_eyre::Result<u64> {
+    let start = latest_height(rpc_client).await?;
+    let target = start + blocks;
+    poll_until_async(budget, Duration::from_millis(500), description, || async {
+        Ok(latest_height(rpc_client).await? >= target)
+    })
+    .await?;
+    latest_height(rpc_client).await
+}
+
+// =============================================================================
+// CROSS-NODE AGREEMENT
+// =============================================================================
+
+/// A node's view of committed state, read straight from its query port.
+///
+/// HTTP rather than the CLI: spawning a process per call is too slow to
+/// catch several nodes at one height.
+pub async fn node_chain_info(
+    http: &reqwest::Client,
+    query_url: &str,
+) -> color_eyre::Result<ChainInfo> {
+    let info = http
+        .get(format!("{query_url}/chain-info"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<ChainInfo>()
+        .await?;
+    Ok(info)
+}
+
+/// Assert every node committed the same application state.
+///
+/// Nodes commit at slightly different moments, so this samples every node's
+/// `/chain-info` for `settle` and compares app hashes only at heights seen on
+/// more than one node. Fails on any mismatch, or if no height was seen on
+/// every node, lest a vacuous comparison pass.
+///
+/// Returns the highest height at which all nodes were seen to agree.
+pub async fn assert_nodes_agree(
+    query_urls: &[String],
+    settle: Duration,
+) -> color_eyre::Result<u64> {
+    use std::collections::BTreeMap;
+
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    // height -> node index -> app hash
+    let mut seen: BTreeMap<u64, BTreeMap<usize, String>> = BTreeMap::new();
+    let deadline = std::time::Instant::now() + settle;
+    while std::time::Instant::now() < deadline {
+        for (index, url) in query_urls.iter().enumerate() {
+            if let Ok(info) = node_chain_info(&http, url).await {
+                seen.entry(info.block_height)
+                    .or_default()
+                    .insert(index, info.app_hash);
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    let mut agreed_at = None;
+    for (height, by_node) in &seen {
+        let distinct: std::collections::BTreeSet<&String> = by_node.values().collect();
+        if distinct.len() > 1 {
+            let detail: Vec<String> = by_node
+                .iter()
+                .map(|(node, hash)| format!("node {node}: {}", &hash[..16.min(hash.len())]))
+                .collect();
+            return Err(color_eyre::eyre::eyre!(
+                "nodes disagree on committed state at height {height}: {}",
+                detail.join(", ")
+            ));
+        }
+        if by_node.len() == query_urls.len() {
+            agreed_at = Some(*height);
+        }
+    }
+
+    agreed_at.ok_or_else(|| {
+        color_eyre::eyre::eyre!(
+            "no height was observed on all {} nodes within {settle:?}; \
+             heights seen: {:?} -- the comparison would have been vacuous",
+            query_urls.len(),
+            seen.keys().collect::<Vec<_>>()
+        )
+    })
 }
 
 // =============================================================================
@@ -438,13 +566,9 @@ pub async fn submit_admin_reconfig(
     rpc_client: &HttpClient,
     new_config: Config,
 ) -> color_eyre::Result<()> {
-    let num_validators = network
-        .network
-        .nodes
-        .iter()
-        .filter(|n| n.role.is_validator())
-        .count();
-    for i in 0..num_validators {
+    // Exactly quorum: a vote past it lands after promotion and is rejected
+    // as stale.
+    for i in 0..network.admin_quorum() {
         let admin_key = network.read_admin_key(i)?;
         let tx_hex = felidae_admin::reconfigure(
             &admin_key,
@@ -537,6 +661,25 @@ pub async fn wait_reconfig_applied(
         }
         tokio::time::sleep(crate::constants::poll_interval()).await;
     }
+}
+
+/// Polls until the admin vote queue holds `expected` entries, returning them.
+///
+/// `broadcast_tx_sync` returns at mempool admission, not commit, so a vote
+/// reaches the queue only some blocks later.
+pub async fn wait_admin_votes(
+    felidae_bin: &std::path::Path,
+    query_url: &str,
+    expected: usize,
+) -> color_eyre::Result<Vec<AdminVote>> {
+    poll_until(
+        crate::constants::consensus_propagation_wait_long(),
+        crate::constants::poll_interval(),
+        &format!("{expected} admin vote(s) visible in the queue"),
+        || Ok(query_admin_votes(felidae_bin, query_url)?.len() == expected),
+    )
+    .await?;
+    query_admin_votes(felidae_bin, query_url)
 }
 
 /// Queries every validator the chain knows about via `felidae query validators
