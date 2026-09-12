@@ -1,4 +1,6 @@
 [profile.default]
 # The integration tests can take a while with longer block times,
 # so we raise the "slow" warning threshold from its default of 1m.
-slow-timeout = { period = "3m" }
+# A dead ABCI node leaves CometBFT answering RPC forever, so kill a test after
+# 9m; the slowest healthy one takes ~140s.
+slow-timeout = { period = "3m", terminate-after = 3 }

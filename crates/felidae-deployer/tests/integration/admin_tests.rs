@@ -5,7 +5,6 @@
 
 use felidae_types::response::ChainInfo;
 use felidae_types::transaction::{Config, OracleConfig, Validator, ValidatorKey};
-use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 use tendermint_rpc::{Client, HttpClient};
 
@@ -31,21 +30,6 @@ fn query_chain_info(
     let output = run_query_command(felidae_bin, "chain-info", query_url, &["--json"])?;
     let info: ChainInfo = serde_json::from_str(&output)?;
     Ok(info)
-}
-
-/// RAII wrapper ensuring a joined node's child processes are reaped on drop.
-struct JoinedNodeProcs {
-    cometbft: Child,
-    felidae: Child,
-}
-
-impl Drop for JoinedNodeProcs {
-    fn drop(&mut self) {
-        let _ = self.cometbft.kill();
-        let _ = self.cometbft.wait();
-        let _ = self.felidae.kill();
-        let _ = self.felidae.wait();
-    }
 }
 
 /// Verifies that admin reconfiguration transactions work correctly.
@@ -757,8 +741,8 @@ async fn test_validator_onboarding_joined_node() -> color_eyre::Result<()> {
     // `join_network` pre-provisions a `priv_validator_key.json` for the new
     // node, so we can read the consensus pubkey back after joining and feed
     // it into the admin reconfig that promotes the node to validator status.
-    let join_dir = tempfile::tempdir()?;
-    let join_path = join_dir.path().join("newcomer");
+    // Join under the network's tree, so the newcomer's home is retained with it.
+    let join_path = network.directory.join("newcomer");
 
     let genesis_file = network.network.nodes[0].genesis_path();
     let rpc_url: url::Url = network.rpc_url().parse()?;
@@ -785,32 +769,12 @@ async fn test_validator_onboarding_joined_node() -> color_eyre::Result<()> {
     );
 
     // ── Phase 2: Spawn the newcomer's processes ────────────────────────────
-    // Drop of JoinedNodeProcs will reap them on test exit.
-    let cometbft_child = Command::new(cometbft_bin.to_str().unwrap())
-        .args(["start", "--home", &joined.cometbft_home().to_string_lossy()])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
-
-    let felidae_child = Command::new(felidae_bin.to_str().unwrap())
-        .env("RUST_LOG", "info")
-        .args([
-            "start",
-            "--abci-bind",
-            &joined.abci_address(),
-            "--query-bind",
-            &format!("{}:{}", joined.bind_address, joined.ports.felidae_query),
-            "--homedir",
-            &joined.felidae_home().to_string_lossy(),
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
-
-    let _joined_procs = JoinedNodeProcs {
-        cometbft: cometbft_child,
-        felidae: felidae_child,
-    };
+    // Through the harness, so they are logged, liveness-tracked, and reaped.
+    network.spawn_processes(
+        &joined,
+        cometbft_bin.to_str().unwrap(),
+        felidae_bin.to_str().unwrap(),
+    )?;
 
     // ── Phase 3: Wait for the joined node to sync ──────────────────────────
     let sync_target = query_chain_info(&felidae_bin, &network.query_url())?.block_height;
