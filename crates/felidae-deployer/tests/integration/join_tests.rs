@@ -4,31 +4,15 @@
 //! using `join_network()`, sync to the current block height, and serve
 //! queries via `felidae query chain-info`.
 
-use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use felidae_deployer::join::{GenesisSource, JoinConfig, PeerSource};
 use felidae_types::response::ChainInfo;
 
 use crate::binaries::find_binaries;
-use crate::constants::network_startup_timeout;
+use crate::constants::{network_startup_timeout, poll_interval};
 use crate::harness::TestNetwork;
-use crate::helpers::{query_config, run_query_command};
-
-/// Manages a joined node's processes so they are cleaned up on drop.
-struct JoinedNode {
-    cometbft: Child,
-    felidae: Child,
-}
-
-impl Drop for JoinedNode {
-    fn drop(&mut self) {
-        let _ = self.cometbft.kill();
-        let _ = self.cometbft.wait();
-        let _ = self.felidae.kill();
-        let _ = self.felidae.wait();
-    }
-}
+use crate::helpers::{poll_until_async, query_config, run_query_command};
 
 /// Queries `felidae query chain-info --json` and parses the result.
 fn query_chain_info(
@@ -77,8 +61,8 @@ async fn test_join_network_syncs_to_target_height() -> color_eyre::Result<()> {
     // ── Step 3: join-network ─────────────────────────────────────────────
     // Use the authoritative genesis file from a validator node, and
     // auto-discover peers from the CometBFT RPC.
-    let join_dir = tempfile::tempdir()?;
-    let join_path = join_dir.path().join("fullnode");
+    // Join under the network's tree, so the full node's home is retained with it.
+    let join_path = network.directory.join("fullnode");
 
     let genesis_file = network.network.nodes[0].genesis_path();
     let rpc_url: url::Url = network.rpc_url().parse()?;
@@ -103,75 +87,38 @@ async fn test_join_network_syncs_to_target_height() -> color_eyre::Result<()> {
     );
 
     // ── Step 4: start the joined node ────────────────────────────────────
-    let cometbft_child = Command::new(cometbft_bin.to_str().unwrap())
-        .args(["start", "--home", &node.cometbft_home().to_string_lossy()])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
-
-    let felidae_child = Command::new(felidae_bin.to_str().unwrap())
-        .args([
-            "start",
-            "--abci-bind",
-            &node.abci_address(),
-            "--query-bind",
-            &format!("{}:{}", node.bind_address, node.ports.felidae_query),
-            "--homedir",
-            &node.felidae_home().to_string_lossy(),
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
-
-    let _joined = JoinedNode {
-        cometbft: cometbft_child,
-        felidae: felidae_child,
-    };
+    // Through the harness, so its processes are logged, liveness-tracked, and
+    // reaped.
+    network.spawn_processes(
+        &node,
+        cometbft_bin.to_str().unwrap(),
+        felidae_bin.to_str().unwrap(),
+    )?;
 
     // ── Step 5: poll joined node until it reaches the target height ──────
-    let poll_timeout = Duration::from_secs(60);
-    let poll_interval = Duration::from_secs(2);
-    let start = std::time::Instant::now();
+    poll_until_async(
+        Duration::from_secs(60),
+        poll_interval(),
+        "joined node syncs to target height",
+        || async {
+            let height = query_chain_info(&felidae_bin, &joined_query_url)?.block_height;
+            eprintln!("[test] joined node height: {height} (target: {target_height})");
+            Ok(height >= target_height)
+        },
+    )
+    .await?;
 
-    loop {
-        if start.elapsed() > poll_timeout {
-            return Err(color_eyre::eyre::eyre!(
-                "joined node did not sync to height {target_height} within {poll_timeout:?}"
-            ));
-        }
+    // ── Step 6: assert ───────────────────────────────────────────────────
+    // Compare the Config value returned by the newly-joined node to one
+    // reported by a genesis validator. Slightly more substantive than a simple
+    // height check.
+    let expected_config = query_config(&felidae_bin, &network.query_url())?;
+    let joined_config = query_config(&felidae_bin, &joined_query_url)?;
+    assert_eq!(
+        joined_config, expected_config,
+        "joined node's config should match the network's config"
+    );
+    eprintln!("[test] joined node state verified: config matches network");
 
-        match query_chain_info(&felidae_bin, &joined_query_url) {
-            Ok(info) => {
-                eprintln!(
-                    "[test] joined node height: {} (target: {target_height})",
-                    info.block_height
-                );
-                // ── Step 6: assert ───────────────────────────────────────
-                if info.block_height >= target_height {
-                    eprintln!(
-                        "[test] joined node synced! height={} >= target={}",
-                        info.block_height, target_height
-                    );
-
-                    // Compare the Config value returned by the newly-joined node
-                    // to one reported by a genesis validator. Slightly more substantive
-                    // than a simple height check.
-                    let expected_config = query_config(&felidae_bin, &network.query_url())?;
-                    let joined_config = query_config(&felidae_bin, &joined_query_url)?;
-                    assert_eq!(
-                        joined_config, expected_config,
-                        "joined node's config should match the network's config"
-                    );
-                    eprintln!("[test] joined node state verified: config matches network");
-
-                    return Ok(());
-                }
-            }
-            Err(e) => {
-                eprintln!("[test] query not ready yet: {e}");
-            }
-        }
-
-        tokio::time::sleep(poll_interval).await;
-    }
+    Ok(())
 }

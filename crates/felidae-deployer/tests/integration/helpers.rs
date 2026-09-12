@@ -32,6 +32,7 @@ pub async fn poll_until(
             Ok(false) => {}
             Err(e) => eprintln!("[poll_until] {description}: error (retrying): {e}"),
         }
+        crate::harness::ensure_network_alive(description)?;
         if start.elapsed() > timeout {
             return Err(color_eyre::eyre::eyre!(
                 "condition not met within {timeout:?}: {description}"
@@ -62,6 +63,7 @@ where
             Ok(false) => {}
             Err(e) => eprintln!("[poll_until_async] {description}: error (retrying): {e}"),
         }
+        crate::harness::ensure_network_alive(description)?;
         if start.elapsed() > timeout {
             return Err(color_eyre::eyre::eyre!(
                 "condition not met within {timeout:?}: {description}"
@@ -508,6 +510,7 @@ pub async fn wait_reconfig_applied(
                 start_height
             }
         };
+        crate::harness::ensure_network_alive(description)?;
         if height.saturating_sub(start_height) >= BLOCK_BUDGET || start.elapsed() >= hard_cap {
             let current = query_config(felidae_bin, query_url)
                 .map(|c| c.version.to_string())
