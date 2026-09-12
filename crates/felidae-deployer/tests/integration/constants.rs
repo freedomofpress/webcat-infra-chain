@@ -33,6 +33,19 @@ pub const TEST_DOMAIN_UNENROLL: (&str, &str) = ("goss.webcat.tech.", "tech.");
 pub const TEST_SUBDOMAIN_PREFIX_1: &str = "goss";
 pub const TEST_SUBDOMAIN_PREFIX_2: &str = "subby";
 
+/// Validators in the default test topology.
+///
+/// At n=3 both BFT tolerance (`f = 0`) and voting quorum (3-of-3) demand
+/// unanimity, so any one fault halts everything and every failure looks like
+/// a timeout. At n=4, `f = 1` and quorum is 3-of-4: one bad node leaves the
+/// rest alive to fail the right assertion.
+pub const DEFAULT_NUM_VALIDATORS: usize = 4;
+
+/// Validators for a test that removes one and still needs fault tolerance.
+///
+/// Removing one from four lands back at `f = 0`.
+pub const VALIDATORS_WITH_REMOVAL: usize = 5;
+
 /// The chain ID used in all integration tests.
 pub const TEST_CHAIN_ID: &str = "felidae-integration-test";
 
