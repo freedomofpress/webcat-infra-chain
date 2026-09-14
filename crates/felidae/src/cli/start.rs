@@ -9,7 +9,10 @@ use felidae_state::Store;
 
 use super::Run;
 
+mod fail_fast;
 mod query;
+
+use fail_fast::FailFast;
 
 #[derive(Parser)]
 pub struct Start {
@@ -49,8 +52,12 @@ impl Run for Start {
         // We use a clone of the committed storage for queries:
         let storage = state.storage.clone();
 
-        // Split the state service into its ABCI components:
-        let (consensus, mempool, snapshot, info) = tower_abci::v038::split::service(state, 4);
+        // Split the state service into its ABCI components. `FailFast` wraps the
+        // service before the split so that a panic anywhere in ABCI request
+        // handling ends the process rather than silently killing one connection
+        // and leaving the query port answering for a node with no consensus:
+        let (consensus, mempool, snapshot, info) =
+            tower_abci::v038::split::service(FailFast::new(state), 4);
 
         // Start the ABCI server:
         let abci = tokio::spawn(async move {

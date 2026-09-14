@@ -1153,6 +1153,7 @@ dependencies = [
  "tendermint-rpc",
  "thiserror 2.0.16",
  "tokio",
+ "tower 0.5.2",
  "tower-abci",
  "tracing",
  "tracing-subscriber",
