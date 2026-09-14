@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use felidae_types::response::{
-    AdminVote, ChainInfo, OracleVote, PendingConfig, PendingObservation, ValidatorInfo,
+    AdminVote, ChainInfo, Health, OracleVote, PendingConfig, PendingObservation, ValidatorInfo,
 };
 use felidae_types::transaction::Config as ChainConfig;
 use reqwest::Url;
@@ -28,6 +28,8 @@ pub struct Query {
 pub enum QueryCommand {
     /// Query basic chain info (height, chain ID, block time, app hash).
     ChainInfo(ChainInfoCmd),
+    /// Ask whether a node is still committing blocks. Exits non-zero if not.
+    Health(HealthCmd),
     /// Query canonical domain→hash mappings.
     Snapshot(Snapshot),
     /// Query active oracle votes in the vote queue.
@@ -50,6 +52,7 @@ impl Run for Query {
         let query_url = self.query_url;
         match self.command {
             QueryCommand::ChainInfo(cmd) => cmd.run(query_url).await,
+            QueryCommand::Health(cmd) => cmd.run(query_url).await,
             QueryCommand::Snapshot(cmd) => cmd.run(query_url).await,
             QueryCommand::EnrollmentVotes(cmd) => cmd.run(query_url).await,
             QueryCommand::EnrollmentPending(cmd) => cmd.run(query_url).await,
@@ -85,6 +88,57 @@ impl ChainInfoCmd {
             println!("Block Height: {}", info.block_height);
             println!("Block Time:   {}", info.block_time);
             println!("App Hash:     {}", info.app_hash);
+        }
+        Ok(())
+    }
+}
+
+#[derive(clap::Args)]
+pub struct HealthCmd {
+    /// Emit output as JSON.
+    #[clap(long)]
+    pub json: bool,
+}
+
+/// A health probe must answer, even about a process that hangs on its socket.
+fn probe_client() -> color_eyre::Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?)
+}
+
+impl HealthCmd {
+    async fn run(self, query_url: Url) -> color_eyre::Result<()> {
+        // Deliberately no `error_for_status`: an unhealthy node answers 503
+        // with the very report we want to show.
+        let response = probe_client()?
+            .get(query_url.join("/healthz")?)
+            .send()
+            .await?;
+        let status = response.status();
+        let body = response.text().await?;
+
+        let Ok(health) = serde_json::from_str::<Health>(&body) else {
+            // A node that has not finished InitChain answers in plain text.
+            eprintln!("node reported {status}: {}", body.trim());
+            std::process::exit(1);
+        };
+
+        if self.json {
+            println!("{}", serde_json::to_string(&health)?);
+        } else {
+            println!("Healthy:      {}", health.healthy);
+            println!("Block Height: {}", health.block_height);
+            println!("Block Time:   {}", health.block_time);
+            println!(
+                "Block Age:    {}s (tolerance {}s)",
+                health.block_age_secs, health.tolerance_secs
+            );
+        }
+
+        // Exit non-zero so this composes with shell health checks.
+        if !health.healthy {
+            std::process::exit(1);
         }
         Ok(())
     }
