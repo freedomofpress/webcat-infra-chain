@@ -88,6 +88,32 @@ pub struct ChainInfo {
     pub app_hash: String,
 }
 
+/// Response structure from the `/healthz` query endpoint.
+///
+/// Every other endpoint answers from the latest committed snapshot, so a node
+/// whose ABCI side has died keeps returning 200 with frozen data indefinitely.
+/// This type answers the different question of whether the node is still
+/// *advancing*: `healthy` is false once the newest committed block is older
+/// than `tolerance_secs`. The HTTP status mirrors it, 200 or 503, so a health
+/// check that reads nothing but the status code still gets the right answer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Health {
+    /// Whether the node is still committing blocks.
+    pub healthy: bool,
+    /// Height of the newest committed block.
+    pub block_height: u64,
+    /// Timestamp of the newest committed block.
+    pub block_time: Time,
+    /// Seconds elapsed between `block_time` and the node's wall clock.
+    pub block_age_secs: u64,
+    /// Seconds `block_age_secs` may reach before the node reports unhealthy.
+    pub tolerance_secs: u64,
+    /// Mean seconds between recent blocks, or `null` before a second block
+    /// exists to measure against. The inferred `tolerance_secs` derives from
+    /// this unless the operator has overridden it.
+    pub observed_interval_secs: Option<u64>,
+}
+
 /// Response structure from the `/validators` query endpoint.
 ///
 /// Summarises a single validator's on-chain state: its identity, current
@@ -167,6 +193,32 @@ mod tests {
         assert_eq!(back.identity, identity);
         assert_eq!(back.address, identity.address());
         assert_eq!(back.status, ValidatorStatus::Jailed);
+    }
+
+    #[test]
+    fn health_wire_shape_is_stable() {
+        // Load balancers and `jq` health checks read these keys by name, so the
+        // spelling is the contract, not an implementation detail.
+        let health = Health {
+            healthy: false,
+            block_height: 42,
+            block_time: Time::from_unix_timestamp(1_700_000_000, 0).unwrap(),
+            block_age_secs: 900,
+            tolerance_secs: 30,
+            observed_interval_secs: None,
+        };
+        let json = serde_json::to_value(&health).unwrap();
+        assert_eq!(json["healthy"], false);
+        assert_eq!(json["block_height"], 42);
+        assert_eq!(json["block_age_secs"], 900);
+        assert_eq!(json["tolerance_secs"], 30);
+        // A chain too young to measure reports null, not a misleading zero.
+        assert!(json["observed_interval_secs"].is_null());
+
+        let back: Health = serde_json::from_value(json).unwrap();
+        assert!(!back.healthy);
+        assert_eq!(back.block_time, health.block_time);
+        assert_eq!(back.observed_interval_secs, None);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
 use clap::Parser;
 use color_eyre::{
@@ -10,6 +10,7 @@ use felidae_state::Store;
 use super::Run;
 
 mod fail_fast;
+mod health;
 mod query;
 
 use fail_fast::FailFast;
@@ -25,6 +26,11 @@ pub struct Start {
     /// Home directory for storing state (defaults to platform-specific directory).
     #[clap(long)]
     pub homedir: Option<std::path::PathBuf>,
+    /// How stale the newest committed block may be before `/healthz` reports
+    /// unhealthy (e.g. "45s", "2m"). Defaults to ten times the chain's own
+    /// observed block interval, with a 30s floor.
+    #[clap(long, value_parser = humantime::parse_duration)]
+    health_max_block_age: Option<Duration>,
 }
 
 impl Run for Start {
@@ -33,6 +39,7 @@ impl Run for Start {
             abci_bind,
             query_bind,
             homedir,
+            health_max_block_age,
         } = self;
 
         // Determine the internal and canonical storage directories:
@@ -78,7 +85,10 @@ impl Run for Start {
         // Start the query server:
         let query = tokio::spawn(async move {
             let listener = tokio::net::TcpListener::bind(query_bind).await?;
-            axum::serve(listener, query::app(storage)).await?;
+            let policy = health::Policy {
+                max_block_age: health_max_block_age,
+            };
+            axum::serve(listener, query::app(storage, policy)).await?;
 
             Ok::<_, Report>(())
         });

@@ -12,9 +12,12 @@ use fqdn::FQDN;
 use futures::StreamExt;
 use reqwest::StatusCode;
 use serde::Serialize;
+use tendermint::Time;
 use tracing::debug;
 
-pub fn app(storage: Storage) -> Router {
+use super::health;
+
+pub fn app(storage: Storage, health_policy: health::Policy) -> Router {
     let chain_info = {
         let storage = storage.clone();
         move || async move {
@@ -48,6 +51,31 @@ pub fn app(storage: Storage) -> Router {
                     StatusCode::OK,
                     [("Content-Type", "application/json")],
                     Body::from(serde_json::to_string_pretty(&info).unwrap()),
+                ),
+            }
+        }
+    };
+
+    let healthz = {
+        let storage = storage.clone();
+        move || async move {
+            let state = State::new(StateDelta::new(storage.latest_snapshot()));
+            match health::report(&state, health_policy, Time::now()).await {
+                // A node that cannot yet read its own height has not finished
+                // InitChain. Unhealthy is the honest answer, not a 500.
+                Err(e) => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    [("Content-Type", "text/plain")],
+                    Body::from(e.to_string()),
+                ),
+                Ok(report) => (
+                    if report.healthy {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    },
+                    [("Content-Type", "application/json")],
+                    Body::from(serde_json::to_string_pretty(&report).unwrap()),
                 ),
             }
         }
@@ -540,6 +568,12 @@ pub fn app(storage: Storage) -> Router {
                                     .to_string(),
                         },
                         EndpointInfo {
+                            path: "/healthz".to_string(),
+                            description:
+                                "Report whether this node is still committing blocks (503 if not)"
+                                    .to_string(),
+                        },
+                        EndpointInfo {
                             path: "/config".to_string(),
                             description: "Get the current chain configuration".to_string(),
                         },
@@ -608,6 +642,7 @@ pub fn app(storage: Storage) -> Router {
             }),
         )
         .route("/chain-info", get(move || async { chain_info().await }))
+        .route("/healthz", get(move || async { healthz().await }))
         .route("/config", get(move || async { config().await }))
         .route("/oracles", get(move || async { oracles().await }))
         .route(
