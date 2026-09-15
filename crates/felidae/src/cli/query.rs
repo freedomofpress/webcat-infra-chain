@@ -98,6 +98,118 @@ pub struct HealthCmd {
     /// Emit output as JSON.
     #[clap(long)]
     pub json: bool,
+    /// This node's CometBFT RPC, e.g. `http://127.0.0.1:26657`.
+    ///
+    /// With it, `health` can tell "this node is broken" from "the chain is
+    /// stopped", which `/healthz` alone cannot. See the exit codes below.
+    #[clap(long)]
+    pub peer: Option<Url>,
+}
+
+/// What `health` concluded, and what an operator should do about it.
+///
+/// `/healthz` answers "am I still committing blocks", which is the right
+/// question for routing and the wrong one for restarting. When a chain halts,
+/// *every* node reports unhealthy -- including the ones that are working --
+/// so a restart triggered by a 503 cycles the whole validator set without
+/// fixing anything.
+///
+/// Comparing the app's height against the CometBFT process feeding it
+/// separates the cases. A node whose ABCI service has died sits permanently
+/// behind its own peer, because it panicked partway through a block. A healthy
+/// node on a halted chain is level with its peer: both stopped at the same
+/// height.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum Verdict {
+    /// Committing blocks. Exit 0.
+    Advancing,
+    /// Not advancing and behind its own peer: this node is the problem.
+    /// Exit 1.
+    NodeBehind,
+    /// Not advancing, but level with its CometBFT peer, so the chain is
+    /// stopped rather than this node. Restarting will not help. Exit 2.
+    ChainStopped,
+    /// Replaying history. Its peer may lead by a block mid-apply, which is
+    /// not a fault; restarting would only set the sync back. Exit 2.
+    CatchingUp,
+    /// No peer given, so the cases cannot be told apart. Exit 3.
+    Unknown,
+}
+
+impl Verdict {
+    fn code(self) -> i32 {
+        match self {
+            Verdict::Advancing => 0,
+            Verdict::NodeBehind => 1,
+            Verdict::ChainStopped | Verdict::CatchingUp => 2,
+            Verdict::Unknown => 3,
+        }
+    }
+
+    fn describe(self) -> &'static str {
+        match self {
+            Verdict::Advancing => "advancing",
+            Verdict::NodeBehind => "this node is behind its own CometBFT peer",
+            Verdict::ChainStopped => "chain stopped (this node is level with its peer)",
+            Verdict::CatchingUp => "catching up",
+            Verdict::Unknown => "not advancing (pass --peer to tell why)",
+        }
+    }
+
+    /// Decide what the operator should do, not merely whether to route here.
+    async fn judge(health: &Health, peer: Option<&Url>) -> Self {
+        if health.healthy {
+            return Verdict::Advancing;
+        }
+        let Some(peer) = peer else {
+            return Verdict::Unknown;
+        };
+        let status = peer_status(peer).await.inspect_err(|e| {
+            eprintln!("could not reach {peer}: {e}");
+        });
+        Self::against(health.block_height, status.ok())
+    }
+
+    /// Judge a stalled node against its peer's status. `None` means the peer
+    /// did not answer, which is itself a broken node.
+    fn against(app_height: u64, peer: Option<PeerStatus>) -> Self {
+        match peer {
+            None => Verdict::NodeBehind,
+            Some(PeerStatus {
+                catching_up: true, ..
+            }) => Verdict::CatchingUp,
+            Some(PeerStatus { height, .. }) if height > app_height => Verdict::NodeBehind,
+            Some(_) => Verdict::ChainStopped,
+        }
+    }
+}
+
+/// The slice of CometBFT's `/status` that the verdict turns on.
+struct PeerStatus {
+    height: u64,
+    catching_up: bool,
+}
+
+/// Where this node's CometBFT peer stands.
+async fn peer_status(peer: &Url) -> color_eyre::Result<PeerStatus> {
+    let status: serde_json::Value = probe_client()?
+        .get(peer.join("/status")?)
+        .send()
+        .await?
+        .json()
+        .await?;
+    let sync = status
+        .pointer("/result/sync_info")
+        .ok_or_else(|| color_eyre::eyre::eyre!("no sync_info in /status from {peer}"))?;
+    let height = sync["latest_block_height"]
+        .as_str()
+        .and_then(|h| h.parse().ok())
+        .ok_or_else(|| color_eyre::eyre::eyre!("could not read latest_block_height from {peer}"))?;
+    Ok(PeerStatus {
+        height,
+        catching_up: sync["catching_up"].as_bool().unwrap_or(false),
+    })
 }
 
 /// A health probe must answer, even about a process that hangs on its socket.
@@ -124,24 +236,43 @@ impl HealthCmd {
             std::process::exit(1);
         };
 
+        let verdict = Verdict::judge(&health, self.peer.as_ref()).await;
         if self.json {
-            println!("{}", serde_json::to_string(&health)?);
+            print_json(&health, verdict)?;
         } else {
-            println!("Healthy:      {}", health.healthy);
-            println!("Block Height: {}", health.block_height);
-            println!("Block Time:   {}", health.block_time);
-            println!(
-                "Block Age:    {}s (tolerance {}s)",
-                health.block_age_secs, health.tolerance_secs
-            );
+            print_text(&health, verdict);
         }
 
-        // Exit non-zero so this composes with shell health checks.
-        if !health.healthy {
-            std::process::exit(1);
+        // Exit non-zero so this composes with shell health checks; exit 2
+        // specifically means "do not restart this node".
+        let code = verdict.code();
+        if code != 0 {
+            std::process::exit(code);
         }
         Ok(())
     }
+}
+
+fn print_json(health: &Health, verdict: Verdict) -> color_eyre::Result<()> {
+    #[derive(serde::Serialize)]
+    struct Out<'a> {
+        verdict: Verdict,
+        #[serde(flatten)]
+        health: &'a Health,
+    }
+    println!("{}", serde_json::to_string(&Out { verdict, health })?);
+    Ok(())
+}
+
+fn print_text(health: &Health, verdict: Verdict) {
+    println!("Healthy:      {}", health.healthy);
+    println!("Block Height: {}", health.block_height);
+    println!("Block Time:   {}", health.block_time);
+    println!(
+        "Block Age:    {}s (tolerance {}s)",
+        health.block_age_secs, health.tolerance_secs
+    );
+    println!("Verdict:      {}", verdict.describe());
 }
 
 #[derive(clap::Args)]
@@ -371,5 +502,37 @@ fn render_validators_table(validators: &[ValidatorInfo]) {
     ]);
     for row in &rows {
         print_row([&row.identity, &row.status, &row.power, &row.uptime]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PeerStatus, Verdict};
+
+    fn peer(height: u64, catching_up: bool) -> Option<PeerStatus> {
+        Some(PeerStatus {
+            height,
+            catching_up,
+        })
+    }
+
+    #[test]
+    fn behind_its_peer_means_restart() {
+        assert_eq!(Verdict::against(2, peer(3, false)), Verdict::NodeBehind);
+    }
+
+    #[test]
+    fn level_with_its_peer_means_the_chain_stopped() {
+        assert_eq!(Verdict::against(3, peer(3, false)), Verdict::ChainStopped);
+    }
+
+    #[test]
+    fn a_syncing_peer_one_block_ahead_is_not_a_fault() {
+        assert_eq!(Verdict::against(2, peer(3, true)), Verdict::CatchingUp);
+    }
+
+    #[test]
+    fn an_unreachable_peer_means_restart() {
+        assert_eq!(Verdict::against(3, None), Verdict::NodeBehind);
     }
 }

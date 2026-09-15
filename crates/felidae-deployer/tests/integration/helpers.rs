@@ -8,7 +8,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use felidae_types::response::{
-    AdminVote, ChainInfo, OracleVote, PendingObservation, ValidatorInfo,
+    AdminVote, ChainInfo, Health, OracleVote, PendingObservation, ValidatorInfo,
 };
 use felidae_types::transaction::Config;
 use tendermint_rpc::{Client, HttpClient, Paging};
@@ -117,6 +117,60 @@ pub async fn wait_blocks(
     })
     .await?;
     latest_height(rpc_client).await
+}
+
+/// Every node's `/healthz`, as `(node index, status code, body)`.
+pub async fn node_health(query_urls: &[String]) -> Vec<(usize, u16, Option<Health>)> {
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .expect("client");
+    let mut out = Vec::new();
+    for (i, url) in query_urls.iter().enumerate() {
+        match http.get(format!("{url}/healthz")).send().await {
+            Ok(resp) => {
+                let code = resp.status().as_u16();
+                out.push((i, code, resp.json::<Health>().await.ok()));
+            }
+            Err(_) => out.push((i, 0, None)),
+        }
+    }
+    out
+}
+
+/// Fail if any node reports unhealthy.
+///
+/// Every other assertion in this suite reads committed state, which a node
+/// serves happily long after it has stopped participating. `/healthz` is the
+/// one endpoint that answers "am I still advancing", so calling it at the end
+/// of a test gives every test a failure mode it did not previously have: the
+/// chain reached the state the test wanted, and a node died on the way.
+///
+/// A status of 0 means the port did not answer at all, which is the shape a
+/// node aborted by `FailFast` leaves behind.
+pub async fn assert_all_nodes_healthy(query_urls: &[String]) -> color_eyre::Result<()> {
+    let unhealthy: Vec<String> = node_health(query_urls)
+        .await
+        .into_iter()
+        .filter(|(_, code, _)| *code != 200)
+        .map(|(i, code, body)| match body {
+            Some(h) => format!(
+                "node {i}: HTTP {code}, height {} stale by {}s (tolerance {}s)",
+                h.block_height, h.block_age_secs, h.tolerance_secs
+            ),
+            None if code == 0 => format!("node {i}: query port did not answer"),
+            None => format!("node {i}: HTTP {code}"),
+        })
+        .collect();
+    if unhealthy.is_empty() {
+        return Ok(());
+    }
+    Err(color_eyre::eyre::eyre!(
+        "{} of {} nodes report unhealthy: {}",
+        unhealthy.len(),
+        query_urls.len(),
+        unhealthy.join("; ")
+    ))
 }
 
 // =============================================================================

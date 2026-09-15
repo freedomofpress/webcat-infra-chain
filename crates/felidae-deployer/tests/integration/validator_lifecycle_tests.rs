@@ -19,9 +19,9 @@ use crate::constants::{
 };
 use crate::harness::TestNetwork;
 use crate::helpers::{
-    assert_nodes_agree, latest_height, poll_until, poll_until_async, query_cometbft_validators,
-    query_config, query_validator_info, read_genesis_validator_pubkeys, submit_admin_reconfig,
-    wait_blocks, wait_reconfig_applied,
+    assert_all_nodes_healthy, assert_nodes_agree, latest_height, node_health, poll_until,
+    poll_until_async, query_cometbft_validators, query_config, query_validator_info,
+    read_genesis_validator_pubkeys, submit_admin_reconfig, wait_blocks, wait_reconfig_applied,
 };
 
 /// Tight `ValidatorConfig` tuned for downtime tests: a 30-block uptime
@@ -622,7 +622,14 @@ async fn test_jailed_validator_unjails_on_recovery() -> color_eyre::Result<()> {
     //
     // Unjailing proves CometBFT counts its votes, not that its state matches.
     let agreed_at = assert_nodes_agree(&network.query_urls(), consensus_propagation_wait()).await?;
-    eprintln!("[phase 3] all 4 nodes agree on committed state at height {agreed_at}");
+    eprintln!(
+        "[phase 3] all {} nodes agree on committed state at height {agreed_at}",
+        network.validator_count()
+    );
+
+    // And every node says so itself. Agreement shows they committed the same
+    // state; `/healthz` shows they are still committing.
+    assert_all_nodes_healthy(&network.query_urls()).await?;
 
     Ok(())
 }
@@ -864,4 +871,94 @@ async fn test_jailed_validator_uptime_still_tracked() -> color_eyre::Result<()> 
     );
 
     Ok(())
+}
+
+/// A node that has stopped must say so on `/healthz`, and its peers must not.
+///
+/// This is the negative control for `assert_all_nodes_healthy`. Without it,
+/// that assertion could be vacuous -- an endpoint that always returns 200
+/// would satisfy every other test in this suite just as well as a working one.
+///
+/// Killing a validator outright is a cruder fault than the one that motivated
+/// the endpoint (an ABCI service that dies while the process lives), but it
+/// produces the same observable: a node whose committed height stops moving.
+/// The distinction that matters is the second assertion -- the *surviving*
+/// nodes keep reporting healthy, because at n=4 the chain continues without
+/// the one that died. An endpoint that reported the whole network unhealthy
+/// whenever any node stopped would be useless for deciding what to restart.
+#[tokio::test]
+#[cfg(feature = "integration")]
+async fn test_healthz_reports_a_stopped_node() -> color_eyre::Result<()> {
+    let (cometbft_bin, felidae_bin) = find_binaries()?;
+
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_NUM_VALIDATORS).await?;
+    network.start(
+        cometbft_bin.to_str().unwrap(),
+        felidae_bin.to_str().unwrap(),
+    )?;
+    network.wait_ready(network_startup_timeout()).await?;
+
+    // Everyone healthy to begin with, or the rest proves nothing.
+    assert_all_nodes_healthy(&network.query_urls()).await?;
+    eprintln!("[phase 0] all {} nodes healthy", network.validator_count());
+
+    let target = network.validator_count() - 1;
+    let target_url = network.node_query_url(target);
+    let survivors: Vec<String> = (0..network.validator_count())
+        .filter(|i| *i != target)
+        .map(|i| network.node_query_url(i))
+        .collect();
+    let killed_at = max_height(&survivors).await;
+    network.kill_validator(target)?;
+    eprintln!("[phase 1] killed validator-{target} at height {killed_at}");
+
+    // Its port stops answering at all, which is the clearest possible signal.
+    poll_until_async(
+        consensus_propagation_wait_long(),
+        poll_interval(),
+        "the killed node's query port stops answering healthy",
+        || async {
+            let health = node_health(std::slice::from_ref(&target_url)).await;
+            Ok(health.iter().all(|(_, code, _)| *code != 200))
+        },
+    )
+    .await?;
+    eprintln!("[phase 1] validator-{target} no longer reports healthy");
+
+    // The survivors carry on. At n=4 losing one leaves quorum intact, so a
+    // health check must distinguish "this node is broken" from "the chain is
+    // stopped" -- otherwise it cannot be used to decide what to restart.
+    //
+    // Healthy alone would prove nothing here: the kill is seconds old and the
+    // tolerance is 30s, so even a halted chain would still look healthy. Each
+    // survivor must first commit past the kill height.
+    poll_until_async(
+        consensus_propagation_wait_long(),
+        poll_interval(),
+        "every survivor commits past the kill height",
+        || async {
+            let health = node_health(&survivors).await;
+            Ok(health
+                .iter()
+                .all(|(_, _, h)| h.as_ref().is_some_and(|h| h.block_height > killed_at)))
+        },
+    )
+    .await?;
+    assert_all_nodes_healthy(&survivors).await?;
+    eprintln!(
+        "[phase 2] the remaining {} nodes still report healthy",
+        survivors.len()
+    );
+
+    Ok(())
+}
+
+/// The highest height any of these nodes reports on `/healthz`.
+async fn max_height(query_urls: &[String]) -> u64 {
+    node_health(query_urls)
+        .await
+        .iter()
+        .filter_map(|(_, _, h)| h.as_ref().map(|h| h.block_height))
+        .max()
+        .unwrap_or(0)
 }
