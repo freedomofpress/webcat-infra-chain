@@ -224,6 +224,184 @@ It will rsync the bootstrapped data out to each of the validators and sentries.
 
 ---
 
+## Step 1b — Author the chain config (genesis `app_state.config`)
+
+The genesis files produced by the bootstrap step contain **no `app_state`**, and
+Felidae refuses to start a chain without one: `InitChain` requires a complete,
+valid `app_state.config` (there is no default, and the first reconfigure is
+never permissionless). Before deploying, author the config and inject it into
+every node's genesis.
+
+1. Collect the admin and oracle **public keys** from each operator (see
+   ["How to generate and get the keys"](#how-to-generate-and-get-the-keys-for-the-felidae-admin-and-oracle)
+   below — these identities go into the config authored here).
+
+2. Author `config.json`. Start from `felidae admin template`, copy a
+   deployed example such as `genesis/testnet01/genesis.json`'s
+   `app_state.config`, or generate a known-good reference with
+   `felidae-deployer create-network` (see
+   ["Using felidae-deployer"](#using-felidae-deployer-local-networks-and-genesis-reference)
+   below). Fill in:
+   - `admins.authorized`: every admin public key; `admins.voting.total` must
+     equal the list length, and `quorum` is your threshold (e.g. 2 of 3).
+   - `oracles.authorized` / `oracles.voting`: same rules. At least one oracle
+     is required.
+   - Leave no placeholder identities and no zero quorums — the chain will
+     refuse to start otherwise.
+
+3. Pre-flight the config:
+
+   ```bash
+   felidae debug parse-config config.json
+   ```
+
+4. Inject it into **each** node directory before the rsync in Step 1 (genesis
+   must be byte-for-byte identical on every node). The easiest way is
+   `felidae-deployer inject-config`, which re-validates the config with the
+   same checks `InitChain` runs before writing anything:
+
+   ```bash
+   felidae-deployer inject-config --config config.json \
+       $(printf -- '--genesis %s ' "${COMETBFT_TESTNET_DIR}"/node*/config/genesis.json)
+   ```
+
+   Or equivalently with `jq`, if you don't have the deployer built:
+
+   ```bash
+   for g in "${COMETBFT_TESTNET_DIR}"/node*/config/genesis.json; do
+       jq --slurpfile cfg config.json '.app_state = {config: $cfg[0]}' "$g" > "$g.new" \
+           && mv "$g.new" "$g"
+   done
+   ```
+
+   If you have already rsynced, re-run the sync play from Step 1 after
+   injecting, so all hosts receive the updated genesis.
+
+---
+
+## Using `felidae-deployer` (local networks and genesis reference)
+
+`felidae-deployer` is a Rust CLI that ships in the
+[webcat-infra-chain](https://github.com/freedomofpress/webcat-infra-chain)
+repository (`crates/felidae-deployer`). It orchestrates complete
+CometBFT + Felidae networks on a single machine — no Docker, no Ansible. It is
+a **developer/testing tool, not a production deployment path**, but it earns
+its place in this guide two ways:
+
+1. **Rehearsal.** Spin up the full topology locally (validators, optional
+   sentries, oracles) and watch a chain reach consensus before you touch real
+   infrastructure.
+2. **Genesis reference.** It performs Step 1b for you — generates admin and
+   oracle keys, computes BFT-safe quorums (`2n/3 + 1`), and injects a complete,
+   valid `app_state.config` into every node's genesis. Its output is a
+   known-good template for authoring your production `config.json`.
+
+Build it from the repo:
+
+```bash
+cargo build --release -p felidae-deployer
+```
+
+### `create-network` — generate a network directory
+
+```bash
+felidae-deployer create-network \
+    --directory ./testnet \
+    --num-validators 3 \
+    --use-sentries \
+    --chain-id felidae-test \
+    --admin-delay 0s \
+    --oracle-delay 1s
+```
+
+This produces, under `--directory`:
+
+- Per-node CometBFT homes (keys, `config.toml`, `genesis.json`) with
+  non-conflicting ports
+- Freshly generated **admin and oracle keypairs** for each validator
+- A genesis `app_state.config` listing those identities, with
+  `voting.total` = validator count and `quorum = 2n/3 + 1`, injected
+  identically into every node's genesis
+- `network.json` (network metadata) and a `process-compose.yaml` for
+  optional use with [process-compose](https://github.com/F1bonacc1/process-compose)
+
+The `--admin-delay` and `--oracle-delay` flags map to the `voting.delay`
+fields from Step 1b; `--timeout-commit` (alias `--blocks-every`) controls the
+block interval.
+
+To crib a config for Step 1b, extract it from any generated genesis:
+
+```bash
+jq .app_state.config ./testnet/validator-0/cometbft/config/genesis.json > config.json
+```
+
+Then replace the generated identities and endpoints with the real operators'
+public keys and URLs, adjust delays/timeouts for production, and pre-flight it
+with `felidae debug parse-config` as usual.
+
+### `run-network` — run it
+
+```bash
+# Run directly, with prefixed log output per process:
+felidae-deployer run-network --directory ./testnet \
+    --felidae-bin ./target/release/felidae \
+    --cometbft-bin ./cometbft/build/cometbft
+
+# Or build felidae from the current workspace automatically:
+felidae-deployer run-network --directory ./testnet --dev
+
+# Or hand off process management to process-compose:
+felidae-deployer run-network --directory ./testnet --process-compose
+```
+
+With no `--directory`, it creates a throwaway single-validator network in a
+temporary directory — the fastest way to a working chain. All processes
+(CometBFT, Felidae, one oracle server per validator) start together and shut
+down together on Ctrl+C. The repo's `justfile` wraps the common case:
+`just testnet-create` and `just testnet-run`.
+
+### `inject-config` — validate and inject a config into genesis files
+
+The command behind Step 1b's injection. With `--config`, it validates an
+authored config (the same stateless checks `InitChain` runs: placeholder
+identities, zero quorums, inconsistent voting totals) and writes it into the
+`app_state.config` of every `--genesis` file given:
+
+```bash
+felidae-deployer inject-config --config config.json \
+    --genesis node0/config/genesis.json --genesis node1/config/genesis.json
+```
+
+Without `--config`, it generates a **single-node dev config** instead: fresh
+admin and oracle keys (quorum 1 of 1), created in the same homedirs the
+`felidae` CLI uses, so `felidae admin ...` and `felidae oracle server` find
+them without extra flags. This is what `just genesis-single` uses to make a
+bare `cometbft init` home chain-startable. `--admin-delay`, `--oracle-delay`,
+and `--oracle-endpoint` tune the generated config.
+
+### `join-network` — bootstrap an additional node
+
+To add a full node to an already-running network:
+
+```bash
+felidae-deployer join-network \
+    --genesis-file genesis.json \
+    --peer <NODE_ID@HOST:26656> \
+    --directory ./fullnode
+```
+
+Genesis must come from `--genesis-file` or `--genesis-url` — a raw file, used
+byte-for-byte. Fetching genesis via CometBFT RPC is deliberately unsupported:
+the RPC re-serializes the JSON, which changes bytes and causes AppHash
+mismatches. This is the same byte-for-byte constraint behind the Step 1b rule
+that genesis must be identical on every node. Peers may instead be
+auto-discovered from a running node with `--cometbft-url <RPC>`, and
+`--find-free-ports` avoids collisions when joining on the same host. The
+command prints (or emits as JSON with `--json`) the exact `cometbft start` and
+`felidae start` invocations to launch the node.
+
+---
+
 ## Step 2 — Deploy Felidae, then CometBFT
 
 Create a playbook `playbooks/cometbft-nodes.yml`:
@@ -257,7 +435,7 @@ The following Felidae services are controlled by this role and its inventory:
 
 This runs on the validatores. It provides the one-shot CLI admin identity container (keys under `{{ felidae_home }}/admin_keys`), when you need to run it from time to time.
 
-Admins sign reconfiguration transations to change the chain configuration (for example, when new validators are added).
+Admins sign reconfiguration transations to change the chain configuration (for example, when new validators are added). The *initial* configuration is not set this way — it ships in the genesis `app_state.config` (Step 1b), and every reconfigure thereafter must be signed by an admin listed in the current config.
 
 Admins need access to the chain RPC on the validator.
 
@@ -459,7 +637,10 @@ Meanwhile, all other requests (to routes such as `/canonical/leaves`, `/config` 
 
 ## How to generate and get the keys for the Felidae Admin and Oracle
 
-To join the chain, we need to know the public keys.
+To join the chain, we need to know the public keys. For a new chain, collect
+these from every operator *before launch*: they belong in the genesis
+`app_state.config` (Step 1b). For an existing chain, an admin adds them via a
+signed reconfigure.
 
 Run the below to 'init' (create) the keys. The public key will be returned in the output of the second command.
 

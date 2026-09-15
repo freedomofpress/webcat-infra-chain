@@ -1,6 +1,7 @@
 use super::super::*;
 use super::common::setup_test_state;
 use crate::store::Substore::Internal;
+use felidae_types::test_util::identity_named;
 use felidae_types::transaction::{ChainId, Delay, Quorum, Timeout, Total};
 use futures::TryStreamExt;
 use std::time::Duration;
@@ -25,7 +26,8 @@ async fn test_vote_expiration_removes_votes_and_indexes() {
     // Cast a bunch of votes with timestamps old enough to expire
     {
         let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
-            VoteQueue::new(&mut *state_guard, "test_queue", make_config());
+            VoteQueue::new(&mut *state_guard, "test_queue", make_config())
+                .expect("valid voting config");
         for i in 0..3 {
             let vote_time = Time::from_unix_timestamp(
                 initial_block_time.unix_timestamp() - timeout.as_secs() as i64 - 100 - i as i64,
@@ -34,7 +36,7 @@ async fn test_vote_expiration_removes_votes_and_indexes() {
             .expect("valid timestamp");
             vote_queue
                 .cast(Vote {
-                    party: format!("party_{i}"),
+                    party: identity_named(&format!("party_{i}")),
                     time: vote_time,
                     key: key.clone(),
                     value: value.clone(),
@@ -66,7 +68,8 @@ async fn test_vote_expiration_removes_votes_and_indexes() {
     {
         // And now we can check that the votes get expired as we expect.
         let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
-            VoteQueue::new(&mut *state_guard, "test_queue", make_config());
+            VoteQueue::new(&mut *state_guard, "test_queue", make_config())
+                .expect("valid voting config");
         vote_queue
             .timeout_expired_votes()
             .await
@@ -114,7 +117,8 @@ async fn test_vote_expiration_boundary_behavior() {
 
     {
         let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
-            VoteQueue::new(&mut *state_guard, "test_queue", make_config());
+            VoteQueue::new(&mut *state_guard, "test_queue", make_config())
+                .expect("valid voting config");
 
         // Vote exactly at the timeout boundary.
         let boundary_time = Time::from_unix_timestamp(
@@ -124,7 +128,7 @@ async fn test_vote_expiration_boundary_behavior() {
         .expect("valid boundary timestamp");
         vote_queue
             .cast(Vote {
-                party: "boundary_party".to_string(),
+                party: identity_named("boundary_party"),
                 time: boundary_time,
                 key: key.clone(),
                 value: value_old.clone(),
@@ -140,7 +144,7 @@ async fn test_vote_expiration_boundary_behavior() {
         .expect("valid newer timestamp");
         vote_queue
             .cast(Vote {
-                party: "newer_party".to_string(),
+                party: identity_named("newer_party"),
                 time: newer_time,
                 key: key.clone(),
                 value: value_new.clone(),
@@ -152,7 +156,8 @@ async fn test_vote_expiration_boundary_behavior() {
     // Set current block time to initial_block_time (same as setup), so the boundary vote is exactly timeout seconds old.
     {
         let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
-            VoteQueue::new(&mut *state_guard, "test_queue", make_config());
+            VoteQueue::new(&mut *state_guard, "test_queue", make_config())
+                .expect("valid voting config");
 
         vote_queue
             .timeout_expired_votes()
@@ -195,7 +200,8 @@ async fn test_delay_boundary_behavior() {
 
     {
         let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
-            VoteQueue::new(&mut *state_guard, "test_queue", make_config());
+            VoteQueue::new(&mut *state_guard, "test_queue", make_config())
+                .expect("valid voting config");
 
         // Create a pending change exactly at the delay boundary.
         // The pending change timestamp is set to the vote that triggers quorum (the last vote).
@@ -216,7 +222,7 @@ async fn test_delay_boundary_behavior() {
             };
             vote_queue
                 .cast(Vote {
-                    party: format!("party_{i}"),
+                    party: identity_named(&format!("party_{i}")),
                     time: vote_time,
                     key: key.clone(),
                     value: value.clone(),
@@ -239,7 +245,8 @@ async fn test_delay_boundary_behavior() {
     // Set current block time to initial_block_time (same as setup), so the pending change is exactly delay seconds old.
     {
         let mut vote_queue: VoteQueue<'_, _, ChainId, ChainId> =
-            VoteQueue::new(&mut *state_guard, "test_queue", make_config());
+            VoteQueue::new(&mut *state_guard, "test_queue", make_config())
+                .expect("valid voting config");
 
         let promoted = vote_queue
             .promote_pending_changes()

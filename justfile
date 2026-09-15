@@ -33,14 +33,24 @@ integration block_time="2":
 integration-one test block_time="2":
     FELIDAE_BLOCK_TIME_SECS={{block_time}} cargo nextest run -p felidae-deployer --features integration --test-threads 1 -E 'test({{test}})'
 
+# Read-only pre-flight: validate a live deployment's committed configs under strict domain parsing
+live-config-check url:
+    cargo run -q --bin felidae -- debug parse-config --url {{url}}
+
 # Build WASM package for felidae-oracle
 build-wasm:
     cd crates/felidae-oracle && wasm-pack build --target web --out-dir pkg
 
-# Run CometBFT (builds if necessary)
+# Author a single-node genesis: dev admin/oracle keys wired into app_state.config.
+# InitChain refuses a genesis without a valid config — there is no default.
+genesis-single:
+    cargo run --bin felidae-deployer -- inject-config --genesis ~/.cometbft/config/genesis.json
+
+# Run CometBFT (builds if necessary; authors genesis app_state on first init)
 cometbft:
     just build-cometbft
     ./cometbft/build/cometbft init
+    just genesis-single
     ./cometbft/build/cometbft start
 
 # Run felidae (builds if necessary)

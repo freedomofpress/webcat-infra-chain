@@ -5,7 +5,7 @@ use color_eyre::{Report, eyre::eyre};
 use felidae_state::Vote;
 use felidae_state::{State, Substore};
 use felidae_types::response::{
-    AdminVote, ChainInfo, OracleVote, PendingConfig, PendingObservation,
+    AdminVote, ChainInfo, OracleInfo, OracleVote, PendingConfig, PendingObservation,
 };
 use felidae_types::transaction::{Domain, Empty};
 use fqdn::FQDN;
@@ -276,17 +276,12 @@ pub fn app(storage: Storage) -> Router {
                     Body::from(e.to_string()),
                 ),
                 Ok(config) => {
-                    #[derive(Serialize)]
-                    struct OracleInfo {
-                        identity: String,
-                        endpoint: url::Url,
-                    }
                     let oracles: Vec<OracleInfo> = config
                         .oracles
                         .authorized
                         .into_iter()
                         .map(|oracle| OracleInfo {
-                            identity: hex::encode(oracle.identity),
+                            identity: oracle.identity,
                             endpoint: oracle.endpoint,
                         })
                         .collect();
@@ -469,6 +464,48 @@ pub fn app(storage: Storage) -> Router {
         }
     };
 
+    let validators = || {
+        let storage = storage.clone();
+        move |filter: Option<String>| async move {
+            let state = State::new(StateDelta::new(storage.latest_snapshot()));
+            let filtered = filter.clone();
+            let get_validators = async move {
+                let mut all = state.validator_info().await?;
+                if let Some(ref id) = filtered {
+                    let needle = id.trim_start_matches("0x").to_ascii_lowercase();
+                    all.retain(|v| {
+                        v.identity.to_string().starts_with(&needle)
+                            || hex::encode(v.address.as_bytes()).starts_with(&needle)
+                    });
+                }
+                Ok::<_, Report>(all)
+            };
+            match get_validators.await {
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    [("Content-Type", "text/plain")],
+                    Body::from(e.to_string()),
+                ),
+                Ok(list) => {
+                    // A single-validator lookup that finds nothing should 404 rather than
+                    // silently returning an empty array.
+                    if filter.is_some() && list.is_empty() {
+                        return (
+                            StatusCode::NOT_FOUND,
+                            [("Content-Type", "text/plain")],
+                            Body::from("no validator matched"),
+                        );
+                    }
+                    (
+                        StatusCode::OK,
+                        [("Content-Type", "application/json")],
+                        Body::from(serde_json::to_string_pretty(&list).unwrap()),
+                    )
+                }
+            }
+        }
+    };
+
     // Duplicate underlying services as needed for routing:
     let root_snapshot = snapshot();
     let domain_snapshot = snapshot();
@@ -476,6 +513,8 @@ pub fn app(storage: Storage) -> Router {
     let domain_enrollment_votes = enrollment_votes();
     let root_enrollment_pending = enrollment_pending();
     let domain_enrollment_pending = enrollment_pending();
+    let all_validators = validators();
+    let one_validator = validators();
 
     Router::new()
         .route(
@@ -547,6 +586,16 @@ pub fn app(storage: Storage) -> Router {
                         EndpointInfo {
                             path: "/admin/pending".to_string(),
                             description: "Get pending admin configuration changes".to_string(),
+                        },
+                        EndpointInfo {
+                            path: "/validators".to_string(),
+                            description: "Get info for every validator on the chain".to_string(),
+                        },
+                        EndpointInfo {
+                            path: "/validators/{id}".to_string(),
+                            description:
+                                "Get info for a single validator by pubkey or address (prefix ok)"
+                                    .to_string(),
                         },
                     ],
                 };
@@ -623,6 +672,14 @@ pub fn app(storage: Storage) -> Router {
                     Err(e) => e,
                 }
             }),
+        )
+        .route(
+            "/validators",
+            get(move || async move { all_validators(None).await }),
+        )
+        .route(
+            "/validators/{id}",
+            get(move |Path(id): Path<String>| async move { one_validator(Some(id)).await }),
         )
 }
 

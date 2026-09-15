@@ -1,7 +1,7 @@
 use color_eyre::Report;
-use color_eyre::eyre::{Context, eyre};
+use color_eyre::eyre::{Context, bail, eyre};
 use felidae_proto::DomainType;
-use felidae_types::transaction::VotingConfig;
+use felidae_types::transaction::{Identity, VotingConfig};
 use futures::{StreamExt, TryStreamExt};
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -44,9 +44,14 @@ pub struct VoteQueue<'a, S, K, V> {
     _value: std::marker::PhantomData<fn(&V)>,
 }
 
+/// A vote cast by an authorized party (an admin or oracle identity).
+///
+/// The party is stored in state keys as its hex `Display`; one vote per party
+/// per key is kept, so the identity — not any free-form string — is what the
+/// tally counts.
 #[derive(Clone)]
 pub struct Vote<K, V> {
-    pub party: String,
+    pub party: Identity,
     pub time: Time,
     pub key: K,
     pub value: V,
@@ -67,14 +72,21 @@ where
         state: &'a mut State<S>,
         prefix: &'static str,
         config: VotingConfig,
-    ) -> VoteQueue<'a, S, K, V> {
-        VoteQueue {
+    ) -> Result<VoteQueue<'a, S, K, V>, Report> {
+        // The tally is a bare `count >= quorum`, so a zero quorum would
+        // promote any value on the first vote cast. Config validation already
+        // rejects zero quorums; enforcing the invariant here too means a
+        // permissive queue can never be constructed at all.
+        if config.quorum.0 == 0 {
+            bail!("voting config quorum must be non-zero");
+        }
+        Ok(VoteQueue {
             state,
             internal_state_prefix: prefix,
             config,
             _key: std::marker::PhantomData,
             _value: std::marker::PhantomData,
-        }
+        })
     }
 
     /// Run this every block to remove expired votes.
@@ -165,6 +177,7 @@ where
         }: Vote<K, V>,
     ) -> Result<(), Report> {
         let key = String::from(key);
+        let party = party.to_string();
         info!(key, party, ?value, "casting vote");
 
         // 0. Remove any pre-existing vote by this party for this key
@@ -415,7 +428,7 @@ where
                 let (key, value) = result?;
                 let (key, party, time) = self.parse_votes_by_key_party_timestamp(&key)?;
                 Ok::<_, Report>(Vote {
-                    party: party.to_string(),
+                    party: party.parse()?,
                     time,
                     key: key.to_string().try_into()?,
                     value,
@@ -449,7 +462,7 @@ where
                 let (key, value) = result?;
                 let (key, party, time) = self.parse_votes_by_key_party_timestamp(&key)?;
                 Ok::<_, Report>(Vote {
-                    party: party.to_string(),
+                    party: party.parse()?,
                     time,
                     key: key.to_string().try_into()?,
                     value,

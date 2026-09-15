@@ -17,10 +17,12 @@ hex = { workspace = true }
 prost = { workspace = true }
 tokio = { workspace = true }
 sha2 = { workspace = true }
+bitvec = { workspace = true }
 tower = { workspace = true }
 serde_json = { workspace = true }
 tempfile = "3"
 
 [dev-dependencies]
+felidae-types = { path = "../felidae-types", features = ["test-util"] }
 proptest = "1"
 url = { workspace = true }
