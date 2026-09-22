@@ -204,7 +204,7 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     ///
     /// This handles state transitions from:
     /// - Active       --> Tombstoned
-    /// - Inactive --> Tombstoned
+    /// - Inactive     --> Tombstoned (no update: already absent from CometBFT)
     /// - Jailed       --> Tombstoned
     pub(crate) async fn tombstone_validator(
         &mut self,
@@ -236,9 +236,17 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         }
 
         info!(pub_key = %bad_key, "tombstoning validator");
+        let prior: Option<Power> = self.store.get(Internal, &power_key(&bad_key)).await?;
         self.store
             .put(Internal, &power_key(&bad_key), Power::from(0u32));
         self.set_validator_status(&bad_key, ValidatorStatus::Tombstoned);
+
+        // An Inactive validator (power 0) was already removed from CometBFT's
+        // set; emitting another removal would fail its verifyRemovals check and
+        // panic every node. Record the tombstone but stay silent toward consensus.
+        if prior.is_none_or(|power| power.value() == 0) {
+            return Ok(None);
+        }
 
         Ok(Some(Update {
             pub_key: bad_key.into(),
@@ -1175,7 +1183,9 @@ mod tests {
     async fn test_inactive_to_tombstoned() {
         // Misbehavior evidence can arrive for a validator that was already removed from the
         // config (Inactive, power=0). tombstone_validator searches all_validators(), not just
-        // active ones, so it should still find the validator and return a power=0 update.
+        // active ones, so it must still record the tombstone — but emit no update, since
+        // CometBFT already removed this validator and a second removal would fail its
+        // verifyRemovals check and panic every node.
         let (store, _dir) = setup_state_with_validator(ValidatorConfig::default()).await;
 
         let pub_key = test_pub_key();
@@ -1205,11 +1215,12 @@ mod tests {
                 power: Power::from(0u32),
             })
             .await
-            .expect("tombstone_validator")
-            .expect("should return Some(update) for an inactive validator");
+            .expect("tombstone_validator");
 
-        assert_eq!(update.pub_key, tendermint::PublicKey::from(pub_key));
-        assert_eq!(update.power, Power::from(0u32));
+        assert_eq!(
+            update, None,
+            "no update should be emitted for an already-removed validator"
+        );
         assert_eq!(
             state.validator_status(&pub_key).await.unwrap(),
             Some(ValidatorStatus::Tombstoned)
