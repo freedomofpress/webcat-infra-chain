@@ -349,9 +349,9 @@ impl TryFrom<proto::config::ValidatorConfig> for ValidatorConfig {
 impl From<ValidatorConfig> for proto::config::ValidatorConfig {
     fn from(config: ValidatorConfig) -> Self {
         proto::config::ValidatorConfig {
-            uptime_window: config.uptime_window as i64,
-            missed_blocks_max: config.missed_blocks_max as i64,
-            unjail_missed_max: config.unjail_missed_max as i64,
+            uptime_window: i64::try_from(config.uptime_window).unwrap_or(i64::MAX),
+            missed_blocks_max: i64::try_from(config.missed_blocks_max).unwrap_or(i64::MAX),
+            unjail_missed_max: i64::try_from(config.unjail_missed_max).unwrap_or(i64::MAX),
         }
     }
 }

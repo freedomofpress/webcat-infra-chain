@@ -9,6 +9,13 @@ use super::{
 #[error("invalid config: {0}")]
 pub struct InvalidConfig(String);
 
+/// Upper bound on `uptime_window`. Each validator's uptime tracker holds one
+/// bit per block in the window and is rewritten every block, so an oversized
+/// window is a chain-wide OOM. This cap (~125 KB per validator) also keeps the
+/// window well inside the `u32` stored by the tracker and the `i64` carried by
+/// proto.
+pub const MAX_UPTIME_WINDOW: u64 = 1_000_000;
+
 macro_rules! invalid {
     ($($arg:tt)*) => { return Err(InvalidConfig(format!($($arg)*))) };
 }
@@ -91,9 +98,31 @@ impl Config {
             }
         }
 
+        // Reject duplicate parties. The vote queue keys one vote per identity,
+        // so a duplicated party can only ever cast one vote: a quorum counting
+        // it twice may be permanently unreachable — at genesis, an
+        // unrecoverable governance deadlock.
+        if let Some(i) = duplicate_index(admins.iter().map(|admin| &admin.identity)) {
+            invalid!("admin at index {} has a duplicate identity", i);
+        }
+        if let Some(i) = duplicate_index(oracles.iter().map(|oracle| &oracle.identity)) {
+            invalid!("oracle at index {} has a duplicate identity", i);
+        }
+        if let Some(i) = duplicate_index(validators.iter().map(|v| &v.public_key)) {
+            invalid!("validator at index {} has a duplicate public key", i);
+        }
+
         // Validate uptime config:
         if *uptime_window == 0 {
             invalid!("validator_config.uptime_window must be non-zero");
+        }
+        if *uptime_window > MAX_UPTIME_WINDOW {
+            invalid!(
+                "validator_config.uptime_window ({}) exceeds maximum ({}): the uptime \
+                 tracker allocates one bit per block in the window, per validator",
+                uptime_window,
+                MAX_UPTIME_WINDOW,
+            );
         }
         if *missed_blocks_max >= *uptime_window {
             invalid!(
@@ -155,6 +184,15 @@ fn check_voting_config(
 /// Check if a byte slice is all zeros (used to detect placeholder keys).
 fn is_all_zeros(bytes: &[u8]) -> bool {
     bytes.iter().all(|&b| b == 0)
+}
+
+/// Index of the first item equal to an earlier item, if any.
+fn duplicate_index<'a, T: PartialEq + 'a>(items: impl Iterator<Item = &'a T>) -> Option<usize> {
+    let items: Vec<&T> = items.collect();
+    items
+        .iter()
+        .enumerate()
+        .find_map(|(i, item)| items[..i].contains(item).then_some(i))
 }
 
 #[cfg(test)]
@@ -293,6 +331,16 @@ mod tests {
             "unexpected error: {err}"
         );
 
+        // An oversized window OOMs every node: the uptime tracker allocates
+        // one bit per block in the window, per validator, every block.
+        let mut config = genesis_config();
+        config.validator_config.uptime_window = MAX_UPTIME_WINDOW + 1;
+        let err = config.check_stateless().unwrap_err();
+        assert!(
+            err.to_string().contains("exceeds maximum"),
+            "unexpected error: {err}"
+        );
+
         // missed_blocks_max >= uptime_window silently disables jailing.
         let mut config = genesis_config();
         config.validator_config = ValidatorConfig {
@@ -316,6 +364,47 @@ mod tests {
         let err = config.check_stateless().unwrap_err();
         assert!(
             err.to_string().contains("unjail_missed_max"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_parties() {
+        // A duplicated admin can only ever cast one vote (the queue keys votes
+        // by identity), so a quorum of 2 over [A, A] is permanently
+        // unreachable — at genesis, an unrecoverable governance deadlock.
+        let mut config = genesis_config();
+        config.admins.authorized.push(Admin {
+            identity: test_identity(1),
+        });
+        config.admins.voting = voting(2, 2);
+        let err = config.check_stateless().unwrap_err();
+        assert!(
+            err.to_string().contains("duplicate"),
+            "unexpected error: {err}"
+        );
+
+        // Identity is the vote key: a differing endpoint does not make a
+        // duplicated oracle a distinct party.
+        let mut config = genesis_config();
+        config.oracles.authorized.push(Oracle {
+            identity: test_identity(2),
+            endpoint: url::Url::parse("http://127.0.0.1:8082").unwrap(),
+        });
+        config.oracles.voting = voting(2, 2);
+        let err = config.check_stateless().unwrap_err();
+        assert!(
+            err.to_string().contains("duplicate"),
+            "unexpected error: {err}"
+        );
+
+        let mut config = genesis_config();
+        config.validators.push(Validator {
+            public_key: ValidatorKey::from_bytes(&[1u8; 32]).expect("valid ed25519 key"),
+        });
+        let err = config.check_stateless().unwrap_err();
+        assert!(
+            err.to_string().contains("duplicate"),
             "unexpected error: {err}"
         );
     }
