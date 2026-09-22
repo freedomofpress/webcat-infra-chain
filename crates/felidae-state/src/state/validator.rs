@@ -258,7 +258,10 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     async fn validator_powers(&self) -> Result<Vec<(ValidatorKey, Power)>, Report> {
         let mut validators = vec![];
         let mut stream = Box::pin(self.store.prefix::<Power>(Internal, VALIDATORS_PREFIX));
-        while let Some(Ok((path, power))) = stream.next().await {
+        while let Some(entry) = stream.next().await {
+            // Propagate storage errors: a silently truncated scan would feed a
+            // smaller validator set into consensus-critical decisions.
+            let (path, power) = entry?;
             validators.push((key_from_power_path(&path)?, power));
         }
         Ok(validators)
