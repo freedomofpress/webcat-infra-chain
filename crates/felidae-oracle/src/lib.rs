@@ -65,10 +65,36 @@ type WitnessError = Error;
 
 /// Enrollment policy structure as defined in the spec:
 /// https://github.com/freedomofpress/webcat-spec/blob/main/server.md
+///
+/// Add new versions as new variants rather than by changing an existing struct.
+#[derive(Serialize)]
+#[serde(untagged)]
+enum Enrollment {
+    /// Enrollment predating versioning (done during WEBCAT alpha).
+    V0(EnrollmentV0),
+    /// Enrollment with `enrollment_schema` of `1`.
+    V1(EnrollmentV1),
+}
+
+impl Enrollment {
+    /// Parse an enrollment JSON document, dispatch based on the `enrollment_schema` field.
+    fn parse(json: &str) -> Result<Self, Error> {
+        let value: serde_json::Value = serde_json::from_str(json)?;
+        match value.get("enrollment_schema") {
+            None => Ok(Enrollment::V0(serde_json::from_value(value)?)),
+            Some(schema) if schema == 1 => Ok(Enrollment::V1(serde_json::from_value(value)?)),
+            Some(schema) => Err(Error::InvalidEnrollment(format!(
+                "unsupported version: {schema}"
+            ))),
+        }
+    }
+}
+
+/// Enrollment format predating `enrollment_schema`: Sigsum enrollments carry `cas_url`.
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "lowercase")]
-enum Enrollment {
+enum EnrollmentV0 {
     /// Sigstore enrollment structure
     Sigstore {
         /// A Sigstore trusted root JSON document.
