@@ -65,12 +65,45 @@ type WitnessError = Error;
 
 /// Enrollment policy structure as defined in the spec:
 /// https://github.com/freedomofpress/webcat-spec/blob/main/server.md
+///
+/// Add new versions as new variants rather than by changing an existing struct.
+#[derive(Serialize)]
+#[serde(untagged)]
+enum Enrollment {
+    /// Enrollment with `enrollment_schema` of `1`.
+    V1(EnrollmentV1),
+}
+
+impl Enrollment {
+    /// Parse an enrollment JSON document, dispatch based on the `enrollment_schema` field.
+    fn parse(json: &str) -> Result<Self, Error> {
+        let value: serde_json::Value = serde_json::from_str(json)?;
+        match value.get("enrollment_schema") {
+            None => Err(Error::InvalidEnrollment(
+                "enrollment_schema is required; unversioned enrollments are no longer accepted"
+                    .to_string(),
+            )),
+            Some(schema) if schema == 1 => Ok(Enrollment::V1(serde_json::from_value(value)?)),
+            Some(schema) => Err(Error::InvalidEnrollment(format!(
+                "unsupported version: {schema}"
+            ))),
+        }
+    }
+}
+
+/// Enrollment format with `enrollment_schema: 1`
+///
+/// The changes in this enrollment format relative to the unversioned are:
+/// - `cas_url` is removed (in favor of having the well-known directory on the site itself)
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "lowercase")]
-enum Enrollment {
+#[serde(deny_unknown_fields)]
+enum EnrollmentV1 {
     /// Sigstore enrollment structure
     Sigstore {
+        /// The version of the enrollment format - this must always be 1 for this struct.
+        enrollment_schema: u32,
         /// A Sigstore trusted root JSON document.
         trusted_root: serde_json::Value,
         /// A map of expected certificate claims, keyed by OID.
@@ -80,12 +113,14 @@ enum Enrollment {
         /// Examples:
         /// - "2.5.29.17" => "alice@example.com"
         /// - "1.3.6.1.4.1.57264.1.8" => "https://token.actions.githubusercontent.com"
-        claims: std::collections::BTreeMap<String, String>,
+        claims: BTreeMap<String, String>,
         /// The maximum number of seconds a manifest may remain valid after its signing timestamp.
         max_age: u64,
     },
     /// Sigsum enrollment structure
     Sigsum {
+        /// The version of the enrollment format - this must always be 1 for this struct.
+        enrollment_schema: u32,
         /// An array of Ed25519 public keys, base64url-encoded.
         signers: Vec<String>,
         /// The minimum number of distinct valid signatures required to accept a manifest as valid.
@@ -94,8 +129,6 @@ enum Enrollment {
         policy: String,
         /// The maximum number of seconds a manifest may remain valid after its signing timestamp.
         max_age: u64,
-        /// The base URL of the Content Addressable Storage (CAS).
-        cas_url: String,
         /// A mapping of Sigsum log public keys (base64url-encoded) to their corresponding log URLs.
         logs: BTreeMap<String, String>,
     },
@@ -123,16 +156,16 @@ pub fn witness(
 
     // Get the canonical hash of the enrollment:
     let hash_observed = if !enrollment.is_empty() {
-        let enrollment: Enrollment = serde_json::from_str(&enrollment)?;
+        let enrollment = Enrollment::parse(&enrollment)?;
 
         // Validate enrollment constraints from the spec
         // https://github.com/freedomofpress/webcat-spec/blob/main/server.md
         match &enrollment {
-            Enrollment::Sigstore {
+            Enrollment::V1(EnrollmentV1::Sigstore {
                 trusted_root,
                 claims,
-                max_age: _,
-            } => {
+                ..
+            }) => {
                 // Validate trusted_root is a valid JSON object
                 if !trusted_root.is_object() {
                     return Err(Error::InvalidEnrollment(
@@ -166,14 +199,13 @@ pub fn witness(
                     }
                 }
             }
-            Enrollment::Sigsum {
+            Enrollment::V1(EnrollmentV1::Sigsum {
                 signers,
                 threshold,
                 policy,
-                max_age: _,
-                cas_url: _,
                 logs,
-            } => {
+                ..
+            }) => {
                 // Threshold must be at least 1.
                 if *threshold == 0 {
                     return Err(Error::InvalidEnrollment(
