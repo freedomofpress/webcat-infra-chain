@@ -70,8 +70,6 @@ type WitnessError = Error;
 #[derive(Serialize)]
 #[serde(untagged)]
 enum Enrollment {
-    /// Enrollment predating versioning (done during WEBCAT alpha).
-    V0(EnrollmentV0),
     /// Enrollment with `enrollment_schema` of `1`.
     V1(EnrollmentV1),
 }
@@ -81,50 +79,16 @@ impl Enrollment {
     fn parse(json: &str) -> Result<Self, Error> {
         let value: serde_json::Value = serde_json::from_str(json)?;
         match value.get("enrollment_schema") {
-            None => Ok(Enrollment::V0(serde_json::from_value(value)?)),
+            None => Err(Error::InvalidEnrollment(
+                "enrollment_schema is required; unversioned enrollments are no longer accepted"
+                    .to_string(),
+            )),
             Some(schema) if schema == 1 => Ok(Enrollment::V1(serde_json::from_value(value)?)),
             Some(schema) => Err(Error::InvalidEnrollment(format!(
                 "unsupported version: {schema}"
             ))),
         }
     }
-}
-
-/// Enrollment format predating `enrollment_schema`: Sigsum enrollments carry `cas_url`.
-#[derive(Serialize, Deserialize)]
-#[serde(tag = "type")]
-#[serde(rename_all = "lowercase")]
-enum EnrollmentV0 {
-    /// Sigstore enrollment structure
-    Sigstore {
-        /// A Sigstore trusted root JSON document.
-        trusted_root: serde_json::Value,
-        /// A map of expected certificate claims, keyed by OID.
-        /// Each entry must match exactly and all conditions are evaluated
-        /// as a logical AND.
-        ///
-        /// Examples:
-        /// - "2.5.29.17" => "alice@example.com"
-        /// - "1.3.6.1.4.1.57264.1.8" => "https://token.actions.githubusercontent.com"
-        claims: std::collections::BTreeMap<String, String>,
-        /// The maximum number of seconds a manifest may remain valid after its signing timestamp.
-        max_age: u64,
-    },
-    /// Sigsum enrollment structure
-    Sigsum {
-        /// An array of Ed25519 public keys, base64url-encoded.
-        signers: Vec<String>,
-        /// The minimum number of distinct valid signatures required to accept a manifest as valid.
-        threshold: u32,
-        /// A base64url-encoded string representing the compiled Sigsum policy.
-        policy: String,
-        /// The maximum number of seconds a manifest may remain valid after its signing timestamp.
-        max_age: u64,
-        /// The base URL of the Content Addressable Storage (CAS).
-        cas_url: String,
-        /// A mapping of Sigsum log public keys (base64url-encoded) to their corresponding log URLs.
-        logs: BTreeMap<String, String>,
-    },
 }
 
 /// Enrollment format with `enrollment_schema: 1`
@@ -142,7 +106,13 @@ enum EnrollmentV1 {
         enrollment_schema: u32,
         /// A Sigstore trusted root JSON document.
         trusted_root: serde_json::Value,
-        /// A map of expected certificate claims, keyed by OID (see [`EnrollmentV0::Sigstore`]).
+        /// A map of expected certificate claims, keyed by OID.
+        /// Each entry must match exactly and all conditions are evaluated
+        /// as a logical AND.
+        ///
+        /// Examples:
+        /// - "2.5.29.17" => "alice@example.com"
+        /// - "1.3.6.1.4.1.57264.1.8" => "https://token.actions.githubusercontent.com"
         claims: BTreeMap<String, String>,
         /// The maximum number of seconds a manifest may remain valid after its signing timestamp.
         max_age: u64,
@@ -191,12 +161,7 @@ pub fn witness(
         // Validate enrollment constraints from the spec
         // https://github.com/freedomofpress/webcat-spec/blob/main/server.md
         match &enrollment {
-            Enrollment::V0(EnrollmentV0::Sigstore {
-                trusted_root,
-                claims,
-                ..
-            })
-            | Enrollment::V1(EnrollmentV1::Sigstore {
+            Enrollment::V1(EnrollmentV1::Sigstore {
                 trusted_root,
                 claims,
                 ..
@@ -234,14 +199,7 @@ pub fn witness(
                     }
                 }
             }
-            Enrollment::V0(EnrollmentV0::Sigsum {
-                signers,
-                threshold,
-                policy,
-                logs,
-                ..
-            })
-            | Enrollment::V1(EnrollmentV1::Sigsum {
+            Enrollment::V1(EnrollmentV1::Sigsum {
                 signers,
                 threshold,
                 policy,
