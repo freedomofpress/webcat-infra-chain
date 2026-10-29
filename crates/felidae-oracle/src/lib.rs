@@ -127,6 +127,43 @@ enum EnrollmentV0 {
     },
 }
 
+/// Enrollment format with `enrollment_schema: 1`
+///
+/// The changes in this enrollment format relative to the unversioned are:
+/// - `cas_url` is removed (in favor of having the well-known directory on the site itself)
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type")]
+#[serde(rename_all = "lowercase")]
+#[serde(deny_unknown_fields)]
+enum EnrollmentV1 {
+    /// Sigstore enrollment structure
+    Sigstore {
+        /// The version of the enrollment format - this must always be 1 for this struct.
+        enrollment_schema: u32,
+        /// A Sigstore trusted root JSON document.
+        trusted_root: serde_json::Value,
+        /// A map of expected certificate claims, keyed by OID (see [`EnrollmentV0::Sigstore`]).
+        claims: BTreeMap<String, String>,
+        /// The maximum number of seconds a manifest may remain valid after its signing timestamp.
+        max_age: u64,
+    },
+    /// Sigsum enrollment structure
+    Sigsum {
+        /// The version of the enrollment format - this must always be 1 for this struct.
+        enrollment_schema: u32,
+        /// An array of Ed25519 public keys, base64url-encoded.
+        signers: Vec<String>,
+        /// The minimum number of distinct valid signatures required to accept a manifest as valid.
+        threshold: u32,
+        /// A base64url-encoded string representing the compiled Sigsum policy.
+        policy: String,
+        /// The maximum number of seconds a manifest may remain valid after its signing timestamp.
+        max_age: u64,
+        /// A mapping of Sigsum log public keys (base64url-encoded) to their corresponding log URLs.
+        logs: BTreeMap<String, String>,
+    },
+}
+
 /// Create a hex-encoded, signed transaction witnessing the given observation on the given chain,
 /// using the given oracle signing key.
 ///
