@@ -636,11 +636,11 @@ async fn test_enrollment_update() -> color_eyre::Result<()> {
 
         serde_json::json!({
             "type": "sigsum",
+            "enrollment_schema": 1,
             "signers": [test_pubkey],
             "threshold": 1,
             "policy": "BBBB",
             "max_age": 86400,
-            "cas_url": "https://example.com/cas/v2",
             "logs": {}
         })
         .to_string()
