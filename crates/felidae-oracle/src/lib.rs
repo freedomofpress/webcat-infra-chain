@@ -186,16 +186,21 @@ pub fn witness(
 
     // Get the canonical hash of the enrollment:
     let hash_observed = if !enrollment.is_empty() {
-        let enrollment: Enrollment = serde_json::from_str(&enrollment)?;
+        let enrollment = Enrollment::parse(&enrollment)?;
 
         // Validate enrollment constraints from the spec
         // https://github.com/freedomofpress/webcat-spec/blob/main/server.md
         match &enrollment {
-            Enrollment::Sigstore {
+            Enrollment::V0(EnrollmentV0::Sigstore {
                 trusted_root,
                 claims,
-                max_age: _,
-            } => {
+                ..
+            })
+            | Enrollment::V1(EnrollmentV1::Sigstore {
+                trusted_root,
+                claims,
+                ..
+            }) => {
                 // Validate trusted_root is a valid JSON object
                 if !trusted_root.is_object() {
                     return Err(Error::InvalidEnrollment(
@@ -229,14 +234,20 @@ pub fn witness(
                     }
                 }
             }
-            Enrollment::Sigsum {
+            Enrollment::V0(EnrollmentV0::Sigsum {
                 signers,
                 threshold,
                 policy,
-                max_age: _,
-                cas_url: _,
                 logs,
-            } => {
+                ..
+            })
+            | Enrollment::V1(EnrollmentV1::Sigsum {
+                signers,
+                threshold,
+                policy,
+                logs,
+                ..
+            }) => {
                 // Threshold must be at least 1.
                 if *threshold == 0 {
                     return Err(Error::InvalidEnrollment(
