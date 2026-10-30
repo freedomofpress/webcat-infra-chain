@@ -12,7 +12,6 @@ use felidae_state::BASE_VALIDATOR_POWER;
 use felidae_types::response::ValidatorInfo;
 use felidae_types::transaction::ValidatorStatus;
 use sha2::{Digest, Sha256};
-use tendermint_rpc::HttpClient;
 
 use crate::binaries::find_binaries;
 use crate::constants::network_startup_timeout;

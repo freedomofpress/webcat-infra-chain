@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use felidae_deployer::{Network, NetworkConfig};
 use felidae_types::transaction::ValidatorConfig;
-use tendermint_rpc::{Client, HttpClient};
+use tendermint_rpc::Client;
 
 /// A managed test network that handles the full lifecycle of a multi-validator
 /// felidae deployment.

@@ -4,7 +4,7 @@
 //! vote submission, quorum detection, enrollment, unenrollment, and edge cases.
 
 use felidae_types::KeyPair;
-use tendermint_rpc::{Client, HttpClient};
+use tendermint_rpc::Client;
 
 use crate::binaries::find_binaries;
 use crate::constants::{

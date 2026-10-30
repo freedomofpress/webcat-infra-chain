@@ -6,7 +6,7 @@
 use felidae_types::response::ChainInfo;
 use felidae_types::transaction::{Config, OracleConfig, Validator, ValidatorKey};
 use std::time::Duration;
-use tendermint_rpc::{Client, HttpClient};
+use tendermint_rpc::Client;
 
 use felidae_deployer::join::{GenesisSource, JoinConfig, PeerSource};
 
@@ -697,7 +697,7 @@ async fn test_admin_reconfig_empty_validators_is_noop() -> color_eyre::Result<()
     );
 
     // Verify chain is still producing blocks
-    let height_after = wait_blocks(
+    wait_blocks(
         &rpc_client,
         2,
         consensus_propagation_wait_long(),
