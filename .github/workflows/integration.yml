@@ -25,15 +25,11 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
-
-      - name: install nix
-        uses: nixbuild/nix-quick-install-action@v34
-
-      - name: setup nix cache
-        uses: nix-community/cache-nix-action@v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
+          persist-credentials: false
+
+      - name: setup nix
+        uses: freedomofpress/actionslib/act/setup-nix@main
 
       # debugging step, to confirm that we have a working devshell
       - name: invoke the nix dev shell
