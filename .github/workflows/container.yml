@@ -33,15 +33,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: install nix
-        uses: nixbuild/nix-quick-install-action@v28
-
-      - name: setup nix cache
-        uses: nix-community/cache-nix-action@v5
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
+          persist-credentials: false
+
+      - name: setup nix
+        uses: freedomofpress/actionslib/act/setup-nix@main
 
       - name: Get version for container
         id: version
@@ -94,15 +90,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: install nix
-        uses: nixbuild/nix-quick-install-action@v28
-
-      - name: setup nix cache
-        uses: nix-community/cache-nix-action@v5
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
+          persist-credentials: false
+
+      - name: setup nix
+        uses: freedomofpress/actionslib/act/setup-nix@main
 
       - name: Get version
         id: version
