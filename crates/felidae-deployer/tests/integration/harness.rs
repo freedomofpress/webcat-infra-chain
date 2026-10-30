@@ -155,7 +155,7 @@ impl TestNetwork {
 
     /// Create and initialize a new test network with the specified number of validators.
     pub async fn create(num_validators: usize) -> color_eyre::Result<Self> {
-        return Self::create_with_block_time(num_validators, crate::constants::block_time()).await;
+        Self::create_with_block_time(num_validators, crate::constants::block_time()).await
     }
 
     pub async fn create_with_block_time(

@@ -672,7 +672,7 @@ async fn test_enrollment_update() -> color_eyre::Result<()> {
             let snapshot = query_snapshot(&felidae_bin, &network.query_url())?;
             Ok(snapshot
                 .get(&update_domain)
-                .map_or(false, |h| *h != hash_v1_ref))
+                .is_some_and(|h| *h != hash_v1_ref))
         },
     )
     .await?;
@@ -783,9 +783,8 @@ async fn test_subdomain_limit_enforcement() -> color_eyre::Result<()> {
         )
         .await;
 
-        if result.is_err() {
-            let err_msg = result.unwrap_err().to_string();
-            eprintln!("[test] over-limit subdomain rejected: {}", err_msg);
+        if let Err(err) = result {
+            eprintln!("[test] over-limit subdomain rejected: {err}");
             rejected = true;
             break;
         }

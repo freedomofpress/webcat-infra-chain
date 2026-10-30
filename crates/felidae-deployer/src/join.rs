@@ -85,10 +85,7 @@ pub async fn join_network(config: JoinConfig) -> Result<WebcatNode> {
 
     // Resolve peers.
     let persistent_peers = match &config.peer_source {
-        PeerSource::CometbftRpc(url) => {
-            let peers = discover_peers(url).await?;
-            peers
-        }
+        PeerSource::CometbftRpc(url) => discover_peers(url).await?,
         PeerSource::Explicit(peers) => peers.join(","),
     };
     tracing::info!(%persistent_peers, "peers for config");
@@ -358,12 +355,11 @@ async fn fetch_peers(client: &reqwest::Client, base_url: &url::Url) -> Result<Ve
 /// with the host from the RPC URL we're connecting to. This is common for
 /// localhost dev networks where nodes bind to 0.0.0.0 but are reachable at 127.0.0.1.
 fn rewrite_unspecified_host(addr: &str, host: Option<&str>) -> String {
-    if let Ok(sa) = addr.parse::<SocketAddr>() {
-        if sa.ip().is_unspecified() {
-            if let Some(host) = host {
-                return format!("{}:{}", host, sa.port());
-            }
-        }
+    if let Ok(sa) = addr.parse::<SocketAddr>()
+        && sa.ip().is_unspecified()
+        && let Some(host) = host
+    {
+        return format!("{}:{}", host, sa.port());
     }
     addr.to_string()
 }

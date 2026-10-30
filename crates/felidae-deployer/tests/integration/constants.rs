@@ -18,8 +18,6 @@
 ///
 /// For subdomain tests, we use prefixes "goss" and "subby":
 /// - "goss.webcat.tech." and "subby.webcat.tech." under "webcat.tech."
-
-/// Primary test domains (registered domain, zone)
 pub const TEST_DOMAINS: &[(&str, &str)] = &[("webcat.tech.", "tech."), ("example.com.", "com.")];
 
 /// Convenience accessors for common test domains

@@ -96,6 +96,6 @@ dev:
 
 # Run all project linters
 lint:
-  cargo check --all-features --all-targets
+  cargo clippy --workspace --all-features --all-targets -- -D warnings
   cargo fmt --all --check
   just nix-lint
