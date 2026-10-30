@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use felidae_deployer::{Network, NetworkConfig};
 use felidae_types::transaction::ValidatorConfig;
-use tendermint_rpc::{Client, HttpClient};
+use tendermint_rpc::Client;
 
 /// A managed test network that handles the full lifecycle of a multi-validator
 /// felidae deployment.
@@ -41,18 +41,121 @@ use tendermint_rpc::{Client, HttpClient};
 pub struct TestNetwork {
     /// Network configuration and node topology
     pub network: Network,
-    /// Map of process name to running process handle
-    processes: HashMap<String, Child>,
+    /// Map of process name to running process handle.
+    ///
+    /// Shared with [`liveness`], so a polling helper can notice that a node
+    /// died without every call site having to thread a handle through.
+    processes: Processes,
     /// Shutdown signal for coordinated termination
     shutdown: Arc<AtomicBool>,
-    /// Temporary directory guard; dropped after TestNetwork to ensure cleanup
-    _temp_dir: tempfile::TempDir,
+    /// Where this network's nodes keep their state and logs. Retained after the
+    /// test ends; see the note in `create_with_validator_config`.
+    pub directory: std::path::PathBuf,
+    /// The config injected at genesis.
+    ///
+    /// Kept so tests can ask how many parties a vote needs rather than
+    /// hardcoding it. Quorum moves with the validator count -- 3-of-3 at n=3,
+    /// 3-of-4, 4-of-5 -- so a literal `3` is right at two topologies and
+    /// silently wrong at the third.
+    pub genesis_config: felidae_types::transaction::Config,
+}
+
+/// The child processes of the network currently under test.
+type Processes = Arc<std::sync::Mutex<HashMap<String, Child>>>;
+
+/// The network under test, if one is running.
+///
+/// A process-wide slot rather than a handle threaded through every helper.
+/// That is sound here because these tests are necessarily serial -- they bind
+/// fixed ports, and `just integration` passes `--test-threads 1` -- so at most
+/// one `TestNetwork` exists at a time. [`TestNetwork::start`] installs itself
+/// and [`Drop`] clears the slot.
+static LIVE_NETWORK: std::sync::Mutex<Option<Processes>> = std::sync::Mutex::new(None);
+
+/// Names of any processes belonging to the running network that have exited,
+/// with their statuses. Empty when every process is alive, or when no network
+/// is registered.
+///
+/// A validator whose ABCI service dies leaves its CometBFT peer answering RPC
+/// from its last block, so polls against it time out without saying why.
+pub fn dead_processes() -> Vec<String> {
+    let Ok(slot) = LIVE_NETWORK.lock() else {
+        return Vec::new();
+    };
+    let Some(processes) = slot.as_ref() else {
+        return Vec::new();
+    };
+    let Ok(mut processes) = processes.lock() else {
+        return Vec::new();
+    };
+    let mut dead: Vec<String> = processes
+        .iter_mut()
+        .filter_map(|(name, child)| match child.try_wait() {
+            Ok(Some(status)) => Some(format!("{name} ({status})")),
+            Ok(None) => None,
+            Err(e) => Some(format!("{name} (status unavailable: {e})")),
+        })
+        .collect();
+    dead.sort();
+    dead
+}
+
+/// `Err` naming the dead processes if any have exited, otherwise `Ok(())`.
+///
+/// Call this from any loop that waits on chain state: a condition that depends
+/// on a node which is no longer running will never be met, and failing with
+/// the reason beats timing out without one.
+pub fn ensure_network_alive(context: &str) -> color_eyre::Result<()> {
+    let dead = dead_processes();
+    if dead.is_empty() {
+        return Ok(());
+    }
+    Err(color_eyre::eyre::eyre!(
+        "{context}: process(es) exited during the run: {}",
+        dead.join(", ")
+    ))
+}
+
+/// The port layout for this run, shifted by `FELIDAE_TEST_PORT_OFFSET`.
+///
+/// The bases in `ports.rs` are compile-time constants, so without this two runs
+/// fight over 26657 and repeated campaigns must run strictly serially.
+///
+/// One offset shifts all five families together. A run occupies
+/// `base .. base + 500` in each, so **use multiples of 1000**. Default 0.
+///
+/// Concurrency still needs a separate worktree per lane: two `cargo nextest`
+/// invocations against one target directory serialise on the cargo lock.
+fn port_strategy() -> felidae_deployer::PortAllocationStrategy {
+    let offset: u16 = std::env::var("FELIDAE_TEST_PORT_OFFSET")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let base = felidae_deployer::PortAllocationStrategy::default();
+    if offset == 0 {
+        return base;
+    }
+    eprintln!("[harness] port offset: +{offset}");
+    felidae_deployer::PortAllocationStrategy {
+        cometbft_p2p_base: base.cometbft_p2p_base + offset,
+        cometbft_rpc_base: base.cometbft_rpc_base + offset,
+        felidae_abci_base: base.felidae_abci_base + offset,
+        felidae_query_base: base.felidae_query_base + offset,
+        felidae_oracle_base: base.felidae_oracle_base + offset,
+        node_offset: base.node_offset,
+    }
 }
 
 impl TestNetwork {
+    /// The process map, locked. Panics only if a previous holder panicked,
+    /// which in a test harness should fail loudly rather than be papered over.
+    fn lock_processes(&self) -> std::sync::MutexGuard<'_, HashMap<String, Child>> {
+        self.processes.lock().expect("process map poisoned")
+    }
+
     /// Create and initialize a new test network with the specified number of validators.
     pub async fn create(num_validators: usize) -> color_eyre::Result<Self> {
-        return Self::create_with_block_time(num_validators, crate::constants::block_time()).await;
+        Self::create_with_block_time(num_validators, crate::constants::block_time()).await
     }
 
     pub async fn create_with_block_time(
@@ -73,15 +176,20 @@ impl TestNetwork {
         block_time: Duration,
         validator_config: Option<ValidatorConfig>,
     ) -> color_eyre::Result<Self> {
-        let temp_dir = tempfile::tempdir()?;
-        let directory = temp_dir.path().to_path_buf();
+        // Keep the network tree, always. Retaining only on failure can't be
+        // done from `Drop`: tests fail by returning `Err`, so
+        // `thread::panicking()` is false. A full suite leaves ~60 MB under
+        // `TMPDIR`, which is per-invocation in the nix shell and in CI.
+        let directory = tempfile::tempdir()?.keep();
+        eprintln!("[harness] network directory: {}", directory.display());
 
         let config = NetworkConfig {
             chain_id: crate::constants::TEST_CHAIN_ID.to_string(),
             num_validators,
             use_sentries: false,
-            directory,
+            directory: directory.clone(),
             timeout_commit: format!("{}s", block_time.as_secs()),
+            port_strategy: port_strategy(),
             ..Default::default()
         };
 
@@ -100,10 +208,11 @@ impl TestNetwork {
         network.inject_genesis_app_state(&felidae_config)?;
 
         Ok(Self {
+            genesis_config: felidae_config,
             network,
-            processes: HashMap::new(),
+            processes: Arc::new(std::sync::Mutex::new(HashMap::new())),
             shutdown: Arc::new(AtomicBool::new(false)),
-            _temp_dir: temp_dir,
+            directory,
         })
     }
 
@@ -112,6 +221,10 @@ impl TestNetwork {
         // Preflight check: verify all ports are available before starting any processes
         self.network.check_ports_available()?;
 
+        // Publish the process map before spawning, so a node that dies during
+        // bring-up is already visible to `dead_processes`.
+        *LIVE_NETWORK.lock().expect("liveness slot poisoned") = Some(self.processes.clone());
+
         for index in 0..self.network.nodes.len() {
             self.spawn_node_processes(index, cometbft_bin, felidae_bin)?;
         }
@@ -119,32 +232,39 @@ impl TestNetwork {
         Ok(())
     }
 
-    /// Spawn the CometBFT + Felidae (+ Oracle, for validators) processes for a
-    /// single node and insert their handles into `self.processes`.
+    /// Spawn the processes for the node at `index` in the network topology.
     ///
     /// Used by [`start`](Self::start) for the initial bring-up and by
     /// [`restart_validator`](Self::restart_validator) to bring a previously
     /// killed validator back online with the same home directory.
     fn spawn_node_processes(
-        &mut self,
+        &self,
         index: usize,
         cometbft_bin: &str,
         felidae_bin: &str,
     ) -> color_eyre::Result<()> {
-        let node = &self.network.nodes[index];
+        self.spawn_processes(&self.network.nodes[index], cometbft_bin, felidae_bin)
+    }
 
-        // Start CometBFT
-        let cometbft_name = format!("{}-cometbft", node.name);
-        let child = Command::new(cometbft_bin)
-            .args(["start", "--home", &node.cometbft_home().to_string_lossy()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()?;
-        self.processes.insert(cometbft_name, child);
-
-        // Start Felidae
+    /// Spawn the CometBFT + Felidae (+ Oracle, for validators) processes for
+    /// `node` and insert their handles into `self.processes`.
+    ///
+    /// Public so a node that joins after genesis runs under the same
+    /// supervision: logs captured in its home, liveness-tracked, and reaped at
+    /// teardown. Join it under [`directory`](Self::directory) so its home is
+    /// retained with the rest of the tree. A newcomer spawned outside the
+    /// harness dies anonymously -- no logs, no tree, and a sync wait that can
+    /// only time out.
+    pub fn spawn_processes(
+        &self,
+        node: &felidae_deployer::WebcatNode,
+        cometbft_bin: &str,
+        felidae_bin: &str,
+    ) -> color_eyre::Result<()> {
+        // Felidae first; see `wait_for_abci` below.
         let felidae_name = format!("{}-felidae", node.name);
         let felidae_log = std::fs::File::create(node.home_dir.join("felidae.log"))?;
+        let felidae_log_out = felidae_log.try_clone()?;
         let child = Command::new(felidae_bin)
             .env("RUST_LOG", "info")
             .args([
@@ -156,14 +276,37 @@ impl TestNetwork {
                 "--homedir",
                 &node.felidae_home().to_string_lossy(),
             ])
-            .stdout(Stdio::null())
+            .stdout(Stdio::from(felidae_log_out))
             .stderr(Stdio::from(felidae_log))
             .spawn()?;
-        self.processes.insert(felidae_name, child);
+        self.lock_processes().insert(felidae_name, child);
+
+        // CometBFT dials ABCI as soon as it starts and backs off a flat 3s on
+        // refusal. felidae opens RocksDB before it binds, so starting CometBFT
+        // without waiting costs every node the full 3s.
+        wait_for_abci(&node.abci_address(), Duration::from_secs(30))?;
+
+        // Then CometBFT, keeping its log beside felidae's.
+        //
+        // CometBFT logs to stdout, so both streams have to be captured. Without
+        // this, what CometBFT did when its ABCI socket died is unknowable from
+        // a retained tree -- and that is the half of the story felidae.log
+        // cannot tell.
+        let cometbft_name = format!("{}-cometbft", node.name);
+        let cometbft_log = std::fs::File::create(node.home_dir.join("cometbft.log"))?;
+        let cometbft_log_err = cometbft_log.try_clone()?;
+        let child = Command::new(cometbft_bin)
+            .args(["start", "--home", &node.cometbft_home().to_string_lossy()])
+            .stdout(Stdio::from(cometbft_log))
+            .stderr(Stdio::from(cometbft_log_err))
+            .spawn()?;
+        self.lock_processes().insert(cometbft_name, child);
 
         // Start Oracle server for validators
         if node.role.is_validator() {
             let oracle_name = format!("{}-oracle", node.name);
+            let oracle_log = std::fs::File::create(node.home_dir.join("oracle.log"))?;
+            let oracle_log_out = oracle_log.try_clone()?;
             let child = Command::new(felidae_bin)
                 .args([
                     "oracle",
@@ -175,10 +318,10 @@ impl TestNetwork {
                     "--homedir",
                     &node.felidae_home().to_string_lossy(),
                 ])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
+                .stdout(Stdio::from(oracle_log_out))
+                .stderr(Stdio::from(oracle_log))
                 .spawn()?;
-            self.processes.insert(oracle_name, child);
+            self.lock_processes().insert(oracle_name, child);
         }
 
         Ok(())
@@ -209,7 +352,8 @@ impl TestNetwork {
         ];
 
         for prefix in &prefixes {
-            if let Some(mut child) = self.processes.remove(prefix) {
+            let existing = self.lock_processes().remove(prefix);
+            if let Some(mut child) = existing {
                 let _ = child.kill();
                 let _ = child.wait();
             }
@@ -285,7 +429,7 @@ impl TestNetwork {
             "http://{}:{}",
             self.network.nodes[0].bind_address, self.network.nodes[0].ports.cometbft_rpc
         );
-        let client = HttpClient::new(rpc_url.as_str())?;
+        let client = crate::helpers::rpc_client(rpc_url.as_str())?;
 
         let start = std::time::Instant::now();
         loop {
@@ -305,16 +449,12 @@ impl TestNetwork {
                 }
                 Err(e) => {
                     eprintln!("[wait_ready] RPC error (retrying): {e}");
-                    // Check if any process has exited unexpectedly
-                    for (name, child) in &mut self.processes {
-                        if let Some(status) = child.try_wait()? {
-                            return Err(color_eyre::eyre::eyre!(
-                                "process '{name}' exited unexpectedly: {status}"
-                            ));
-                        }
-                    }
                 }
             }
+
+            // Bring-up is the one place a node reliably dies, so check every
+            // iteration rather than only when the RPC call fails.
+            ensure_network_alive("waiting for the network to be ready")?;
 
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
@@ -326,6 +466,44 @@ impl TestNetwork {
             "http://{}:{}",
             self.network.nodes[0].bind_address, self.network.nodes[0].ports.cometbft_rpc
         )
+    }
+
+    /// How many validators this network has.
+    pub fn validator_count(&self) -> usize {
+        self.network.validators().count()
+    }
+
+    /// How many admins must vote before a reconfiguration is promoted.
+    pub fn admin_quorum(&self) -> usize {
+        self.genesis_config.admins.voting.quorum.0 as usize
+    }
+
+    /// How many oracles must agree before an observation becomes canonical.
+    pub fn oracle_quorum(&self) -> usize {
+        self.genesis_config.oracles.voting.quorum.0 as usize
+    }
+
+    /// One short of admin quorum: the largest vote that must *not* promote.
+    pub fn admin_minority(&self) -> usize {
+        self.admin_quorum().saturating_sub(1)
+    }
+
+    /// One short of oracle quorum.
+    pub fn oracle_minority(&self) -> usize {
+        self.oracle_quorum().saturating_sub(1)
+    }
+
+    /// A specific node's felidae query URL.
+    pub fn node_query_url(&self, index: usize) -> String {
+        let node = &self.network.nodes[index];
+        format!("http://{}:{}", node.bind_address, node.ports.felidae_query)
+    }
+
+    /// Every node's felidae query URL, in node order.
+    pub fn query_urls(&self) -> Vec<String> {
+        (0..self.network.nodes.len())
+            .map(|i| self.node_query_url(i))
+            .collect()
     }
 
     /// Get the first node's Felidae query API URL.
@@ -417,7 +595,21 @@ impl TestNetwork {
     /// Shutdown all processes and wait for ports to be released.
     pub fn shutdown(&mut self) {
         self.shutdown.store(true, Ordering::SeqCst);
-        for (_name, mut child) in self.processes.drain() {
+        // Name any process that died on its own before teardown kills the
+        // rest. A bare `?` on RPC to a dead node fails as an HTTP error; this
+        // puts the cause beside it in the test's output.
+        let dead = dead_processes();
+        if !dead.is_empty() {
+            eprintln!(
+                "[harness] process(es) exited during the run: {}",
+                dead.join(", ")
+            );
+        }
+        // Deregister first, so a poll racing teardown isn't told the network
+        // "died".
+        *LIVE_NETWORK.lock().expect("liveness slot poisoned") = None;
+        let drained: Vec<(String, Child)> = self.lock_processes().drain().collect();
+        for (_name, mut child) in drained {
             let _ = child.kill();
             let _ = child.wait();
         }
@@ -452,4 +644,21 @@ impl Drop for TestNetwork {
     fn drop(&mut self) {
         self.shutdown();
     }
+}
+
+/// Poll until `addr` accepts a TCP connection, or `timeout` elapses.
+///
+/// Used to sequence felidae's ABCI listener ahead of CometBFT's first dial.
+fn wait_for_abci(addr: &str, timeout: Duration) -> color_eyre::Result<()> {
+    let deadline = std::time::Instant::now() + timeout;
+    let target: std::net::SocketAddr = addr.parse()?;
+    while std::time::Instant::now() < deadline {
+        if std::net::TcpStream::connect_timeout(&target, Duration::from_millis(200)).is_ok() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    Err(color_eyre::eyre::eyre!(
+        "felidae did not accept on {addr} within {timeout:?}"
+    ))
 }

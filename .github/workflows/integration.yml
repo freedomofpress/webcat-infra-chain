@@ -19,17 +19,17 @@ jobs:
   integration:
     # n.b. default runner "ubuntu-latest" may be under-sized
     runs-on: ubuntu-latest
+    # A wedged node used to cost the job's 360-minute default. The suite runs
+    # in ~16 minutes; 45 leaves room for a slow runner without leaving a stuck
+    # job to burn an hour of anyone's time.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
-
-      - name: install nix
-        uses: nixbuild/nix-quick-install-action@v34
-
-      - name: setup nix cache
-        uses: nix-community/cache-nix-action@v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
+          persist-credentials: false
+
+      - name: setup nix
+        uses: freedomofpress/actionslib/act/setup-nix@main
 
       # debugging step, to confirm that we have a working devshell
       - name: invoke the nix dev shell
@@ -37,3 +37,23 @@ jobs:
 
       - name: run the integration test suite
         run: nix develop --command just integration
+
+      # The harness retains each network's directory, so a failing run leaves
+      # felidae.log, cometbft.log and oracle.log for every node. Without this
+      # they die with the runner and the job reports only a downstream timeout,
+      # which is exactly how the CheckTx/delta crash stayed unexplained.
+      #
+      # tempfile names these directories `.tmpXXXXXX`: the glob needs the
+      # leading dot, and upload-artifact skips hidden paths unless told not to.
+      - name: collect node logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-logs
+          path: |
+            /tmp/**/.tmp*/**/felidae.log
+            /tmp/**/.tmp*/**/cometbft.log
+            /tmp/**/.tmp*/**/oracle.log
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14

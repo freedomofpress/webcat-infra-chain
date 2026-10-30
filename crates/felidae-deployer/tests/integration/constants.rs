@@ -18,8 +18,6 @@
 ///
 /// For subdomain tests, we use prefixes "goss" and "subby":
 /// - "goss.webcat.tech." and "subby.webcat.tech." under "webcat.tech."
-
-/// Primary test domains (registered domain, zone)
 pub const TEST_DOMAINS: &[(&str, &str)] = &[("webcat.tech.", "tech."), ("example.com.", "com.")];
 
 /// Convenience accessors for common test domains
@@ -32,6 +30,26 @@ pub const TEST_DOMAIN_UNENROLL: (&str, &str) = ("goss.webcat.tech.", "tech.");
 /// Subdomain prefixes for subdomain-related tests
 pub const TEST_SUBDOMAIN_PREFIX_1: &str = "goss";
 pub const TEST_SUBDOMAIN_PREFIX_2: &str = "subby";
+
+/// Validators in the default test topology.
+///
+/// Four, not three, because at n=3 two separate thresholds both collapse to
+/// "unanimous": BFT fault tolerance is `f = ceil(n/3) - 1 = 0`, and voting
+/// quorum is `n * 2 / 3 + 1 = 3`. One faulty validator therefore halts the
+/// chain *and* starves every admin and oracle vote queue, so every fault
+/// presents identically -- something times out -- and the suite can localise
+/// none of them.
+///
+/// At n=4 the thresholds separate: `f = 1`, quorum 3-of-4. A single faulty
+/// node leaves the chain producing blocks, so a test fails on the assertion
+/// that is actually wrong, with the rest of the network alive to be queried.
+pub const DEFAULT_VALIDATORS: usize = 4;
+
+/// Validators for a test that removes one and still needs fault tolerance.
+///
+/// Removing one from four lands back at `f = 0`, which is the condition
+/// `DEFAULT_VALIDATORS` exists to avoid.
+pub const VALIDATORS_WITH_REMOVAL: usize = 5;
 
 /// The chain ID used in all integration tests.
 pub const TEST_CHAIN_ID: &str = "felidae-integration-test";

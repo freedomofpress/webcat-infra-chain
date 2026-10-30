@@ -12,7 +12,6 @@ use felidae_state::BASE_VALIDATOR_POWER;
 use felidae_types::response::ValidatorInfo;
 use felidae_types::transaction::ValidatorStatus;
 use sha2::{Digest, Sha256};
-use tendermint_rpc::HttpClient;
 
 use crate::binaries::find_binaries;
 use crate::constants::network_startup_timeout;
@@ -54,7 +53,7 @@ fn query_validators_cli(
 async fn test_validators_query_lists_active_validators() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
@@ -65,14 +64,14 @@ async fn test_validators_query_lists_active_validators() -> color_eyre::Result<(
 
     assert_eq!(
         validators.len(),
-        3,
-        "expected 3 validators in a 3-validator network, got {}: {:?}",
+        network.validator_count(),
+        "expected every genesis validator to be listed, got {}: {:?}",
         validators.len(),
         validators
     );
 
     // Cross-reference identities & addresses against what CometBFT reports.
-    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+    let rpc_client = crate::helpers::rpc_client(network.rpc_url().as_str())?;
     let cometbft_vals = query_cometbft_validators(&rpc_client).await?;
 
     let cometbft_identities: BTreeSet<String> = cometbft_vals
@@ -148,7 +147,7 @@ async fn test_validators_query_lists_active_validators() -> color_eyre::Result<(
 async fn test_validators_query_prefix_lookup() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
@@ -156,7 +155,11 @@ async fn test_validators_query_prefix_lookup() -> color_eyre::Result<()> {
     network.wait_ready(network_startup_timeout()).await?;
 
     let all = query_validators_cli(&felidae_bin, &network.query_url(), None)?;
-    assert_eq!(all.len(), 3, "expected 3 validators in test network");
+    assert_eq!(
+        all.len(),
+        network.validator_count(),
+        "every genesis validator should be listed"
+    );
     let target = &all[0];
 
     // Full identity lookup.
@@ -219,7 +222,7 @@ async fn test_validators_query_prefix_lookup() -> color_eyre::Result<()> {
 async fn test_validators_query_unknown_id_errors() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
@@ -276,7 +279,7 @@ async fn test_validators_query_unknown_id_errors() -> color_eyre::Result<()> {
 async fn test_validators_route_returns_well_formed_json() -> color_eyre::Result<()> {
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::DEFAULT_VALIDATORS).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
@@ -309,8 +312,8 @@ async fn test_validators_route_returns_well_formed_json() -> color_eyre::Result<
     let arr = raw.as_array().expect("response should be a JSON array");
     assert_eq!(
         arr.len(),
-        3,
-        "expected 3 validators in array, got {}",
+        network.validator_count(),
+        "expected every genesis validator in the array, got {}",
         arr.len()
     );
     for entry in arr {
@@ -332,7 +335,7 @@ async fn test_validators_route_returns_well_formed_json() -> color_eyre::Result<
     }
 
     let typed: Vec<ValidatorInfo> = serde_json::from_str(&body)?;
-    assert_eq!(typed.len(), 3);
+    assert_eq!(typed.len(), network.validator_count());
     for v in &typed {
         assert_eq!(
             v.status,

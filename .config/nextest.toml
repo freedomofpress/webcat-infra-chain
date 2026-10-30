@@ -1,4 +1,11 @@
 [profile.default]
 # The integration tests can take a while with longer block times,
 # so we raise the "slow" warning threshold from its default of 1m.
-slow-timeout = { period = "3m" }
+#
+# `terminate-after` is the part that matters when something goes wrong. A node
+# whose ABCI service dies leaves its CometBFT peer answering RPC forever, so a
+# test waiting on chain state has nothing to time it out; without a kill
+# timeout that test runs until the CI job's own limit, which is hours.
+# Three periods of 3m is generous for the slowest test observed (~140s) and
+# still fails the job in minutes rather than hours.
+slow-timeout = { period = "3m", terminate-after = 3 }

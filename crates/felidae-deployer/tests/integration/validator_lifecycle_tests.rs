@@ -19,8 +19,9 @@ use crate::constants::{
 };
 use crate::harness::TestNetwork;
 use crate::helpers::{
-    poll_until, poll_until_async, query_cometbft_validators, query_config, query_validator_info,
-    read_genesis_validator_pubkeys, submit_admin_reconfig, wait_reconfig_applied,
+    assert_nodes_agree, latest_height, poll_until, poll_until_async, query_cometbft_validators,
+    query_config, query_validator_info, read_genesis_validator_pubkeys, submit_admin_reconfig,
+    wait_blocks, wait_reconfig_applied,
 };
 
 /// Tight `ValidatorConfig` tuned for downtime tests: a 30-block uptime
@@ -109,13 +110,13 @@ async fn poll_for_validator_signature(
 /// 1. Seed the 3 genesis validators into `config.validators` (the empty-
 ///    field shortcut means "unmanaged", so we have to declare them before
 ///    removal can become meaningful).
-/// 2. Submit a reconfig with validator-2 removed. Assert: CometBFT shows
+/// 2. Submit a reconfig with the last validator removed. Assert: CometBFT shows
 ///    only validators 0 and 1, the chain still produces blocks (2-of-2
-///    must sign), and the felidae query reports validator-2 as
+///    must sign), and the felidae query reports it as
 ///    `"inactive"`.
-/// 3. Submit a reconfig that re-adds validator-2 at the same pubkey.
+/// 3. Submit a reconfig that re-adds it at the same pubkey.
 ///    Assert: power returns to `BASE_VALIDATOR_POWER`, status flips back
-///    to `"active"`, and validator-2's CometBFT address appears in at
+///    to `"active"`, and its CometBFT address appears in at
 ///    least one subsequent block's `last_commit.signatures` (proving it
 ///    is signing again, not merely present in the set).
 #[tokio::test]
@@ -124,20 +125,20 @@ async fn test_readd_removed_validator_resumes_signing() -> color_eyre::Result<()
     let (cometbft_bin, felidae_bin) = find_binaries()?;
 
     // ── Phase 0: Start devnet ──────────────────────────────────────────────
-    let mut network = TestNetwork::create(3).await?;
+    let mut network = TestNetwork::create(crate::constants::VALIDATORS_WITH_REMOVAL).await?;
     network.start(
         cometbft_bin.to_str().unwrap(),
         felidae_bin.to_str().unwrap(),
     )?;
     network.wait_ready(network_startup_timeout()).await?;
 
-    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+    let rpc_client = crate::helpers::rpc_client(network.rpc_url().as_str())?;
 
     let initial_cometbft_vals = query_cometbft_validators(&rpc_client).await?;
     assert_eq!(
         initial_cometbft_vals.len(),
-        3,
-        "devnet should start with 3 validators"
+        network.validator_count(),
+        "devnet should start with its full validator set"
     );
     let initial_config = query_config(&felidae_bin, &network.query_url())?;
     assert!(
@@ -146,13 +147,17 @@ async fn test_readd_removed_validator_resumes_signing() -> color_eyre::Result<()
     );
 
     let genesis_validators = read_genesis_validator_pubkeys(&network)?;
-    assert_eq!(genesis_validators.len(), 3);
-    let target_key = genesis_validators[2].public_key;
+    assert_eq!(genesis_validators.len(), network.validator_count());
+    // Remove the last validator, so the target and the `remaining` slice below
+    // stay in step whatever the topology is. At n=3 these happened to be the
+    // same index; at n=5 they are not.
+    let target_index = network.validator_count() - 1;
+    let target_key = genesis_validators[target_index].public_key;
     let target_pubkey: Vec<u8> = target_key.as_bytes().to_vec();
     let target_address = target_key.address();
     let target_identity = target_key.to_string();
     eprintln!(
-        "[phase 0] will remove and re-add validator-2 (identity: {})",
+        "[phase 0] will remove and re-add validator-{target_index} (identity: {})",
         target_identity
     );
 
@@ -165,7 +170,10 @@ async fn test_readd_removed_validator_resumes_signing() -> color_eyre::Result<()
         validators: genesis_validators.clone(),
         validator_config: initial_config.validator_config.clone(),
     };
-    eprintln!("[phase 1] seeding config.validators with 3 genesis validators");
+    eprintln!(
+        "[phase 1] seeding config.validators with the {} genesis validators",
+        network.validator_count()
+    );
     submit_admin_reconfig(&network, &rpc_client, phase1_config).await?;
 
     let phase1_target_version = initial_config.version + 1;
@@ -179,16 +187,16 @@ async fn test_readd_removed_validator_resumes_signing() -> color_eyre::Result<()
     .await?;
     assert_eq!(
         config_after_seed.validators.len(),
-        3,
-        "seeded config should list the 3 genesis validators"
+        network.validator_count(),
+        "seeded config should list the genesis validators"
     );
 
     // The seed is a no-op at the consensus layer — all 3 still active.
     let cometbft_after_seed = query_cometbft_validators(&rpc_client).await?;
-    assert_eq!(cometbft_after_seed.len(), 3);
+    assert_eq!(cometbft_after_seed.len(), network.validator_count());
 
-    // ── Phase 2: Remove validator-2 from the config ────────────────────────
-    let remaining: Vec<Validator> = genesis_validators[..2].to_vec();
+    // ── Phase 2: Remove the target validator from the config ───────────────
+    let remaining: Vec<Validator> = genesis_validators[..network.validator_count() - 1].to_vec();
     let phase2_config = Config {
         version: config_after_seed.version + 1,
         admins: config_after_seed.admins.clone(),
@@ -197,7 +205,10 @@ async fn test_readd_removed_validator_resumes_signing() -> color_eyre::Result<()
         validators: remaining,
         validator_config: config_after_seed.validator_config.clone(),
     };
-    eprintln!("[phase 2] submitting reconfig that removes validator-2");
+    eprintln!(
+        "[phase 2] submitting reconfig that removes the last validator of {}",
+        network.validator_count()
+    );
     submit_admin_reconfig(&network, &rpc_client, phase2_config).await?;
 
     let phase2_target_version = config_after_seed.version + 1;
@@ -211,58 +222,58 @@ async fn test_readd_removed_validator_resumes_signing() -> color_eyre::Result<()
     .await?;
     assert_eq!(
         config_after_remove.validators.len(),
-        2,
-        "config should list only the 2 remaining validators after removal"
+        network.validator_count() - 1,
+        "config should list only the remaining validators after removal"
     );
 
-    // CometBFT should drop validator-2 from its active set.
+    // CometBFT should drop the target from its active set.
+    let remaining_count = network.validator_count() - 1;
     poll_until_async(
         consensus_propagation_wait_long(),
         poll_interval(),
-        "phase 2: CometBFT drops validator-2",
+        "phase 2: CometBFT drops the target validator",
         || async {
             let vals = query_cometbft_validators(&rpc_client).await?;
-            Ok(vals.len() == 2 && !vals.iter().any(|(k, _)| k == &target_pubkey))
+            Ok(vals.len() == remaining_count && !vals.iter().any(|(k, _)| k == &target_pubkey))
         },
     )
     .await?;
 
-    // Felidae status for validator-2 should be `"inactive"` (admin-removed).
+    // Felidae status for the target should be `"inactive"` (admin-removed).
     let removed_info = query_validator_info(&felidae_bin, &network.query_url(), &target_identity)?
         .ok_or_else(|| {
             color_eyre::eyre::eyre!(
-                "validator-2 should still be visible via /validators/{target_identity} after removal"
+                "the target should still be visible via /validators/{target_identity} after removal"
             )
         })?;
     assert_eq!(
         removed_info.status,
         ValidatorStatus::Inactive,
-        "validator-2 should report status=inactive after admin removal, got {:?}",
+        "the target should report status=inactive after admin removal, got {:?}",
         removed_info.status
     );
     assert_eq!(
         removed_info.power, 0,
-        "validator-2 should report power=0 after admin removal, got {}",
+        "the target should report power=0 after admin removal, got {}",
         removed_info.power
     );
 
     // Verify chain liveness with only 2 active validators. With n=2 CometBFT
     // requires both to sign every block, but that's still expected to work
     // since neither was killed — only the validator-set entry was removed.
-    let height_before = rpc_client.latest_block().await?.block.header.height.value();
-    tokio::time::sleep(consensus_propagation_wait()).await;
-    let height_after = rpc_client.latest_block().await?.block.header.height.value();
-    assert!(
-        height_after > height_before,
-        "chain should continue producing blocks with 2 of 3 active validators \
-         (height {height_before} → {height_after})"
-    );
+    let height_after = wait_blocks(
+        &rpc_client,
+        2,
+        consensus_propagation_wait_long(),
+        "chain keeps producing blocks",
+    )
+    .await?;
     eprintln!(
-        "[phase 2] chain still live with 2 active validators: {} → {}",
-        height_before, height_after
+        "[phase 2] chain still live at height {height_after} with {} active validators",
+        network.validator_count() - 1
     );
 
-    // ── Phase 3: Re-add validator-2 ────────────────────────────────────────
+    // ── Phase 3: Re-add the target validator ───────────────────────────────
     let phase3_config = Config {
         version: config_after_remove.version + 1,
         admins: config_after_remove.admins.clone(),
@@ -271,7 +282,7 @@ async fn test_readd_removed_validator_resumes_signing() -> color_eyre::Result<()
         validators: genesis_validators.clone(),
         validator_config: config_after_remove.validator_config.clone(),
     };
-    eprintln!("[phase 3] submitting reconfig that re-adds validator-2");
+    eprintln!("[phase 3] submitting reconfig that re-adds the target");
     submit_admin_reconfig(&network, &rpc_client, phase3_config).await?;
 
     let phase3_target_version = config_after_remove.version + 1;
@@ -285,14 +296,14 @@ async fn test_readd_removed_validator_resumes_signing() -> color_eyre::Result<()
     .await?;
     assert_eq!(
         config_after_readd.validators.len(),
-        3,
-        "config should list all 3 validators again after re-add"
+        network.validator_count(),
+        "config should list every validator again after re-add"
     );
 
     poll_until_async(
         consensus_propagation_wait_long(),
         poll_interval(),
-        "phase 3: CometBFT restores validator-2 at BASE_VALIDATOR_POWER",
+        "phase 3: CometBFT restores the target at BASE_VALIDATOR_POWER",
         || async {
             let vals = query_cometbft_validators(&rpc_client).await?;
             Ok(vals
@@ -302,27 +313,27 @@ async fn test_readd_removed_validator_resumes_signing() -> color_eyre::Result<()
     )
     .await?;
 
-    // The felidae view of validator-2 should be `"active"` again.
+    // The felidae view of the target should be `"active"` again.
     let readded_info = query_validator_info(&felidae_bin, &network.query_url(), &target_identity)?
         .ok_or_else(|| {
             color_eyre::eyre::eyre!(
-                "validator-2 should be visible via /validators/{target_identity} after re-add"
+                "the target should be visible via /validators/{target_identity} after re-add"
             )
         })?;
     assert_eq!(
         readded_info.status,
         ValidatorStatus::Active,
-        "validator-2 should report status=active after re-add, got {:?}",
+        "the target should report status=active after re-add, got {:?}",
         readded_info.status
     );
     assert_eq!(
         readded_info.power,
         u64::from(BASE_VALIDATOR_POWER),
-        "validator-2 should report power=BASE_VALIDATOR_POWER after re-add, got {}",
+        "the target should report power=BASE_VALIDATOR_POWER after re-add, got {}",
         readded_info.power
     );
 
-    // Proof of life: validator-2's address must show up in a subsequent
+    // Proof of life: the target's address must show up in a subsequent
     // block's last_commit signatures as a positive `BlockIdFlagCommit`. That
     // is what distinguishes "in the set" (membership) from "actually signing"
     // (participation).
@@ -332,7 +343,7 @@ async fn test_readd_removed_validator_resumes_signing() -> color_eyre::Result<()
         consensus_propagation_wait_long(),
     )
     .await?;
-    eprintln!("[phase 3] validator-2 signed block at height {signed_height} after re-add");
+    eprintln!("[phase 3] the target signed a block at height {signed_height} after re-add");
 
     Ok(())
 }
@@ -377,18 +388,18 @@ async fn test_validator_jailed_on_downtime() -> color_eyre::Result<()> {
     )?;
     network.wait_ready(network_startup_timeout()).await?;
 
-    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+    let rpc_client = crate::helpers::rpc_client(network.rpc_url().as_str())?;
 
     let cometbft_vals = query_cometbft_validators(&rpc_client).await?;
     assert_eq!(
         cometbft_vals.len(),
-        4,
-        "devnet should start with 4 validators"
+        network.validator_count(),
+        "devnet should start with its full validator set"
     );
 
     // Capture the target's identity before tearing it down.
     let genesis_validators = read_genesis_validator_pubkeys(&network)?;
-    assert_eq!(genesis_validators.len(), 4);
+    assert_eq!(genesis_validators.len(), network.validator_count());
     let target_pubkey: Vec<u8> = genesis_validators[3].public_key.as_bytes().to_vec();
     let target_identity = genesis_validators[3].public_key.to_string();
     eprintln!("[phase 0] target validator-3 identity: {}", target_identity);
@@ -407,7 +418,7 @@ async fn test_validator_jailed_on_downtime() -> color_eyre::Result<()> {
         },
     )
     .await?;
-    let height_at_kill = rpc_client.latest_block().await?.block.header.height.value();
+    let height_at_kill = latest_height(&rpc_client).await?;
     eprintln!("[phase 0] killing validator-3 at height {}", height_at_kill);
 
     // ── Phase 1: Kill validator-3 (CometBFT + Felidae + Oracle) ────────────
@@ -432,7 +443,7 @@ async fn test_validator_jailed_on_downtime() -> color_eyre::Result<()> {
     let after_jail = query_cometbft_validators(&rpc_client).await?;
     assert_eq!(
         after_jail.len(),
-        4,
+        network.validator_count(),
         "jailed validator should remain in the set with power=1, not be removed"
     );
     for (pk, power) in &after_jail {
@@ -450,7 +461,7 @@ async fn test_validator_jailed_on_downtime() -> color_eyre::Result<()> {
 
     // 2c. Chain liveness: height should have advanced beyond the kill
     // point, and should keep advancing.
-    let height_after_jail = rpc_client.latest_block().await?.block.header.height.value();
+    let height_after_jail = latest_height(&rpc_client).await?;
     assert!(
         height_after_jail > height_at_kill,
         "chain should have advanced past height_at_kill={height_at_kill} \
@@ -470,7 +481,7 @@ async fn test_validator_jailed_on_downtime() -> color_eyre::Result<()> {
     eprintln!(
         "[phase 2] chain still live post-jail: {} → {}",
         height_at_kill,
-        rpc_client.latest_block().await?.block.header.height.value()
+        latest_height(&rpc_client).await?
     );
 
     // 2d. The felidae query API should report validator-3 as `"jailed"`.
@@ -522,7 +533,7 @@ async fn test_jailed_validator_unjails_on_recovery() -> color_eyre::Result<()> {
     network.start(&cometbft_path, &felidae_path)?;
     network.wait_ready(network_startup_timeout()).await?;
 
-    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+    let rpc_client = crate::helpers::rpc_client(network.rpc_url().as_str())?;
 
     let genesis_validators = read_genesis_validator_pubkeys(&network)?;
     let target_pubkey: Vec<u8> = genesis_validators[3].public_key.as_bytes().to_vec();
@@ -609,6 +620,15 @@ async fn test_jailed_validator_unjails_on_recovery() -> color_eyre::Result<()> {
         recovered_info.status, recovered_info.missed_blocks, recovered_info.uptime_window,
     );
 
+    // ── Phase 3: the restarted node agrees with its peers ──────────────────
+    //
+    // Unjailing says CometBFT is counting its votes again. It does not say the
+    // node rebuilt the same state as everyone else, and a node that rejoined
+    // with divergent state is not recovered -- it is a fault waiting to be
+    // noticed. Assert convergence explicitly.
+    let agreed_at = assert_nodes_agree(&network.query_urls(), consensus_propagation_wait()).await?;
+    eprintln!("[phase 3] all 4 nodes agree on committed state at height {agreed_at}");
+
     Ok(())
 }
 
@@ -621,7 +641,7 @@ async fn test_jailed_validator_unjails_on_recovery() -> color_eyre::Result<()> {
 /// produces a block then immediately stalls". Polling for ten more is
 /// cheap and gives a sturdier signal of sustained liveness.
 ///
-/// Uses N=4 so quorum = ⌈2·N/3⌉+1 = 3: with one validator jailed the
+/// Uses N=4 so quorum = `N * 2 / 3 + 1` = 3: with one validator jailed the
 /// surviving three still constitute a quorum. (N=3, where the test plan's
 /// original title pointed, has zero fault tolerance — the chain would
 /// stall the moment a validator is killed, and the test would never reach
@@ -643,7 +663,7 @@ async fn test_chain_survives_one_jailed_of_four() -> color_eyre::Result<()> {
     )?;
     network.wait_ready(network_startup_timeout()).await?;
 
-    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+    let rpc_client = crate::helpers::rpc_client(network.rpc_url().as_str())?;
 
     let genesis_validators = read_genesis_validator_pubkeys(&network)?;
     let target_pubkey: Vec<u8> = genesis_validators[3].public_key.as_bytes().to_vec();
@@ -675,7 +695,7 @@ async fn test_chain_survives_one_jailed_of_four() -> color_eyre::Result<()> {
     // at least 10 blocks. This guards against the failure mode where the
     // chain produces one block after jailing and then stalls — which T1
     // would not detect.
-    let baseline_height = rpc_client.latest_block().await?.block.header.height.value();
+    let baseline_height = latest_height(&rpc_client).await?;
     let target_height = baseline_height + 10;
     eprintln!(
         "[liveness] post-jail baseline={baseline_height}, polling for height >= {target_height}"
@@ -709,7 +729,7 @@ async fn test_chain_survives_one_jailed_of_four() -> color_eyre::Result<()> {
         v3_entry.1
     );
 
-    let final_height = rpc_client.latest_block().await?.block.header.height.value();
+    let final_height = latest_height(&rpc_client).await?;
     eprintln!(
         "[liveness] chain produced {} blocks after jail ({} → {})",
         final_height - baseline_height,
@@ -749,7 +769,7 @@ async fn test_jailed_validator_uptime_still_tracked() -> color_eyre::Result<()> 
     )?;
     network.wait_ready(network_startup_timeout()).await?;
 
-    let rpc_client = HttpClient::new(network.rpc_url().as_str())?;
+    let rpc_client = crate::helpers::rpc_client(network.rpc_url().as_str())?;
 
     let genesis_validators = read_genesis_validator_pubkeys(&network)?;
     let target_pubkey: Vec<u8> = genesis_validators[3].public_key.as_bytes().to_vec();
@@ -790,7 +810,7 @@ async fn test_jailed_validator_uptime_still_tracked() -> color_eyre::Result<()> 
         })?;
     assert_eq!(initial.status, ValidatorStatus::Jailed);
     let missed_at_jail = initial.missed_blocks;
-    let height_at_jail = rpc_client.latest_block().await?.block.header.height.value();
+    let height_at_jail = latest_height(&rpc_client).await?;
     eprintln!(
         "[t4] at jail: height={height_at_jail}, missed_blocks={missed_at_jail}, window={}",
         initial.uptime_window
