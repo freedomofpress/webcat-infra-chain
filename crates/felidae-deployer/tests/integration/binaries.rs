@@ -43,12 +43,12 @@ pub fn find_deployer() -> color_eyre::Result<PathBuf> {
 /// 2. Local submodule build at `./cometbft/build/cometbft`
 pub fn find_cometbft() -> color_eyre::Result<PathBuf> {
     // First, check if cometbft is available on PATH (e.g., from nix environment)
-    if let Ok(output) = Command::new("which").arg("cometbft").output() {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                return Ok(PathBuf::from(path));
-            }
+    if let Ok(output) = Command::new("which").arg("cometbft").output()
+        && output.status.success()
+    {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Ok(PathBuf::from(path));
         }
     }
 
