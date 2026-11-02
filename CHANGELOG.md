@@ -1,6 +1,6 @@
 # Unreleased
 
-Nothing yet!
+* fix(publish): drop validator_set from the printed light block, #166
 
 # Version 0.3.6 (2026-04-13)
 
