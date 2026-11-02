@@ -9,6 +9,7 @@
 * ci: set up nix via freedomofpress/actionslib, #168
 * lint: `just lint` runs clippy with `-D warnings`, gating CI, #168
 * dev: track .envrc in-repo, #168
+* fix(publish): drop validator_set from the printed light block, #166
 
 # Version 0.4.0 (2026-09-30)
 
