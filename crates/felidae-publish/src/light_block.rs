@@ -6,9 +6,13 @@ use tendermint_rpc::client::Client;
 /// LightBlock structure: signed_header + validator_set
 /// This matches the standard Tendermint `LightBlock` structure but
 /// is not exported by the tendermint-rpc crate.
+///
+/// Only `signed_header` is published: clients pin the validator set, so
+/// shipping it in block.json only costs bandwidth (webcat-infra-chain#166).
 #[derive(Serialize)]
 pub struct LightBlock {
     pub signed_header: tendermint::block::signed_header::SignedHeader,
+    #[serde(skip)]
     pub validator_set: tendermint::validator::Set,
 }
 
