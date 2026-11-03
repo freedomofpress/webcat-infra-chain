@@ -163,7 +163,15 @@ impl TestNetwork {
     ) -> color_eyre::Result<Self> {
         // Always retained: tests fail by returning `Err`, so `Drop` can't tell
         // failure from success. ~60 MB per suite, under a per-run `TMPDIR`.
-        let directory = tempfile::tempdir()?.keep();
+        // Named for the test, which libtest gives as the thread name.
+        let test = std::thread::current()
+            .name()
+            .unwrap_or("network")
+            .replace("::", ".");
+        let directory = tempfile::Builder::new()
+            .prefix(&format!("{test}-"))
+            .tempdir()?
+            .keep();
         eprintln!("[harness] network directory: {}", directory.display());
 
         let config = NetworkConfig {

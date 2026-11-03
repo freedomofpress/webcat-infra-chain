@@ -36,17 +36,16 @@ jobs:
       - name: run the integration test suite
         run: nix develop --command just integration
 
-      # The harness retains every node's logs under `.tmpXXXXXX` dirs, hence
-      # the leading dot in the glob and `include-hidden-files`.
+      # `just integration` retains every network tree under target/integration.
       - name: collect node logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: node-logs
           path: |
-            /tmp/**/.tmp*/**/felidae.log
-            /tmp/**/.tmp*/**/cometbft.log
-            /tmp/**/.tmp*/**/oracle.log
-          include-hidden-files: true
+            target/integration/**/felidae.log
+            target/integration/**/cometbft.log
+            target/integration/**/oracle.log
+            !target/integration/latest
           if-no-files-found: warn
           retention-days: 14
