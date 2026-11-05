@@ -875,17 +875,14 @@ async fn test_jailed_validator_uptime_still_tracked() -> color_eyre::Result<()> 
 
 /// A node that has stopped must say so on `/healthz`, and its peers must not.
 ///
-/// This is the negative control for `assert_all_nodes_healthy`. Without it,
-/// that assertion could be vacuous -- an endpoint that always returns 200
-/// would satisfy every other test in this suite just as well as a working one.
+/// This is the negative control for `assert_all_nodes_healthy`: without it, an
+/// endpoint that always returned 200 would satisfy the suite just as well.
 ///
-/// Killing a validator outright is a cruder fault than the one that motivated
-/// the endpoint (an ABCI service that dies while the process lives), but it
-/// produces the same observable: a node whose committed height stops moving.
-/// The distinction that matters is the second assertion -- the *surviving*
-/// nodes keep reporting healthy, because at n=4 the chain continues without
-/// the one that died. An endpoint that reported the whole network unhealthy
-/// whenever any node stopped would be useless for deciding what to restart.
+/// Only the target's CometBFT dies. Felidae lives on, serving frozen state on
+/// a port that still answers, which is the fault `/healthz` exists to expose.
+/// The survivors must stay healthy: at n=4 the chain continues without one
+/// node, and a check that marked the whole network unhealthy whenever any node
+/// stopped would be useless for deciding what to restart.
 #[tokio::test]
 #[cfg(feature = "integration")]
 async fn test_healthz_reports_a_stopped_node() -> color_eyre::Result<()> {
@@ -904,61 +901,45 @@ async fn test_healthz_reports_a_stopped_node() -> color_eyre::Result<()> {
 
     let target = network.validator_count() - 1;
     let target_url = network.node_query_url(target);
-    let survivors: Vec<String> = (0..network.validator_count())
-        .filter(|i| *i != target)
-        .map(|i| network.node_query_url(i))
-        .collect();
-    let killed_at = max_height(&survivors).await;
-    network.kill_validator(target)?;
-    eprintln!("[phase 1] killed validator-{target} at height {killed_at}");
+    network.kill_cometbft(target)?;
+    eprintln!("[phase 1] killed validator-{target}'s CometBFT");
 
-    // Its port stops answering at all, which is the clearest possible signal.
+    // Its query port keeps answering, and must answer 503 once the frozen
+    // block outlives the 30s default tolerance.
+    let stalled = || async {
+        match node_health(&target_url).await {
+            Some((503, Some(h))) if !h.healthy => Some(h.block_height),
+            _ => None,
+        }
+    };
     poll_until_async(
-        consensus_propagation_wait_long(),
+        Duration::from_secs(30) + consensus_propagation_wait_long(),
         poll_interval(),
-        "the killed node's query port stops answering healthy",
-        || async {
-            let health = node_health(std::slice::from_ref(&target_url)).await;
-            Ok(health.iter().all(|(_, code, _)| *code != 200))
-        },
+        "the stalled node's /healthz turns 503",
+        || async { Ok(stalled().await.is_some()) },
     )
     .await?;
-    eprintln!("[phase 1] validator-{target} no longer reports healthy");
+    let frozen_at = stalled().await.expect("still stalled");
+    eprintln!("[phase 1] validator-{target} reports 503, frozen at height {frozen_at}");
 
-    // The survivors carry on. At n=4 losing one leaves quorum intact, so a
-    // health check must distinguish "this node is broken" from "the chain is
-    // stopped" -- otherwise it cannot be used to decide what to restart.
-    //
-    // Healthy alone would prove nothing here: the kill is seconds old and the
-    // tolerance is 30s, so even a halted chain would still look healthy. Each
-    // survivor must first commit past the kill height.
-    poll_until_async(
-        consensus_propagation_wait_long(),
-        poll_interval(),
-        "every survivor commits past the kill height",
-        || async {
-            let health = node_health(&survivors).await;
-            Ok(health
-                .iter()
-                .all(|(_, _, h)| h.as_ref().is_some_and(|h| h.block_height > killed_at)))
-        },
-    )
-    .await?;
+    // A halted chain would be just as stale, so healthy alone is not enough:
+    // each survivor must also have committed past the stalled node.
+    let survivors: Vec<String> = (0..target).map(|i| network.node_query_url(i)).collect();
     assert_all_nodes_healthy(&survivors).await?;
+    for url in &survivors {
+        let height = node_health(url)
+            .await
+            .and_then(|(_, h)| h)
+            .map(|h| h.block_height);
+        assert!(
+            height > Some(frozen_at),
+            "{url} at {height:?}, not past the stalled node's {frozen_at}"
+        );
+    }
     eprintln!(
-        "[phase 2] the remaining {} nodes still report healthy",
+        "[phase 2] the remaining {} nodes still advance",
         survivors.len()
     );
 
     Ok(())
-}
-
-/// The highest height any of these nodes reports on `/healthz`.
-async fn max_height(query_urls: &[String]) -> u64 {
-    node_health(query_urls)
-        .await
-        .iter()
-        .filter_map(|(_, _, h)| h.as_ref().map(|h| h.block_height))
-        .max()
-        .unwrap_or(0)
 }

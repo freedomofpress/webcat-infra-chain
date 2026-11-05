@@ -119,23 +119,16 @@ pub async fn wait_blocks(
     latest_height(rpc_client).await
 }
 
-/// Every node's `/healthz`, as `(node index, status code, body)`.
-pub async fn node_health(query_urls: &[String]) -> Vec<(usize, u16, Option<Health>)> {
+/// One node's `/healthz`: its status code and report, or `None` if the port
+/// did not answer at all.
+pub async fn node_health(query_url: &str) -> Option<(u16, Option<Health>)> {
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
         .expect("client");
-    let mut out = Vec::new();
-    for (i, url) in query_urls.iter().enumerate() {
-        match http.get(format!("{url}/healthz")).send().await {
-            Ok(resp) => {
-                let code = resp.status().as_u16();
-                out.push((i, code, resp.json::<Health>().await.ok()));
-            }
-            Err(_) => out.push((i, 0, None)),
-        }
-    }
-    out
+    let resp = http.get(format!("{query_url}/healthz")).send().await.ok()?;
+    let code = resp.status().as_u16();
+    Some((code, resp.json::<Health>().await.ok()))
 }
 
 /// Fail if any node reports unhealthy.
@@ -149,19 +142,18 @@ pub async fn node_health(query_urls: &[String]) -> Vec<(usize, u16, Option<Healt
 /// A status of 0 means the port did not answer at all, which is the shape a
 /// node aborted by `FailFast` leaves behind.
 pub async fn assert_all_nodes_healthy(query_urls: &[String]) -> color_eyre::Result<()> {
-    let unhealthy: Vec<String> = node_health(query_urls)
-        .await
-        .into_iter()
-        .filter(|(_, code, _)| *code != 200)
-        .map(|(i, code, body)| match body {
-            Some(h) => format!(
+    let mut unhealthy = Vec::new();
+    for (i, url) in query_urls.iter().enumerate() {
+        match node_health(url).await {
+            Some((200, _)) => {}
+            Some((code, Some(h))) => unhealthy.push(format!(
                 "node {i}: HTTP {code}, height {} stale by {}s (tolerance {}s)",
                 h.block_height, h.block_age_secs, h.tolerance_secs
-            ),
-            None if code == 0 => format!("node {i}: query port did not answer"),
-            None => format!("node {i}: HTTP {code}"),
-        })
-        .collect();
+            )),
+            Some((code, None)) => unhealthy.push(format!("node {i}: HTTP {code}")),
+            None => unhealthy.push(format!("node {i}: query port did not answer")),
+        }
+    }
     if unhealthy.is_empty() {
         return Ok(());
     }

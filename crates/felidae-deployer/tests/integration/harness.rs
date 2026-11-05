@@ -307,27 +307,31 @@ impl TestNetwork {
     /// the kernel; [`restart_validator`](Self::restart_validator) handles that
     /// by polling until the ports are free before respawning.
     pub fn kill_validator(&mut self, index: usize) -> color_eyre::Result<()> {
-        if index >= self.network.nodes.len() {
-            return Err(color_eyre::eyre::eyre!(
-                "kill_validator: index {index} out of range (network has {} nodes)",
-                self.network.nodes.len()
-            ));
-        }
-        let node_name = self.network.nodes[index].name.clone();
-        let prefixes = [
-            format!("{node_name}-cometbft"),
-            format!("{node_name}-felidae"),
-            format!("{node_name}-oracle"),
-        ];
+        self.kill_processes(index, &["cometbft", "felidae", "oracle"])
+    }
 
-        for prefix in &prefixes {
-            let existing = self.lock_processes().remove(prefix);
+    /// Kill only a node's CometBFT. Felidae lives on and keeps serving its
+    /// last committed state: a live query port with no consensus behind it.
+    pub fn kill_cometbft(&mut self, index: usize) -> color_eyre::Result<()> {
+        self.kill_processes(index, &["cometbft"])
+    }
+
+    fn kill_processes(&mut self, index: usize, roles: &[&str]) -> color_eyre::Result<()> {
+        let node_name = self
+            .network
+            .nodes
+            .get(index)
+            .ok_or_else(|| color_eyre::eyre::eyre!("node index {index} out of range"))?
+            .name
+            .clone();
+        for role in roles {
+            let existing = self.lock_processes().remove(&format!("{node_name}-{role}"));
             if let Some(mut child) = existing {
                 let _ = child.kill();
                 let _ = child.wait();
             }
         }
-        eprintln!("[kill_validator] killed processes for node {node_name}");
+        eprintln!("[kill] {} of node {node_name}", roles.join(", "));
         Ok(())
     }
 
