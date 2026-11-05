@@ -53,22 +53,6 @@ impl<S> FailFast<S> {
     }
 }
 
-/// Hand a caught panic to `on_panic`, then surface it as a service error.
-///
-/// The error is mostly a formality: in production `on_panic` never returns.
-fn panicked(on_panic: &OnPanic, payload: Box<dyn Any + Send>) -> BoxError {
-    on_panic(payload);
-    BoxError::from("ABCI service panicked")
-}
-
-/// Run `f`, routing a panic out of band rather than letting it unwind.
-///
-/// [`AssertUnwindSafe`] is honest here because nothing resumes: the state the
-/// panic may have poisoned is never read again on this side of `on_panic`.
-fn guard<T>(on_panic: &OnPanic, f: impl FnOnce() -> T) -> Result<T, BoxError> {
-    std::panic::catch_unwind(AssertUnwindSafe(f)).map_err(|payload| panicked(on_panic, payload))
-}
-
 impl<S> Service<Request> for FailFast<S>
 where
     S: Service<Request, Response = Response, Error = BoxError>,
@@ -79,26 +63,26 @@ where
     type Future = BoxFuture<'static, Result<Response, BoxError>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        let on_panic = self.on_panic.clone();
-        match guard(&on_panic, || self.inner.poll_ready(cx)) {
-            Ok(ready) => ready,
-            Err(e) => Poll::Ready(Err(e)),
-        }
+        self.inner.poll_ready(cx)
     }
 
     fn call(&mut self, req: Request) -> Self::Future {
         let on_panic = self.on_panic.clone();
         // Both halves can panic: building the future, and polling it. The
         // cnidarium delta panic that motivated this lands in the second.
-        let started = guard(&on_panic, || self.inner.call(req));
+        // `AssertUnwindSafe` is honest because nothing resumes: in production
+        // `on_panic` never returns, and the error below is a formality.
+        let started = std::panic::catch_unwind(AssertUnwindSafe(|| self.inner.call(req)));
         Box::pin(async move {
-            match started {
-                Err(e) => Err(e),
-                Ok(future) => AssertUnwindSafe(future)
-                    .catch_unwind()
-                    .await
-                    .unwrap_or_else(|payload| Err(panicked(&on_panic, payload))),
-            }
+            let caught = match started {
+                Ok(future) => match AssertUnwindSafe(future).catch_unwind().await {
+                    Ok(result) => return result,
+                    Err(payload) => payload,
+                },
+                Err(payload) => payload,
+            };
+            on_panic(caught);
+            Err(BoxError::from("ABCI service panicked"))
         })
     }
 }
