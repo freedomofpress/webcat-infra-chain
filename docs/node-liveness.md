@@ -89,7 +89,8 @@ Exit codes are the point:
 
 A syncing node is exempt via CometBFT's `catching_up`: mid-sync its peer can lead
 by a block while that block is being applied, which looks like a broken node.
-`--json` carries the same decision as a `verdict` field.
+`--json` carries the same decision as a `verdict` field: `advancing`,
+`node_behind`, `wait` or `unknown`, in exit-code order.
 
 The comparison lives in the CLI rather than in `/healthz` deliberately. Having
 `felidae start` poll its own consensus engine would give the application an

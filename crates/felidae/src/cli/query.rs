@@ -127,12 +127,10 @@ enum Verdict {
     /// Not advancing and behind its own peer: this node is the problem.
     /// Exit 1.
     NodeBehind,
-    /// Not advancing, but level with its CometBFT peer, so the chain is
-    /// stopped rather than this node. Restarting will not help. Exit 2.
-    ChainStopped,
-    /// Replaying history. Its peer may lead by a block mid-apply, which is
-    /// not a fault; restarting would only set the sync back. Exit 2.
-    CatchingUp,
+    /// Not advancing, but restarting will not help: either level with its
+    /// peer (the chain is stopped), or catching up (its peer may lead by a
+    /// block mid-apply, which is not a fault). Exit 2.
+    Wait,
     /// No peer given, so the cases cannot be told apart. Exit 3.
     Unknown,
 }
@@ -142,7 +140,7 @@ impl Verdict {
         match self {
             Verdict::Advancing => 0,
             Verdict::NodeBehind => 1,
-            Verdict::ChainStopped | Verdict::CatchingUp => 2,
+            Verdict::Wait => 2,
             Verdict::Unknown => 3,
         }
     }
@@ -151,8 +149,7 @@ impl Verdict {
         match self {
             Verdict::Advancing => "advancing",
             Verdict::NodeBehind => "this node is behind its own CometBFT peer",
-            Verdict::ChainStopped => "chain stopped (this node is level with its peer)",
-            Verdict::CatchingUp => "catching up",
+            Verdict::Wait => "chain stopped or node catching up; do not restart",
             Verdict::Unknown => "not advancing (pass --peer to tell why)",
         }
     }
@@ -178,9 +175,9 @@ impl Verdict {
             None => Verdict::NodeBehind,
             Some(PeerStatus {
                 catching_up: true, ..
-            }) => Verdict::CatchingUp,
+            }) => Verdict::Wait,
             Some(PeerStatus { height, .. }) if height > app_height => Verdict::NodeBehind,
-            Some(_) => Verdict::ChainStopped,
+            Some(_) => Verdict::Wait,
         }
     }
 }
@@ -518,12 +515,12 @@ mod tests {
 
     #[test]
     fn level_with_its_peer_means_the_chain_stopped() {
-        assert_eq!(Verdict::against(3, peer(3, false)), Verdict::ChainStopped);
+        assert_eq!(Verdict::against(3, peer(3, false)), Verdict::Wait);
     }
 
     #[test]
     fn a_syncing_peer_one_block_ahead_is_not_a_fault() {
-        assert_eq!(Verdict::against(2, peer(3, true)), Verdict::CatchingUp);
+        assert_eq!(Verdict::against(2, peer(3, true)), Verdict::Wait);
     }
 
     #[test]
