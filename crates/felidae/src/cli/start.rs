@@ -27,10 +27,9 @@ pub struct Start {
     #[clap(long)]
     pub homedir: Option<std::path::PathBuf>,
     /// How stale the newest committed block may be before `/healthz` reports
-    /// unhealthy (e.g. "45s", "2m"). Defaults to ten times the chain's own
-    /// observed block interval, with a 30s floor.
-    #[clap(long, value_parser = humantime::parse_duration)]
-    health_max_block_age: Option<Duration>,
+    /// unhealthy (e.g. "45s", "2m").
+    #[clap(long, value_parser = humantime::parse_duration, default_value = "30s")]
+    health_max_block_age: Duration,
 }
 
 impl Run for Start {
@@ -85,10 +84,7 @@ impl Run for Start {
         // Start the query server:
         let query = tokio::spawn(async move {
             let listener = tokio::net::TcpListener::bind(query_bind).await?;
-            let policy = health::Policy {
-                max_block_age: health_max_block_age,
-            };
-            axum::serve(listener, query::app(storage, policy)).await?;
+            axum::serve(listener, query::app(storage, health_max_block_age)).await?;
 
             Ok::<_, Report>(())
         });

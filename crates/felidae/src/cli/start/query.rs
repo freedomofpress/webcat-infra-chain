@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use axum::body::Body;
 use axum::{Router, extract::Path, routing::get};
 use cnidarium::{StateDelta, StateRead, Storage};
@@ -17,7 +19,7 @@ use tracing::debug;
 
 use super::health;
 
-pub fn app(storage: Storage, health_policy: health::Policy) -> Router {
+pub fn app(storage: Storage, health_max_block_age: Duration) -> Router {
     let chain_info = {
         let storage = storage.clone();
         move || async move {
@@ -60,7 +62,7 @@ pub fn app(storage: Storage, health_policy: health::Policy) -> Router {
         let storage = storage.clone();
         move || async move {
             let state = State::new(StateDelta::new(storage.latest_snapshot()));
-            match health::report(&state, health_policy, Time::now()).await {
+            match health::report(&state, health_max_block_age, Time::now()).await {
                 // A node that cannot yet read its own height has not finished
                 // InitChain. Unhealthy is the honest answer, not a 500.
                 Err(e) => (
