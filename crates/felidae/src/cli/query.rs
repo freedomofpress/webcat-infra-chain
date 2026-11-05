@@ -193,37 +193,32 @@ struct PeerStatus {
 
 /// Where this node's CometBFT peer stands.
 async fn peer_status(peer: &Url) -> color_eyre::Result<PeerStatus> {
-    let status: serde_json::Value = probe_client()?
-        .get(peer.join("/status")?)
-        .send()
-        .await?
-        .json()
-        .await?;
-    let sync = status
-        .pointer("/result/sync_info")
-        .ok_or_else(|| color_eyre::eyre::eyre!("no sync_info in /status from {peer}"))?;
-    let height = sync["latest_block_height"]
-        .as_str()
-        .and_then(|h| h.parse().ok())
-        .ok_or_else(|| color_eyre::eyre::eyre!("could not read latest_block_height from {peer}"))?;
+    use tendermint_rpc::{Client, HttpClient};
+    let rpc = |e: tendermint_rpc::Error| color_eyre::eyre::eyre!("{e}");
+    let sync = HttpClient::builder(peer.as_str().try_into().map_err(rpc)?)
+        .timeout(PROBE_TIMEOUT)
+        .build()
+        .map_err(rpc)?
+        .status()
+        .await
+        .map_err(rpc)?
+        .sync_info;
     Ok(PeerStatus {
-        height,
-        catching_up: sync["catching_up"].as_bool().unwrap_or(false),
+        height: sync.latest_block_height.value(),
+        catching_up: sync.catching_up,
     })
 }
 
 /// A health probe must answer, even about a process that hangs on its socket.
-fn probe_client() -> color_eyre::Result<reqwest::Client> {
-    Ok(reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()?)
-}
+const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl HealthCmd {
     async fn run(self, query_url: Url) -> color_eyre::Result<()> {
         // Deliberately no `error_for_status`: an unhealthy node answers 503
         // with the very report we want to show.
-        let response = probe_client()?
+        let response = reqwest::Client::builder()
+            .timeout(PROBE_TIMEOUT)
+            .build()?
             .get(query_url.join("/healthz")?)
             .send()
             .await?;
