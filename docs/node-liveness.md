@@ -25,8 +25,7 @@ forever.
       "block_height": 10421,
       "block_time": "2026-09-14T00:31:12.994Z",
       "block_age_secs": 2,
-      "tolerance_secs": 50,
-      "observed_interval_secs": 5
+      "tolerance_secs": 30
     }
 
 The status code mirrors `healthy`: **200** when advancing, **503** when stale or
@@ -38,17 +37,8 @@ when unhealthy:
 
     $ felidae query --query-url http://localhost:8080 health
 
-### How tolerance is chosen
-
-Staleness is judged against the chain's own cadence, sampled from the block
-times already in state, so neither CometBFT's `timeout_commit` nor a hand-tuned
-threshold is needed:
-
-    tolerance = max(30s, 10 × mean interval over the last 20 blocks)
-
-The floor keeps a fast chain from flapping on one slow round, and covers a chain
-too young to have measured an interval. `--health-max-block-age 45s` overrides
-the whole calculation when an operator knows better.
+A node is unhealthy once its newest committed block is older than 30s.
+`--health-max-block-age 2m` overrides that for a slower chain.
 
 A node that is behind and catching up reports unhealthy. That is the right
 answer for routing, which is what this endpoint is for — it is not a judgement
