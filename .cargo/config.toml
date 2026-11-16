@@ -1,0 +1,4 @@
+# remove once cnidarium includes a rocksdb release that includes the cstdint header
+# see: https://github.com/freedomofpress/webcat-infra-chain/issues/170 
+[env]
+CXXFLAGS = "-include cstdint"
