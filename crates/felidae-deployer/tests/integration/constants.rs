@@ -116,7 +116,7 @@ pub fn admin_reconfig_tx_timeout() -> Duration {
 ///
 /// A WEBCAT enrollment defines the cryptographic policy for a domain. When
 /// oracles observe a domain, they hash the canonicalized enrollment JSON
-/// (using OLPC canonical JSON format) to produce a 32-byte commitment.
+/// (using JCS, RFC 8785) to produce a 32-byte commitment.
 ///
 /// The enrollment contains:
 /// - `signers`: Array of base64url-encoded Ed25519 public keys authorized to sign
