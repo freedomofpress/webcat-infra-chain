@@ -2,3 +2,6 @@
 # see: https://github.com/freedomofpress/webcat-infra-chain/issues/170 
 [env]
 CXXFLAGS = "-include cstdint"
+
+[registry]
+global-min-publish-age = "7 days"
