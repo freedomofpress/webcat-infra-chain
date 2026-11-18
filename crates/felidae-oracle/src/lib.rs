@@ -11,8 +11,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use ed25519_dalek::VerifyingKey;
-use olpc_cjson::CanonicalFormatter;
-use serde_json::Serializer;
 use sha2::Digest;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -257,12 +255,8 @@ pub fn witness(
             }
         }
 
-        let mut canonicalized = Vec::new();
-        let mut serializer =
-            Serializer::with_formatter(&mut canonicalized, CanonicalFormatter::new());
-        serde_json::to_value(&enrollment)?
-            .serialize(&mut serializer)
-            .map_err(Error::Canonicalization)?;
+        let canonicalized =
+            serde_json_canonicalizer::to_vec(&enrollment).map_err(Error::Canonicalization)?;
         let canonical_hash = sha2::Sha256::digest(&canonicalized).into();
         HashObserved::Hash(canonical_hash)
     } else {
