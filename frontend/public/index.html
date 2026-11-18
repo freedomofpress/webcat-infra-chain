@@ -16,6 +16,21 @@
         </header>
 
         <main>
+            <section class="about" aria-labelledby="aboutHeading">
+                <h2 id="aboutHeading">What enrollment does</h2>
+                <p class="help-text">
+                    Enrolling a domain adds it to the public WEBCAT enrollment
+                    list. Browsers running WEBCAT then only run code from your site that matches a manifest signed
+                    according to that enrollment policy. This ensures that a compromised or malicious server cannot
+                    silently serve
+                    modified code to your users.
+                </p>
+                <p class="help-text">
+                    Learn more at <a href="https://webcat.tech/" rel="noopener">webcat.tech</a> or in the
+                    <a href="https://docs.webcat.tech/" rel="noopener">WEBCAT documentation</a>.
+                </p>
+            </section>
+
             <section aria-labelledby="stepsHeading">
                 <h2 id="stepsHeading">Before you enroll</h2>
                 <ol class="steps">
@@ -23,7 +38,8 @@
                         <h3>Make your application WEBCAT-compliant</h3>
                         <p class="help-text">
                             Your site needs a signed manifest and WEBCAT-compatible headers before it can be enrolled.
-                            See the <a href="https://docs.webcat.tech/site-operators/" rel="noopener">documentation</a> for how to do
+                            See the <a href="https://docs.webcat.tech/site-operators/" rel="noopener">documentation</a>
+                            for how to do
                             this.
                         </p>
                     </li>

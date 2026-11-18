@@ -88,6 +88,10 @@ header h1 {
     color: var(--color-text);
 }
 
+.about {
+    margin-bottom: var(--spacing-xl);
+}
+
 .subtitle {
     font-size: var(--font-size-lg);
     color: var(--color-text-light);
