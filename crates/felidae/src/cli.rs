@@ -1,6 +1,7 @@
 use clap::Parser;
 
 #[derive(Parser)]
+#[command(version)]
 pub enum Options {
     /// Start this Felidae node.
     Start(start::Start),
