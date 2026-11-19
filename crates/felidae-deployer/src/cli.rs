@@ -10,7 +10,7 @@ mod run_network;
 
 /// CLI options for felidae-deployer.
 #[derive(Parser)]
-#[command(name = "felidae-deployer")]
+#[command(name = "felidae-deployer", version)]
 #[command(about = "Orchestrate felidae and cometbft nodes for integration testing")]
 pub enum Options {
     /// Create a new felidae network.
