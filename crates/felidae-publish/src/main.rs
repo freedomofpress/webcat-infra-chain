@@ -8,7 +8,7 @@ use reqwest::Url;
 use tendermint_rpc::HttpClient;
 
 #[derive(Parser)]
-#[command(name = "felidae-publish")]
+#[command(name = "felidae-publish", version)]
 #[command(about = "Demo LCV logic")]
 struct Args {
     /// Node RPC URL (e.g., http://localhost:26657)
