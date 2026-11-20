@@ -30,6 +30,8 @@ pub enum QueryCommand {
     ChainInfo(ChainInfoCmd),
     /// Query canonical domain→hash mappings.
     Snapshot(Snapshot),
+    /// Query history of a domain.
+    History(History),
     /// Query active oracle votes in the vote queue.
     EnrollmentVotes(EnrollmentVotes),
     /// Query pending oracle observations awaiting promotion.
@@ -51,6 +53,7 @@ impl Run for Query {
         match self.command {
             QueryCommand::ChainInfo(cmd) => cmd.run(query_url).await,
             QueryCommand::Snapshot(cmd) => cmd.run(query_url).await,
+            QueryCommand::History(cmd) => cmd.run(query_url).await,
             QueryCommand::EnrollmentVotes(cmd) => cmd.run(query_url).await,
             QueryCommand::EnrollmentPending(cmd) => cmd.run(query_url).await,
             QueryCommand::AdminVotes(cmd) => cmd.run(query_url).await,
@@ -97,6 +100,27 @@ impl Snapshot {
     async fn run(self, query_url: Url) -> color_eyre::Result<()> {
         let response: HashMap<String, String> = reqwest::Client::new()
             .get(query_url.join("/snapshot")?)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        Ok(())
+    }
+}
+
+#[derive(clap::Args)]
+pub struct History {
+    /// The domain we want the history of
+    pub domain: String,
+}
+
+impl History {
+    async fn run(self, query_url: Url) -> color_eyre::Result<()> {
+        let response: serde_json::Value = reqwest::Client::new()
+            .get(query_url.join(&format!("/history/{}", self.domain))?)
             .send()
             .await?
             .error_for_status()?

@@ -51,6 +51,7 @@ domain_types!(
     HashObserved: proto::action::observe::observation::HashObserved,
     Blockstamp: proto::action::observe::observation::Blockstamp,
     OracleVoteValue: proto::OracleVoteValue,
+    HistoryEntry: proto::HistoryEntry,
 );
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -660,6 +661,15 @@ impl Debug for HashObserved {
 pub struct OracleVoteValue {
     pub hash_observed: HashObserved,
     pub zone: Zone,
+}
+
+/// One history event: a change applied to the canonical hash of a domain.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoryEntry {
+    /// The height of the block in which the change was applied.
+    pub height: Height,
+    /// The hash the domain was changed to, or `NotFound` if it became unenrolled.
+    pub hash_observed: HashObserved,
 }
 
 #[serde_as]

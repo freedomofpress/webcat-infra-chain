@@ -464,6 +464,38 @@ pub fn app(storage: Storage) -> Router {
         }
     };
 
+    let history = {
+        let storage = storage.clone();
+        move |domain: Domain| async move {
+            let state = State::new(StateDelta::new(storage.latest_snapshot()));
+
+            let get_history = async move {
+                let mut history = Vec::new();
+                for (height, hash) in state.canonical_history(domain).await? {
+                    history.push(serde_json::json!({
+                        "height": height.value(),
+                        "time": state.time_of_block(height).await?,
+                        "hash": hash,
+                    }));
+                }
+                Ok::<_, Report>(history)
+            };
+
+            match get_history.await {
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    [("Content-Type", "text/plain")],
+                    Body::from(e.to_string()),
+                ),
+                Ok(history) => (
+                    StatusCode::OK,
+                    [("Content-Type", "application/json")],
+                    Body::from(serde_json::to_string_pretty(&history).unwrap()),
+                ),
+            }
+        }
+    };
+
     let validators = || {
         let storage = storage.clone();
         move |filter: Option<String>| async move {
@@ -580,6 +612,10 @@ pub fn app(storage: Storage) -> Router {
                             description: "Get hash for a specific domain".to_string(),
                         },
                         EndpointInfo {
+                            path: "/history/{domain}".to_string(),
+                            description: "Get history for a specific domain".to_string(),
+                        },
+                        EndpointInfo {
                             path: "/admin/votes".to_string(),
                             description: "Get admin votes for configuration changes".to_string(),
                         },
@@ -669,6 +705,15 @@ pub fn app(storage: Storage) -> Router {
             get(move |Path(domain): Path<String>| async move {
                 match permissive_domain(domain) {
                     Ok(domain) => domain_snapshot(domain).await,
+                    Err(e) => e,
+                }
+            }),
+        )
+        .route(
+            "/history/{domain}",
+            get(move |Path(domain): Path<String>| async move {
+                match permissive_domain(domain) {
+                    Ok(domain) => history(domain).await,
                     Err(e) => e,
                 }
             }),

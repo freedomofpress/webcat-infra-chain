@@ -28,15 +28,17 @@ pub struct Store {
     pub staged_batch: Arc<Mutex<Option<StagedWriteBatch>>>,
 }
 
-/// We have 2 substores: internal and canonical. When accessing state data, you must specify which
-/// substore you want to access.
+/// We have 3 substores: internal, canonical, and history. When accessing state data, you must
+/// specify which substore you want to access.
 ///
 /// The internal substore holds all data, including ephemeral and intermediate state. The canonical
-/// substore holds only the finalized, current mapping of domains to enrollment hashes.
+/// substore holds only the finalized, current mapping of domains to enrollment hashes. The history
+/// substore holds an append-only log of every change applied to the canonical substore.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Substore {
     Internal,
     Canonical,
+    History,
 }
 
 /// The 3 root hashes: internal, canonical, and app hash (equal to the hash of the main state).
@@ -51,6 +53,7 @@ impl Display for Substore {
         match self {
             Substore::Internal => write!(f, "internal"),
             Substore::Canonical => write!(f, "canonical"),
+            Substore::History => write!(f, "history"),
         }
     }
 }
@@ -86,7 +89,7 @@ impl Store {
         tokio::fs::create_dir_all(&path)
             .await
             .or_else(|e| eyre::bail!("could not create storage directory: {e}"))?;
-        const SUBSTORES: [&str; 2] = ["internal", "canonical"];
+        const SUBSTORES: [&str; 3] = ["internal", "canonical", "history"];
         let storage = Storage::init(path, SUBSTORES.map(Into::into).to_vec())
             .await
             .map_err(|e| eyre::eyre!(e))?;

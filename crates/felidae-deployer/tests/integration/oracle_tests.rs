@@ -15,8 +15,8 @@ use crate::constants::{
 };
 use crate::harness::TestNetwork;
 use crate::helpers::{
-    poll_until, query_config, query_enrollment_pending, query_enrollment_votes, query_snapshot,
-    run_oracle_observe, run_query_command, submit_observation,
+    poll_until, query_config, query_enrollment_pending, query_enrollment_votes, query_history,
+    query_snapshot, run_oracle_observe, run_query_command, submit_observation,
 };
 
 /// Verifies that a 3-validator network can successfully bootstrap and produce blocks.
@@ -403,6 +403,7 @@ async fn test_oracle_unenrollment() -> color_eyre::Result<()> {
         "expected {} to be enrolled first",
         TEST_DOMAIN_UNENROLL.0
     );
+    let enrolled_hash = snapshot[TEST_DOMAIN_UNENROLL.0].clone();
 
     // PHASE 2: Unenroll the domain
     eprintln!(
@@ -443,6 +444,22 @@ async fn test_oracle_unenrollment() -> color_eyre::Result<()> {
         "expected {} to be unenrolled",
         TEST_DOMAIN_UNENROLL.0
     );
+
+    // Verify the history still records both the enrollment and the unenrollment, in order
+    let history = query_history(&felidae_bin, &network.query_url(), TEST_DOMAIN_UNENROLL.0)?;
+    eprintln!("[test] history after unenrollment: {:?}", history);
+    assert_eq!(
+        history.len(),
+        2,
+        "expected an enrollment and an unenrollment"
+    );
+    assert_eq!(history[0]["hash"], enrolled_hash.as_str());
+    assert!(history[1]["hash"].is_null(), "expected unenrollment last");
+    assert!(
+        history[0]["height"].as_u64() < history[1]["height"].as_u64(),
+        "expected history in height order"
+    );
+    assert!(history.iter().all(|entry| entry["time"].is_string()));
 
     Ok(())
 }
