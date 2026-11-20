@@ -116,6 +116,33 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         Ok(subdomains)
     }
 
+    /// Get every change ever applied to the canonical hash of this subdomain, oldest first
+    pub async fn canonical_history(
+        &self,
+        subdomain: Domain,
+    ) -> Result<Vec<(Height, HashObserved)>, Report> {
+        // The trailing slash restricts the search to this exact subdomain
+        let prefix = format!(
+            "{}/",
+            PrefixOrderDomain {
+                name: subdomain.name
+            }
+        );
+
+        let mut history = Vec::new();
+        let mut stream = Box::pin(self.store.prefix::<HashObserved>(History, &prefix));
+        while let Some(result) = stream.next().await {
+            let (key, hash_observed) = result?;
+            let height = key
+                .strip_prefix(&prefix)
+                .ok_or_eyre("history key does not start with its own prefix")?
+                .parse::<u64>()
+                .wrap_err("invalid height in history key")?;
+            history.push((Height::try_from(height)?, hash_observed));
+        }
+        Ok(history)
+    }
+
     /// Update the canonical hash for a given subdomain.
     pub(crate) async fn update_canonical(
         &mut self,
@@ -128,6 +155,14 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             name: subdomain.name.clone(),
         }
         .to_string(); // notice that we do not add a trailing dot here!
+
+        // Record the change in the history log
+        let height = self.block_height().await?;
+        self.store.put(
+            History,
+            &format!("{key}/{}", util::pad_height(height)),
+            hash_observed.clone(),
+        );
 
         if let HashObserved::Hash(hash) = hash_observed {
             info!(
