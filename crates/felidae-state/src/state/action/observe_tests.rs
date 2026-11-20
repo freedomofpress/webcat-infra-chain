@@ -1,4 +1,5 @@
 use crate::Store;
+use crate::store::{StateReadExt, Substore::History};
 use felidae_types::test_util::test_identity;
 use felidae_types::{
     FQDN,
@@ -8,6 +9,7 @@ use felidae_types::{
         Timeout, Total, ValidatorConfig, VotingConfig, Zone,
     },
 };
+use futures::TryStreamExt;
 use std::time::Duration;
 use tempfile::TempDir;
 use tendermint::{AppHash, Time, block::Height};
@@ -602,4 +604,28 @@ async fn test_canonical_history_records_all_changes() {
         name: FQDN::from_ascii_str("example.org.").unwrap(),
     };
     assert_eq!(state.canonical_history(unknown).await.unwrap(), vec![]);
+
+    // The stored keys are predictable from the count, they start at 0 and must have no gaps
+    // (if there are gaps then that would mean shenanigans)
+
+    let count = |key: &'static str| state.store.get::<u64>(History, key);
+
+    assert_eq!(count("count/.com.example").await.unwrap(), Some(3));
+    assert_eq!(count("count/.com.example.sub").await.unwrap(), Some(1));
+    assert_eq!(count("count/.org.example").await.unwrap(), None);
+
+    let entry_keys: Vec<String> = StateReadExt::prefix_keys(&state.store, History, "entry/")
+        .try_collect()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        entry_keys,
+        [
+            "entry/.com.example.sub/00000000000000000000",
+            "entry/.com.example/00000000000000000000",
+            "entry/.com.example/00000000000000000001",
+            "entry/.com.example/00000000000000000002",
+        ]
+    );
 }
