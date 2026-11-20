@@ -38,7 +38,7 @@ use tendermint::{
 mod store;
 use store::{
     StateReadExt, StateWriteExt,
-    Substore::{Canonical, Internal},
+    Substore::{Canonical, History, Internal},
 };
 pub use store::{Store, Substore};
 

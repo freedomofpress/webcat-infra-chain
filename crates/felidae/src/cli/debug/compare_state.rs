@@ -2,7 +2,7 @@
 //!
 //! Use after a chain halt to find where validator state diverges. Reads each
 //! storage via cnidarium (same RocksDB/JMT as the node) and diffs key-value
-//! pairs in the internal and canonical substores.
+//! pairs in the internal, canonical, and history substores.
 
 use cnidarium::{StateRead, Storage};
 use color_eyre::{Report, eyre::eyre};
@@ -10,7 +10,7 @@ use futures::StreamExt;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-const SUBSTORES: [&str; 2] = ["internal", "canonical"];
+const SUBSTORES: [&str; 3] = ["internal", "canonical", "history"];
 
 #[derive(clap::Args)]
 pub struct CompareState {
@@ -64,7 +64,7 @@ async fn load_and_dump(path: PathBuf, label: &str) -> Result<StorageDump, Report
         .unwrap_or_else(|e| format!("error: {}", e));
 
     let mut keys: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-    for prefix in ["internal/", "canonical/"] {
+    for prefix in ["internal/", "canonical/", "history/"] {
         let mut stream = Box::pin(snapshot.prefix_raw(prefix));
         while let Some(res) = stream.next().await {
             let (key, value) =
