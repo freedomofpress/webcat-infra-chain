@@ -123,22 +123,17 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
     ) -> Result<Vec<(Height, HashObserved)>, Report> {
         // The trailing slash restricts the search to this exact subdomain
         let prefix = format!(
-            "{}/",
+            "entry/{}/",
             PrefixOrderDomain {
                 name: subdomain.name
             }
         );
 
         let mut history = Vec::new();
-        let mut stream = Box::pin(self.store.prefix::<HashObserved>(History, &prefix));
+        let mut stream = Box::pin(self.store.prefix::<HistoryEntry>(History, &prefix));
         while let Some(result) = stream.next().await {
-            let (key, hash_observed) = result?;
-            let height = key
-                .strip_prefix(&prefix)
-                .ok_or_eyre("history key does not start with its own prefix")?
-                .parse::<u64>()
-                .wrap_err("invalid height in history key")?;
-            history.push((Height::try_from(height)?, hash_observed));
+            let (_key, entry) = result?;
+            history.push((entry.height, entry.hash_observed));
         }
         Ok(history)
     }
@@ -156,13 +151,23 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         }
         .to_string(); // notice that we do not add a trailing dot here!
 
-        // Record the change in the history log
-        let height = self.block_height().await?;
+        // Record the change in the history log. Entries are numbered consecutively from zero per
+        // domain, and the number of entries is stored too - this lets client know the history is complete.
+        let count_key = format!("count/{key}");
+        let count = self
+            .store
+            .get::<u64>(History, &count_key)
+            .await?
+            .unwrap_or(0);
         self.store.put(
             History,
-            &format!("{key}/{}", util::pad_height(height)),
-            hash_observed.clone(),
+            &format!("entry/{key}/{count:020}"),
+            HistoryEntry {
+                height: self.block_height().await?,
+                hash_observed: hash_observed.clone(),
+            },
         );
+        self.store.put(History, &count_key, count + 1);
 
         if let HashObserved::Hash(hash) = hash_observed {
             info!(

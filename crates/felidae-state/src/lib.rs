@@ -16,8 +16,8 @@ use felidae_types::{
     FQDN,
     transaction::{
         Action, Admin, AuthenticatedTx, Blockstamp, ChainId, Config, Domain, Empty, HashObserved,
-        Observation, Observe, OracleIdentity, OracleVoteValue, PrefixOrderDomain, Reconfigure,
-        Transaction, ValidatorKey, ValidatorStatus,
+        HistoryEntry, Observation, Observe, OracleIdentity, OracleVoteValue, PrefixOrderDomain,
+        Reconfigure, Transaction, ValidatorKey, ValidatorStatus,
     },
 };
 use futures::{Stream, StreamExt};
