@@ -557,3 +557,49 @@ async fn test_limit_check_pending_subdomain_counts_toward_limit() {
         "pending entry should count toward the subdomain limit; unexpected error: {err}"
     );
 }
+
+#[tokio::test]
+async fn test_canonical_history_records_all_changes() {
+    let (store, _dir) = setup_state(300, 10).await;
+    let mut state = store.state.write().await;
+
+    let domain = Domain {
+        name: FQDN::from_ascii_str("example.com.").unwrap(),
+    };
+    let changes = [
+        (5u32, HashObserved::Hash([1u8; 32])),
+        (6u32, HashObserved::Hash([2u8; 32])),
+        (7u32, HashObserved::NotFound),
+    ];
+    for (height, hash_observed) in changes.clone() {
+        state.set_block_height(Height::from(height)).await.unwrap();
+        state
+            .update_canonical(domain.clone(), hash_observed)
+            .await
+            .unwrap();
+    }
+
+    // A change to a subdomain which should not show up in the history of its parent
+    state
+        .update_canonical(
+            Domain {
+                name: FQDN::from_ascii_str("sub.example.com.").unwrap(),
+            },
+            HashObserved::Hash([3u8; 32]),
+        )
+        .await
+        .unwrap();
+
+    // The history keeps track of every change even though the canonical hash has been removed
+    assert_eq!(state.canonical_hash(domain.clone()).await.unwrap(), None);
+    assert_eq!(
+        state.canonical_history(domain).await.unwrap(),
+        changes.map(|(height, hash_observed)| (Height::from(height), hash_observed)),
+    );
+
+    // A domain which never was included in the canonical store has no history
+    let unknown = Domain {
+        name: FQDN::from_ascii_str("example.org.").unwrap(),
+    };
+    assert_eq!(state.canonical_history(unknown).await.unwrap(), vec![]);
+}
