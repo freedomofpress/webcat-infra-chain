@@ -1,6 +1,6 @@
 # Unreleased
 
-Nothing yet!
+* feat!: record per-domain enrollment history (consensus breaking), #155
 
 # Version 0.3.6 (2026-04-13)
 
