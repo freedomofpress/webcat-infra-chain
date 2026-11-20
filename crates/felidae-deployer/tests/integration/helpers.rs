@@ -440,6 +440,17 @@ pub fn query_snapshot(
     Ok(snapshot)
 }
 
+/// Queries the history of a domain via CLI.
+pub fn query_history(
+    felidae_bin: &std::path::Path,
+    query_url: &str,
+    domain: &str,
+) -> color_eyre::Result<Vec<serde_json::Value>> {
+    let output = run_query_command(felidae_bin, "history", query_url, &[domain])?;
+    let history: Vec<serde_json::Value> = serde_json::from_str(&output)?;
+    Ok(history)
+}
+
 /// Queries the chain config via CLI.
 pub fn query_config(felidae_bin: &std::path::Path, query_url: &str) -> color_eyre::Result<Config> {
     let output = run_query_command(felidae_bin, "config", query_url, &[])?;
