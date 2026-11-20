@@ -109,6 +109,10 @@ impl DomainType for tendermint::vote::Power {
     type Proto = u64;
 }
 
+impl DomainType for u64 {
+    type Proto = u64;
+}
+
 impl DomainType for tendermint::AppHash {
     type Proto = bytes::Bytes;
 }
