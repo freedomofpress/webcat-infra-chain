@@ -1,6 +1,27 @@
 # Unreleased
 
-Nothing yet!
+* fix: temporarily include cstdint header via `CXXFLAGS`, #171
+* test: integration harness supervises spawned processes and keeps their logs, #168
+* test: sharper assertions, with four validators by default, #168
+* ci: set up nix via freedomofpress/actionslib, #168
+* lint: `just lint` runs clippy with `-D warnings`, gating CI, #168
+* dev: track .envrc in-repo, #168
+
+# Version 0.4.0 (2026-09-30)
+
+Validator onboarding via admin reconfiguration: admins vote validators
+into or out of the network, and uptime tracking reduces the power of
+validators experiencing downtime.
+
+* feat: declare validators in `Config`, add validator state machine, #81
+* feat(validator): status tracking, jailing, tombstoning, automatic unjailing, #135
+* feat: felidae query validator, #141
+* fix(validator): status handling fixes and integration tests, #145
+* fix(state): tombstoning inactive validators, #152
+* fix(test): update power handling for validators, #140
+* ux: reduce first-time enrollment confusion, #150
+* refactor: use strong types throughout codebase, #148
+* test: integration test for validator onboarding, #136
 
 # Version 0.3.6 (2026-04-13)
 
