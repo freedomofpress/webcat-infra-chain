@@ -2,7 +2,7 @@
   description = "Felidae blockchain application for WEBCAT infrastructure";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-25.11";
+    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-26.05";
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
@@ -56,6 +56,12 @@
       rustToolchain = pkgs.rust-bin.stable.latest.default.override {
         extensions = [ "rust-src" "rust-analyzer" ];
         targets = [ "wasm32-unknown-unknown" ];
+      };
+
+      # nixos-26.05 backported cargo-release 1.1.7, which needs a newer rustc than 26.05 ships.
+      # Build it with our toolchain instead; revert to pkgs.cargo-release once nixpkgs catches up.
+      cargo-release = pkgs.cargo-release.override {
+        rustPlatform = pkgs.makeRustPlatform { cargo = rustToolchain; rustc = rustToolchain; };
       };
 
       # Crane library for workspace builds with custom toolchain
@@ -398,7 +404,7 @@
             # Additional Rust dev tools
             pkgs.cargo-watch
             pkgs.cargo-edit
-            pkgs.cargo-release
+            cargo-release
             pkgs.cargo-nextest
             pkgs.wasm-pack
             wasm-bindgen-cli  # Use our custom version that matches Cargo.lock
@@ -408,8 +414,8 @@
             # nix tooling to fetch hashes for remote packages
             pkgs.nix-prefetch-scripts
 
-            # Go toolchain for CometBFT development
-            pkgs.go_1_24
+            # Go toolchain for CometBFT development; the same one that builds the cometbft package
+            pkgs.go
 
             # Additional protobuf tools
             pkgs.protoc-gen-go-grpc
