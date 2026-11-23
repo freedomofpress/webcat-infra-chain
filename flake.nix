@@ -189,8 +189,29 @@
           meta = with pkgs.lib; {
             description = "Felidae blockchain application for WEBCAT infrastructure";
             license = licenses.agpl3Only;
+            mainProgram = "felidae";
           };
         });
+
+        # felidae-publish as a `nix run` target: the same build as `felidae`.
+        felidae-publish = pkgs.lib.addMetaAttrs { mainProgram = "felidae-publish"; } self.packages.${system}.felidae;
+
+        # felidae-deployer spawns felidae, cometbft and process-compose by name, and
+        # checks for them with `which`. This flake's builds go first on PATH, so a
+        # pinned flake ref runs a pinned network; --felidae-bin and --cometbft-bin
+        # still override, e.g. to mix versions in upgrade tests.
+        felidae-deployer = pkgs.runCommand "felidae-deployer-${felidaeVersion}" {
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+          meta.mainProgram = "felidae-deployer";
+        } ''
+          makeWrapper ${self.packages.${system}.felidae}/bin/felidae-deployer $out/bin/felidae-deployer \
+            --prefix PATH : ${pkgs.lib.makeBinPath [
+              self.packages.${system}.felidae
+              self.packages.${system}.cometbft
+              pkgs.process-compose
+              pkgs.which
+            ]}
+        '';
 
         # WASM package for felidae-oracle
         felidae-oracle-wasm =
