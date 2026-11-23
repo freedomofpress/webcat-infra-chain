@@ -116,6 +116,28 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
         Ok(subdomains)
     }
 
+    /// Get every change ever applied to the canonical hash of this subdomain, oldest first
+    pub async fn canonical_history(
+        &self,
+        subdomain: Domain,
+    ) -> Result<Vec<(Height, HashObserved)>, Report> {
+        // The trailing slash restricts the search to this exact subdomain
+        let prefix = format!(
+            "entry/{}/",
+            PrefixOrderDomain {
+                name: subdomain.name
+            }
+        );
+
+        let mut history = Vec::new();
+        let mut stream = Box::pin(self.store.prefix::<HistoryEntry>(History, &prefix));
+        while let Some(result) = stream.next().await {
+            let (_key, entry) = result?;
+            history.push((entry.height, entry.hash_observed));
+        }
+        Ok(history)
+    }
+
     /// Update the canonical hash for a given subdomain.
     pub(crate) async fn update_canonical(
         &mut self,
@@ -128,6 +150,24 @@ impl<S: StateReadExt + StateWriteExt + 'static> State<S> {
             name: subdomain.name.clone(),
         }
         .to_string(); // notice that we do not add a trailing dot here!
+
+        // Record the change in the history log. Entries are numbered consecutively from zero per
+        // domain, and the number of entries is stored too - this lets client know the history is complete.
+        let count_key = format!("count/{key}");
+        let count = self
+            .store
+            .get::<u64>(History, &count_key)
+            .await?
+            .unwrap_or(0);
+        self.store.put(
+            History,
+            &format!("entry/{key}/{count:020}"),
+            HistoryEntry {
+                height: self.block_height().await?,
+                hash_observed: hash_observed.clone(),
+            },
+        );
+        self.store.put(History, &count_key, count + 1);
 
         if let HashObserved::Hash(hash) = hash_observed {
             info!(

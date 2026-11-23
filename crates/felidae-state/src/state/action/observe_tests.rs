@@ -1,4 +1,5 @@
 use crate::Store;
+use crate::store::{StateReadExt, Substore::History};
 use felidae_types::test_util::test_identity;
 use felidae_types::{
     FQDN,
@@ -8,6 +9,7 @@ use felidae_types::{
         Timeout, Total, ValidatorConfig, VotingConfig, Zone,
     },
 };
+use futures::TryStreamExt;
 use std::time::Duration;
 use tempfile::TempDir;
 use tendermint::{AppHash, Time, block::Height};
@@ -555,5 +557,75 @@ async fn test_limit_check_pending_subdomain_counts_toward_limit() {
         err.to_string()
             .contains("would exceed max enrolled subdomains"),
         "pending entry should count toward the subdomain limit; unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn test_canonical_history_records_all_changes() {
+    let (store, _dir) = setup_state(300, 10).await;
+    let mut state = store.state.write().await;
+
+    let domain = Domain {
+        name: FQDN::from_ascii_str("example.com.").unwrap(),
+    };
+    let changes = [
+        (5u32, HashObserved::Hash([1u8; 32])),
+        (6u32, HashObserved::Hash([2u8; 32])),
+        (7u32, HashObserved::NotFound),
+    ];
+    for (height, hash_observed) in changes.clone() {
+        state.set_block_height(Height::from(height)).await.unwrap();
+        state
+            .update_canonical(domain.clone(), hash_observed)
+            .await
+            .unwrap();
+    }
+
+    // A change to a subdomain which should not show up in the history of its parent
+    state
+        .update_canonical(
+            Domain {
+                name: FQDN::from_ascii_str("sub.example.com.").unwrap(),
+            },
+            HashObserved::Hash([3u8; 32]),
+        )
+        .await
+        .unwrap();
+
+    // The history keeps track of every change even though the canonical hash has been removed
+    assert_eq!(state.canonical_hash(domain.clone()).await.unwrap(), None);
+    assert_eq!(
+        state.canonical_history(domain).await.unwrap(),
+        changes.map(|(height, hash_observed)| (Height::from(height), hash_observed)),
+    );
+
+    // A domain which never was included in the canonical store has no history
+    let unknown = Domain {
+        name: FQDN::from_ascii_str("example.org.").unwrap(),
+    };
+    assert_eq!(state.canonical_history(unknown).await.unwrap(), vec![]);
+
+    // The stored keys are predictable from the count, they start at 0 and must have no gaps
+    // (if there are gaps then that would mean shenanigans)
+
+    let count = |key: &'static str| state.store.get::<u64>(History, key);
+
+    assert_eq!(count("count/.com.example").await.unwrap(), Some(3));
+    assert_eq!(count("count/.com.example.sub").await.unwrap(), Some(1));
+    assert_eq!(count("count/.org.example").await.unwrap(), None);
+
+    let entry_keys: Vec<String> = StateReadExt::prefix_keys(&state.store, History, "entry/")
+        .try_collect()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        entry_keys,
+        [
+            "entry/.com.example.sub/00000000000000000000",
+            "entry/.com.example/00000000000000000000",
+            "entry/.com.example/00000000000000000001",
+            "entry/.com.example/00000000000000000002",
+        ]
     );
 }

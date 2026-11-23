@@ -821,6 +821,36 @@ impl From<OracleVoteValue> for proto::OracleVoteValue {
     }
 }
 
+impl TryFrom<proto::HistoryEntry> for HistoryEntry {
+    type Error = crate::ParseError;
+
+    fn try_from(value: proto::HistoryEntry) -> Result<Self, Self::Error> {
+        let height = value
+            .height
+            .try_into()
+            .map_err(|_| crate::ParseError::new::<HistoryEntry>("invalid height".to_string()))?;
+        let hash_observed = value
+            .hash_observed
+            .ok_or_else(|| {
+                crate::ParseError::new::<HistoryEntry>("missing hash_observed".to_string())
+            })?
+            .try_into()?;
+        Ok(HistoryEntry {
+            height,
+            hash_observed,
+        })
+    }
+}
+
+impl From<HistoryEntry> for proto::HistoryEntry {
+    fn from(value: HistoryEntry) -> Self {
+        proto::HistoryEntry {
+            height: value.height.value(),
+            hash_observed: Some(value.hash_observed.into()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -46,6 +46,12 @@ message OracleVoteValue {
     string zone = 2;
 }
 
+// One history event: a change applied to the canonical hash of a domain.
+message HistoryEntry {
+    uint64 height = 1;
+    Action.Observe.Observation.HashObserved hash_observed = 2;
+}
+
 message Oracle {
     OracleIdentity public_key = 1;
     string endpoint = 2;
