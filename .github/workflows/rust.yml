@@ -29,6 +29,14 @@ jobs:
           persist-credentials: false
       # The devshell's toolchain, including the C++ compiler that builds rocksdb.
       - uses: freedomofpress/actionslib/act/setup-nix@main
+      # Swatinem/rust-cache@v2.9.3, probing the devshell's toolchain. Keyed on
+      # flake.lock, as a nixpkgs bump can swap the C++ compiler under rocksdb.
+      # Saves from main only, like setup-nix, to stay within the cache quota.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          cmd-format: nix develop -c {0}
+          key: ${{ hashFiles('flake.lock') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: nix develop --command cargo test
 
   build_wasm:
@@ -42,4 +50,10 @@ jobs:
         with:
           persist-credentials: false
       - uses: freedomofpress/actionslib/act/setup-nix@main
+      # Swatinem/rust-cache@v2.9.3, as in the test job.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          cmd-format: nix develop -c {0}
+          key: ${{ hashFiles('flake.lock') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: nix develop --command cargo build --package felidae-oracle --target wasm32-unknown-unknown
