@@ -1,6 +1,7 @@
 # Unreleased
 
 * dev: update nix dependencies to nixos-26.05, #149
+* build: expose felidae-deployer, felidae-publish as nix packages, #149
 * fix: temporarily include cstdint header via `CXXFLAGS`, #171
 * test: integration harness supervises spawned processes and keeps their logs, #168
 * test: sharper assertions, with four validators by default, #168
