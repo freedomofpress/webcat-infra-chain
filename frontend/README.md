@@ -6,7 +6,7 @@ A simple web application frontend for submitting domain enrollment requests to F
 
 ### Prerequisites
 
-- Node.js (v22 or higher)
+- Node.js (v24 or higher)
 - npm or yarn
 
 ### Installation
