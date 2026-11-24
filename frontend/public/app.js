@@ -25,15 +25,19 @@ async function fetchCSRFToken() {
 
 
 // Show status message
-function showStatus(type, message) {
+let statusHideTimer = null;
+function showStatus(type, message, persist = false) {
     const statusEl = document.getElementById('statusMessage');
     statusEl.className = `status-message ${type}`;
     statusEl.textContent = message;
     statusEl.style.display = 'block';
 
+    // Cancel anything from an earlier message
+    clearTimeout(statusHideTimer);
+
     // Auto-hide after 5 seconds for success/info messages
-    if (type === 'success' || type === 'info') {
-        setTimeout(() => {
+    if (!persist && (type === 'success' || type === 'info')) {
+        statusHideTimer = setTimeout(() => {
             statusEl.style.display = 'none';
         }, 5000);
     }
@@ -253,9 +257,14 @@ async function handleSubmit(event) {
         return;
     }
 
-    // Disable submit button
+    // now we hide the form for the duration of the submission so it's clear that
+    // nothing further needs to be clicked. The status message shows the progress.
+    const form = document.getElementById('enrollmentForm');
+    const progress = (message) => showStatus('info', message, true);
+    let succeeded = false;
     submitBtn.disabled = true;
-    submitBtn.textContent = 'Requesting challenge...';
+    form.style.display = 'none';
+    progress(`Submitting ${domain}: requesting challenges...`);
 
     try {
         // Ensure we have a CSRF token
@@ -264,7 +273,6 @@ async function handleSubmit(event) {
         }
 
         // Request PoW challenges from all oracles
-        submitBtn.textContent = 'Getting challenges...';
         let challenges;
         try {
             challenges = await requestPoWChallenges(domain);
@@ -282,9 +290,9 @@ async function handleSubmit(event) {
         }
 
         // Compute PoW for each challenge
-        submitBtn.textContent = `Computing proof of work (${validChallenges.length} oracles)...`;
         const difficulty = validChallenges[0].difficulty; // Assume all have same difficulty for user output
-        showStatus('info', `Computing proof of work for ${validChallenges.length} oracles (difficulty: ${difficulty}, this may take a while)...`);
+        const powMessage = `Submitting ${domain}: computing proof of work for ${validChallenges.length} oracles (difficulty: ${difficulty}, this may take a while). Keep this tab open.`;
+        progress(powMessage);
 
         const powTokens = {};
         let completed = 0;
@@ -297,7 +305,6 @@ async function handleSubmit(event) {
                 continue;
             }
 
-            submitBtn.textContent = `Computing PoW for oracle ${completed + 1}/${totalChallenges}...`;
             console.log(`Starting PoW computation for ${challengeData.endpoint}: challenge=${challengeData.challenge.substring(0, 16)}..., difficulty=${challengeData.difficulty}`);
             const powStartTime = Date.now();
 
@@ -306,8 +313,7 @@ async function handleSubmit(event) {
                     challengeData.challenge,
                     challengeData.difficulty,
                     (attempts, elapsed) => {
-                        // Update button text with progress
-                        submitBtn.textContent = `Computing PoW ${completed + 1}/${totalChallenges}... (${attempts} attempts, ${Math.round(elapsed / 1000)}s)`;
+                        progress(`${powMessage} Oracle ${completed + 1} of ${totalChallenges}: ${attempts} attempts, ${Math.round(elapsed / 1000)}s.`);
                     }
                 );
 
@@ -338,8 +344,7 @@ async function handleSubmit(event) {
         }
 
         // Submit with PoW tokens
-        submitBtn.textContent = 'Submitting...';
-        hideStatus();
+        progress(`Submitting ${domain} to the oracles...`);
 
         const response = await fetch('/api/submit', {
             method: 'POST',
@@ -358,7 +363,13 @@ async function handleSubmit(event) {
         }
 
         if (data.success) {
-            showStatus('success', `Successfully submitted to ${data.submitted} of ${data.total} oracles`);
+            succeeded = true;
+            showStatus(
+                'success',
+                `Enrollment request for ${domain} submitted to ${data.submitted} of ${data.total} oracles. ` +
+                'No further action is needed. To enroll another domain, reload this page.',
+                true
+            );
             displayResults(data.results);
         } else {
             showStatus('error', `Failed to submit to any oracles. ${data.results?.[0]?.error || ''}`);
@@ -369,7 +380,10 @@ async function handleSubmit(event) {
         console.error('Submission error:', error);
     } finally {
         submitBtn.disabled = !oraclesAvailable;
-        submitBtn.textContent = 'Begin Enrollment';
+        // if the submission failed bring the form back
+        if (!succeeded) {
+            form.style.display = '';
+        }
     }
 }
 
