@@ -116,14 +116,14 @@ pub fn admin_reconfig_tx_timeout() -> Duration {
 ///
 /// A WEBCAT enrollment defines the cryptographic policy for a domain. When
 /// oracles observe a domain, they hash the canonicalized enrollment JSON
-/// (using OLPC canonical JSON format) to produce a 32-byte commitment.
+/// (using JCS, RFC 8785) to produce a 32-byte commitment.
 ///
 /// The enrollment contains:
 /// - `signers`: Array of base64url-encoded Ed25519 public keys authorized to sign
 /// - `threshold`: Minimum number of signers required (k-of-n)
 /// - `policy`: Base64url-encoded policy blob (application-specific)
 /// - `max_age`: Maximum age in seconds for signed assertions
-/// - `cas_url`: Content-addressable storage URL for retrieving signed content
+/// - `enrollment_schema`: Version of the enrollment format (currently `1`)
 ///
 /// # Hash Computation
 ///
@@ -141,11 +141,11 @@ pub fn test_enrollment_json() -> String {
 
     serde_json::json!({
         "type": "sigsum",
+        "enrollment_schema": 1,
         "signers": [test_pubkey],
         "threshold": 1,
         "policy": "AAAA", // Minimal base64-url policy
         "max_age": 86400,
-        "cas_url": "https://example.com/cas",
         "logs": {}
     })
     .to_string()

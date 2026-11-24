@@ -14,7 +14,7 @@ getrandom = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
 sha2 = { workspace = true }
-olpc-cjson = { workspace = true }
+serde_json_canonicalizer = { workspace = true }
 base64-url = { workspace = true }
 ed25519-dalek = { workspace = true }
 
