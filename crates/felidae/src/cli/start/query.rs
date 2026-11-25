@@ -1,5 +1,9 @@
 use axum::body::Body;
-use axum::{Router, extract::Path, routing::get};
+use axum::{
+    Router,
+    extract::{Path, RawQuery},
+    routing::get,
+};
 use cnidarium::{StateDelta, StateRead, Storage};
 use color_eyre::{Report, eyre::eyre};
 use felidae_state::Vote;
@@ -7,7 +11,7 @@ use felidae_state::{State, Substore};
 use felidae_types::response::{
     AdminVote, ChainInfo, OracleInfo, OracleVote, PendingConfig, PendingObservation,
 };
-use felidae_types::transaction::{Domain, Empty};
+use felidae_types::transaction::{Domain, Empty, PrefixOrderDomain};
 use fqdn::FQDN;
 use futures::StreamExt;
 use reqwest::StatusCode;
@@ -466,19 +470,66 @@ pub fn app(storage: Storage) -> Router {
 
     let history = {
         let storage = storage.clone();
-        move |domain: Domain| async move {
-            let state = State::new(StateDelta::new(storage.latest_snapshot()));
+        move |domain: Domain, with_proof: bool| async move {
+            // we use one snapshot here so that all proofs use the same version
+            let snapshot = storage.latest_snapshot();
+            let state = State::new(StateDelta::new(snapshot.clone()));
 
             let get_history = async move {
-                let mut history = Vec::new();
-                for (height, hash) in state.canonical_history(domain).await? {
-                    history.push(serde_json::json!({
-                        "height": height.value(),
-                        "time": state.time_of_block(height).await?,
-                        "hash": hash,
-                    }));
+                if !with_proof {
+                    let mut history = Vec::new();
+                    for (height, hash) in state.canonical_history(domain).await? {
+                        history.push(serde_json::json!({
+                            "height": height.value(),
+                            "time": state.time_of_block(height).await?,
+                            "hash": hash,
+                        }));
+                    }
+                    return Ok::<_, Report>(serde_json::Value::from(history));
                 }
-                Ok::<_, Report>(history)
+
+                // if there is no history for that domain, then we include a proof of non existence
+                let prove = async |key: String| {
+                    let key = Substore::History.prefix(&key);
+                    let (value, proof) = snapshot
+                        .get_with_proof(key.clone().into_bytes())
+                        .await
+                        .map_err(|e| eyre!("failed to get proof for {key}: {e}"))?;
+                    let proof: Vec<String> = proof
+                        .proofs
+                        .iter()
+                        .map(|p| hex::encode(prost::Message::encode_to_vec(p)))
+                        .collect();
+                    let proven = serde_json::json!({
+                        "key": key,
+                        "value": value.as_ref().map(hex::encode),
+                        "proof": proof,
+                    });
+                    Ok::<_, Report>((value, proven))
+                };
+
+                // We exposed the count such that clients can tell the history is complete
+                let name = PrefixOrderDomain { name: domain.name };
+                let (count, count_proven) = prove(format!("count/{name}")).await?;
+                let count = match count {
+                    Some(bytes) => <u64 as felidae_proto::DomainType>::decode(bytes.as_slice())?,
+                    None => 0,
+                };
+                let mut entries = Vec::new();
+                for seq in 0..count {
+                    entries.push(prove(format!("entry/{name}/{seq:020}")).await?.1);
+                }
+
+                let app_hash = snapshot
+                    .root_hash()
+                    .await
+                    .map_err(|e| eyre!("failed to get app hash: {}", e))?;
+                Ok(serde_json::json!({
+                    "block_height": state.block_height().await?.value(),
+                    "app_hash": hex::encode(app_hash.0.as_slice()),
+                    "count": count_proven,
+                    "entries": entries,
+                }))
             };
 
             match get_history.await {
@@ -613,7 +664,7 @@ pub fn app(storage: Storage) -> Router {
                         },
                         EndpointInfo {
                             path: "/history/{domain}".to_string(),
-                            description: "Get history for a specific domain".to_string(),
+                            description: "Get history for a specific domain (add ?proof=true for optional Merkle proofs)".to_string(),
                         },
                         EndpointInfo {
                             path: "/admin/votes".to_string(),
@@ -711,9 +762,9 @@ pub fn app(storage: Storage) -> Router {
         )
         .route(
             "/history/{domain}",
-            get(move |Path(domain): Path<String>| async move {
+            get(move |Path(domain): Path<String>, RawQuery(query): RawQuery| async move {
                 match permissive_domain(domain) {
-                    Ok(domain) => history(domain).await,
+                    Ok(domain) => history(domain, query.as_deref() == Some("proof=true")).await,
                     Err(e) => e,
                 }
             }),
