@@ -115,12 +115,16 @@ impl Snapshot {
 pub struct History {
     /// The domain we want the history of
     pub domain: String,
+    /// Return the history entries with Merkle proofs
+    #[clap(long)]
+    pub proof: bool,
 }
 
 impl History {
     async fn run(self, query_url: Url) -> color_eyre::Result<()> {
         let response: serde_json::Value = reqwest::Client::new()
             .get(query_url.join(&format!("/history/{}", self.domain))?)
+            .query(&[("proof", self.proof)])
             .send()
             .await?
             .error_for_status()?
